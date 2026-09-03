@@ -57,9 +57,31 @@ def _session_statistics(rows: list[str]) -> tuple[float, float, float, int]:
     return median(prices), median(dollars), median(openings), len(sessions)
 
 
+def load_env_file(path: Path) -> bool:
+    """Populate os.environ from a dotenv file without overriding real exports.
+
+    The Massive adapter performs its own load, but only once a download is
+    already under way.  The credential check below has to happen before the
+    first request, so the file is read here too.
+    """
+    if not path.is_file():
+        return False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key.strip() and not key.lstrip().startswith("#"):
+            os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
+    return True
+
+
 def command_stats(args: argparse.Namespace) -> int:
+    env_path = Path(args.env_file)
+    found = load_env_file(env_path)
     if not os.environ.get("MASSIVE_API_KEY"):
-        raise SystemExit("MASSIVE_API_KEY is required; export it or populate .env")
+        raise SystemExit(
+            f"MASSIVE_API_KEY is not set.\n"
+            f"  Looked in: {env_path.resolve()} ({'found' if found else 'MISSING'})\n"
+            f"  Fix: create that file with a line reading MASSIVE_API_KEY=<your key>\n"
+            f"       (no quotes, no spaces around '='), or set the variable in your shell.")
     campaign_start = _iso(args.campaign_start)
     lookback_end = _iso(args.lookback_end)
     if lookback_end > campaign_start:
@@ -137,6 +159,8 @@ def main() -> int:
     stats.add_argument("--output", required=True)
     stats.add_argument("--data-root", default="data",
                        help="where raw, normalized and manifest files are written")
+    stats.add_argument("--env-file", default=".env",
+                       help="dotenv file supplying MASSIVE_API_KEY")
     stats.set_defaults(func=command_stats)
 
     freeze = sub.add_parser("freeze", help="apply the rule and write the manifest")
