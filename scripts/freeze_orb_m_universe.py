@@ -1,0 +1,156 @@
+"""Compute lookback statistics and freeze the ORB-M campaign universe.
+
+Two stages, deliberately separate so the selection rule is applied to data that
+provably predates the campaign window:
+
+  stats  -- pull lookback bars for a candidate pool and write per-symbol
+            liquidity statistics.  Refuses a lookback that overlaps the campaign.
+  freeze -- apply the frozen SelectionRule to those statistics and write an
+            immutable universe manifest.
+
+Requires MASSIVE_API_KEY and network access to the provider.  Neither is
+available in every environment; run this where both are.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from datetime import date, datetime, timedelta
+from pathlib import Path
+from statistics import median
+
+from athena_trading.orb_m.universe import (
+    PoolProvenance, SelectionRule, SymbolStatistics, select_universe,
+)
+from athena_trading.market_data.massive import download_minute_bars
+
+
+def _write_once(path: Path, payload: dict) -> None:
+    if path.exists():
+        raise SystemExit(f"refusing to overwrite {path}; frozen artifacts are immutable")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _iso(value: str) -> date:
+    return datetime.strptime(value, "%Y-%m-%d").date()
+
+
+def _session_statistics(rows: list[str]) -> tuple[float, float, float, int]:
+    """Median price, median dollar volume, median opening volume, session count."""
+    sessions: dict[str, list[dict]] = {}
+    for raw in rows:
+        row = json.loads(raw)
+        sessions.setdefault(row["event_at"][:10], []).append(row)
+    prices, dollars, openings = [], [], []
+    for bars in sessions.values():
+        bars.sort(key=lambda item: item["event_at"])
+        closes = [float(b["close"]) for b in bars]
+        volumes = [float(b["volume"]) for b in bars]
+        prices.append(median(closes))
+        dollars.append(sum(c * v for c, v in zip(closes, volumes, strict=True)))
+        openings.append(sum(volumes[:15]))
+    if not sessions:
+        return 0.0, 0.0, 0.0, 0
+    return median(prices), median(dollars), median(openings), len(sessions)
+
+
+def command_stats(args: argparse.Namespace) -> int:
+    if not os.environ.get("MASSIVE_API_KEY"):
+        raise SystemExit("MASSIVE_API_KEY is required; export it or populate .env")
+    campaign_start = _iso(args.campaign_start)
+    lookback_end = _iso(args.lookback_end)
+    if lookback_end > campaign_start:
+        raise SystemExit(
+            f"lookback_end {lookback_end} is inside the campaign window starting "
+            f"{campaign_start}; selection would leak outcomes into the universe")
+    lookback_start = lookback_end - timedelta(days=args.lookback_calendar_days)
+    symbols = [line.strip().upper() for line in Path(args.pool).read_text().splitlines()
+               if line.strip() and not line.startswith("#")]
+    if not symbols:
+        raise SystemExit(f"no candidate symbols in {args.pool}")
+
+    computed = []
+    for index, symbol in enumerate(symbols, start=1):
+        print(f"[{index}/{len(symbols)}] {symbol}", file=sys.stderr)
+        try:
+            normalized_path, _ = download_minute_bars(
+                symbol=symbol, start=lookback_start.isoformat(),
+                end=lookback_end.isoformat(), output_root=Path(args.data_root))
+        except Exception as error:  # noqa: BLE001 - one bad symbol must not end the pull
+            print(f"  skipped: {type(error).__name__}: {error}", file=sys.stderr)
+            continue
+        rows = normalized_path.read_text(encoding="utf-8").splitlines()
+        price, dollars, opening, sessions = _session_statistics(rows)
+        computed.append({"symbol": symbol, "sessions_observed": sessions,
+                         "median_price": price, "median_dollar_volume": dollars,
+                         "median_opening_volume": opening})
+
+    _write_once(Path(args.output), {
+        "schema_version": "athena-orb-m-universe-stats-v1",
+        "lookback_start": lookback_start.isoformat(),
+        "lookback_end": lookback_end.isoformat(),
+        "campaign_start": campaign_start.isoformat(),
+        "campaign_end": args.campaign_end,
+        "pool_size": len(symbols), "statistics": computed,
+    })
+    print(f"wrote {args.output} ({len(computed)}/{len(symbols)} symbols)")
+    return 0
+
+
+def command_freeze(args: argparse.Namespace) -> int:
+    payload = json.loads(Path(args.stats).read_text(encoding="utf-8"))
+    rule = SelectionRule(universe_size=args.universe_size,
+                         lookback_sessions=args.lookback_sessions)
+    statistics = [SymbolStatistics(item["symbol"], item["sessions_observed"],
+                                   item["median_price"], item["median_dollar_volume"],
+                                   item["median_opening_volume"])
+                  for item in payload["statistics"]]
+    manifest = select_universe(
+        statistics, rule, provenance=PoolProvenance(args.provenance),
+        lookback_start=_iso(payload["lookback_start"]),
+        lookback_end=_iso(payload["lookback_end"]),
+        campaign_start=_iso(payload["campaign_start"]),
+        campaign_end=_iso(payload["campaign_end"]))
+    _write_once(Path(args.output), manifest.to_payload())
+    print(f"wrote {args.output}: {len(manifest.members)} symbols, "
+          f"hash {manifest.identity_hash[:16]}")
+    if manifest.carries_survivorship_bias:
+        print("WARNING: pool provenance is CURRENT_SNAPSHOT. Names delisted during "
+              "the campaign cannot appear, so results carry survivorship bias.",
+              file=sys.stderr)
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    stats = sub.add_parser("stats", help="pull lookback bars and compute statistics")
+    stats.add_argument("--pool", required=True, help="newline-delimited candidate symbols")
+    stats.add_argument("--lookback-end", required=True, help="YYYY-MM-DD, before campaign")
+    stats.add_argument("--lookback-calendar-days", type=int, default=120)
+    stats.add_argument("--campaign-start", required=True)
+    stats.add_argument("--campaign-end", required=True)
+    stats.add_argument("--output", required=True)
+    stats.add_argument("--data-root", default="data",
+                       help="where raw, normalized and manifest files are written")
+    stats.set_defaults(func=command_stats)
+
+    freeze = sub.add_parser("freeze", help="apply the rule and write the manifest")
+    freeze.add_argument("--stats", required=True)
+    freeze.add_argument("--output", required=True)
+    freeze.add_argument("--universe-size", type=int, default=50)
+    freeze.add_argument("--lookback-sessions", type=int, default=60)
+    freeze.add_argument("--provenance", required=True,
+                        choices=[item.value for item in PoolProvenance])
+    freeze.set_defaults(func=command_freeze)
+
+    args = parser.parse_args()
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
