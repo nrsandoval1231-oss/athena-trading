@@ -116,6 +116,5 @@ def test_sessions_are_counted_per_local_trading_day():
 
 
 def test_no_regular_hours_bars_yields_zeroes_rather_than_raising():
-    module = _module()
-    assert _module()._session_statistics([_bar("2023-12-05T09:00:00+00:00", 1.0, 1.0)]) == (
-        0.0, 0.0, 0.0, 0)
+    premarket_only = [_bar("2023-12-05T09:00:00+00:00", 1.0, 1.0)]
+    assert _module()._session_statistics(premarket_only) == (0.0, 0.0, 0.0, 0)
