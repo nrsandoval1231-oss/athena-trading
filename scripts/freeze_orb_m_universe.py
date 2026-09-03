@@ -22,6 +22,7 @@ from pathlib import Path
 from statistics import median
 from zoneinfo import ZoneInfo
 
+from athena_trading.orb_m.constitution import Constitution
 from athena_trading.orb_m.universe import (
     PoolProvenance, SelectionRule, SymbolStatistics, select_universe,
 )
@@ -42,9 +43,12 @@ def _iso(value: str) -> date:
 MARKET_TZ = ZoneInfo("America/New_York")
 REGULAR_OPEN = time(9, 30)
 REGULAR_CLOSE = time(16, 0)
+#: Taken from the frozen strategy rather than restated, so the window this
+#: measures cannot drift from the window the engine trades.
+OPENING_MINUTES = Constitution().opening_minutes
 
 
-def _session_statistics(rows: list[str], *, opening_minutes: int = 15
+def _session_statistics(rows: list[str], *, opening_minutes: int = OPENING_MINUTES
                         ) -> tuple[float, float, float, int]:
     """Median price, median dollar volume, median opening volume, session count.
 
