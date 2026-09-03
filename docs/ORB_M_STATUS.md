@@ -117,10 +117,56 @@ defects in the statistics code (sessions keyed on UTC rather than exchange-local
 dates, and opening volume measured over premarket bars rather than the opening
 range).
 
+## Where this sits relative to Athena Core
+
+ORB-M lives here because `docs/ATHENA_DOMAIN_BOUNDARY.md` in
+`nrsandoval1231-oss/Athena` assigns ORB rules, stops, harvests, trails,
+re-entry, fill simulation and trading campaigns to Athena Trading. It was
+originally built in `Athena/src/athena_arena/orb_m/` and moved; no copy remains
+there.
+
+`athena_adapter/contracts.py` carries a `canonical_hash` deliberately
+reimplemented rather than imported, so this repository does not pin Athena Core
+as a build dependency for one pure function. It must stay byte-compatible:
+identity hashes recorded here travel into Athena evidence, so
+`tests/test_athena_adapter.py` pins digests taken from
+`athena_arena.contracts` and fails if the two diverge.
+
+## Environment
+
+The universe pull cannot run from a Claude Code remote session: the network
+policy denies `CONNECT api.massive.com:443`, and no key is present. It runs from
+the author's Windows machine, or from a remote session once the host is
+allowlisted and `MASSIVE_API_KEY` is added as an environment secret. Doing the
+latter would let the campaign iterate without a human relaying every result.
+
+## Unfinished business at handoff
+
+- **The smoke run has not been repeated since the statistics fixes.** The last
+  three-symbol run reported `sessions_observed` of 92 and an AAPL
+  `median_opening_volume` of 16,680, both wrong. After the fix the expected
+  figures are roughly 82 sessions and an opening volume in the millions.
+  Re-run it and confirm before spending hours on 277 symbols. Output paths are
+  write-once, so use a new filename.
+- **An existing local dataset may make the pull unnecessary.** The author
+  reports market data already collected at
+  `C:\Users\NickSandoval\Nick OS\02_Projects\Trading`. It was never
+  inventoried. Before pulling, establish four things: granularity (one-minute
+  bars are required; daily is useless for a 15-minute opening range), whether
+  extended-hours bars are included, symbol and date coverage, and provenance —
+  which provider, adjusted or unadjusted, and whether retrieval dates and
+  content hashes were recorded. Data without recorded provenance is usable for
+  research but weakens the immutable-evidence property the Gauntlet path
+  depends on, and the manifest must say so.
+- **The candidate pool is unverified against the provider.** A few of its 277
+  symbols may no longer resolve; the stats command logs and skips those rather
+  than aborting.
+
 ## Next
 
-1. Breakout Quality Score, calibrated against real feature distributions rather
-   than invented weights — which is why the data pull precedes it.
-2. Deterioration signal detection from bars.
-3. Session runner covering both directions and the re-entry branch.
-4. Freeze partitions, then run the campaign.
+1. Inventory the existing local dataset before pulling anything.
+2. Breakout Quality Score, calibrated against real feature distributions rather
+   than invented weights — which is why the data step precedes it.
+3. Deterioration signal detection from bars.
+4. Session runner covering both directions and the re-entry branch.
+5. Freeze partitions, then run the campaign.
