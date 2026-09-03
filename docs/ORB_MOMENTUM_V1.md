@@ -1,162 +1,133 @@
 # Athena ORB-Momentum Strategy v1.0
 
-Status: **RECONSTRUCTED BASELINE — freeze before empirical tuning**
-
-This document reconstructs the intended aggressive opening-momentum strategy from prior Athena Trading research. Values marked as reconstructed are hypotheses to validate prospectively, not claims of proven edge.
+Status: **FROZEN BASELINE FOR FIRST REGISTERED CAMPAIGN**
 
 ## Objective
-
-Capture the high-velocity portion of an opening breakout, deliberately realize part of that edge early, retain a runner for exceptional trends, and permit a separately risked continuation re-entry after a controlled retracement.
+Capture the high-velocity portion of a qualified opening breakout, monetize part of that edge early, retain a runner for exceptional trends, and allow separately risked continuation/reversal opportunities under deterministic risk authority.
 
 ## 1. Opening range
-
 - U.S. regular session.
-- Opening range: first 15 minutes, 09:30–09:45 ET.
-- Freeze Opening Range High (ORH) and Opening Range Low (ORL) at 09:45.
-- ORH/ORL do not move after the range closes.
+- Opening range is 09:30–09:45 ET.
+- Freeze ORH and ORL at 09:45; never move them afterward.
 
-## 2. Setup qualification
+## 2. Breakout trigger — FROZEN
+A wick/trade through ORH/ORL is **not** an entry trigger.
 
-A crossing of ORH/ORL is not sufficient. Compute a Breakout Quality / confidence assessment from only information available at decision time, including:
+- Long candidate: first completed 1-minute bar after 09:45 whose close is strictly above ORH.
+- Short candidate: first completed 1-minute bar after 09:45 whose close is strictly below ORL.
+- Decision information becomes available only after that bar closes; simulated execution must occur causally after confirmation under the registered fill model.
+- Opening-candle color is removed as a directional gate. It may be retained only as a logged feature for later prospective research.
 
-- breakout structure
-- relative/expanding volume
-- price momentum/acceleration
-- VWAP relationship
-- gap and premarket context
-- market alignment
-- sector alignment
-- volatility quality
-- extension risk
-- false-breakout risk
+Reason: the baseline should reject wick-only excursions and use a reproducible confirmation event. Signal count is secondary to cleaner causal definition.
 
-Reconstructed action bands:
+## 3. Qualification
+A confirmed breakout is only a candidate. Breakout quality may use point-in-time structure, relative/expanding volume, momentum/acceleration, VWAP relationship, gap/premarket context, market/sector alignment, volatility quality, extension risk and false-breakout risk.
 
+Frozen starting action bands:
 - confidence < 0.55: PASS
 - 0.55–0.70: ENTER_REDUCED
 - 0.70–0.85: ENTER_STANDARD
 - > 0.85: ENTER_HIGH_CONVICTION
 
-These thresholds are frozen starting hypotheses until a registered experiment changes them.
+## 4. Both sides / session trade budget — FROZEN
+Both sides remain live.
 
-## 3. Entry and initial risk
+A stopped long does not invalidate a later confirmed short breakdown, and vice versa. A reversal is a new Decision Episode with new qualification and a new risk budget.
 
-- Long: qualified breakout above ORH.
-- Short: qualified breakdown below ORL.
-- Every entry requires a deterministic invalidation/stop before exposure is accepted.
-- Initial risk derives from breakout structure and volatility/ATR rather than an unconditional percentage stop.
-- Express downstream performance and management in R multiples.
-- Position size is risk-budget-first; confidence may modify exposure only inside deterministic hard limits.
+For V1:
+- maximum one initial long episode and one initial short episode per symbol/session;
+- continuation re-entry is separate from the opposite-side reversal;
+- maximum one continuation re-entry per side;
+- all entries remain subordinate to portfolio/daily risk halts.
 
-## 4. Adaptive Position Defense Engine
+This lets the system learn failed-breakout/reversal behavior without unlimited whipsaw retries.
 
+## 5. Initial stop / definition of R — FROZEN
+Use a volatility-capped structural stop, not the proposed `min(opposite range side, entry − 1×ATR)` formulation, because that expression chooses the farther/wider stop for longs in common cases.
+
+For a long:
+- `structural_stop = ORL`
+- `atr_stop = entry - 1.0 * ATR`
+- `raw_stop = max(structural_stop, atr_stop)`
+
+For a short:
+- `structural_stop = ORH`
+- `atr_stop = entry + 1.0 * ATR`
+- `raw_stop = min(structural_stop, atr_stop)`
+
+Then enforce a registered minimum stop distance large enough to avoid zero/tick-noise risk. ATR definition and minimum-distance rule must be frozen before the campaign and computed only from point-in-time data.
+
+`R = abs(entry - initial_stop)` after the minimum-distance rule. The initial R denominator never changes after entry even when the protective stop ratchets.
+
+## 6. Adaptive Position Defense Engine
 Canonical post-entry states:
 
 `EXPLORE → PROTECT → HARVEST → DEFEND → EXIT`
 
-This is consistent with the historical Athena APDE contract. Risk authority remains deterministic. An LLM/Athena policy may recommend actions but cannot override hard risk constraints.
+Risk halt, session deadline and thesis invalidation take precedence. Athena/LLM may advise but deterministic risk authority has final control.
 
-## 5. Early momentum capture
+## 7. Early momentum capture
+The first approximately 8 minutes after confirmed entry are the opening-impulse observation/harvest window.
 
-The first approximately 8 minutes after a qualified breakout are treated as an opening-impulse observation/harvest window.
+Track MFE, MAE, acceleration/deceleration, volume expansion/collapse, VWAP separation, breakout distance, continuation persistence and market/sector confirmation.
 
-Track at minimum:
+Frozen starting behavior:
+- around +0.5R: transition toward PROTECT when structure permits;
+- around +1.0R: first 20–30% partial harvest;
+- exceptional early velocity may trigger an additional 20–30% harvest.
 
-- MFE and MAE
-- acceleration/deceleration
-- volume expansion/collapse
-- VWAP separation/reclaim/loss
-- distance from breakout level
-- new-high/new-low persistence
-- market and sector confirmation/divergence
+## 8. Dynamic staircase runner
+The remainder becomes a runner:
+1. RISK — original structural/ATR invalidation.
+2. PROTECT — reduce open risk after meaningful favorable excursion.
+3. FREE TRADE — near +1R, protect near breakeven/valid structure.
+4. PROFIT LOCK — lock meaningful profit after stronger excursion.
+5. TREND RIDE — trail with structure + volatility/ATR + VWAP/trend context.
 
-Reconstructed management behavior:
+The protective boundary may ratchet toward profit but may not loosen merely to avoid an exit.
 
-- around +0.5R: transition toward PROTECT and reduce allowable loss when structure supports it.
-- around +1.0R: first partial harvest, initially 20–30% of position.
-- unusually strong early velocity may trigger another 20–30% momentum harvest during the opening impulse.
+## 9. Peak-profit retention
+Historical research target: approximately **65% retention of peak favorable R** after sufficient profitability. This is an input to the structure-aware staircase, not a rigid tick-by-tick 65% trailing stop.
 
-The purpose is to monetize the statistically valuable impulse rather than require the full position to survive a later retracement.
+## 10. Deterioration
+Exit pressure may rise from failed continuation, adverse structure, VWAP loss/reclaim against the trade, momentum deceleration, volume collapse, sector divergence, broad-market reversal, abnormal adverse bars, volatility/regime shift or failed breakout retest. Multiple independent signals carry more weight than one noisy indicator.
 
-## 6. Runner and dynamic staircase trail
+## 11. Retracement re-entry — FROZEN REFERENCE
+Retracement is measured from the **actual breakout-entry price to the post-entry peak MFE price**, not from ORH/ORL.
 
-The remaining position becomes the runner. It must not use a naive fixed-percent trailing stop.
+For a long impulse:
+`impulse = peak_price - entry_price`
 
-Conceptual staircase:
+For a short impulse:
+`impulse = entry_price - trough_price`
 
-1. RISK — original structural invalidation.
-2. PROTECT — after meaningful favorable excursion, reduce open risk.
-3. FREE TRADE — near ~+1R, move protection toward breakeven or valid supporting structure.
-4. PROFIT LOCK — after stronger excursion, lock a meaningful fraction of profit.
-5. TREND RIDE — use structure, volatility/ATR and VWAP/trend context to ratchet the trail.
-
-The protective boundary may ratchet toward profit but never loosen simply to avoid an exit.
-
-## 7. Peak-profit retention
-
-Historical research direction: target roughly **65% retention of peak favorable R** once a trade is sufficiently profitable.
-
-Example: peak MFE of +3R implies a conceptual retained-profit objective near +1.95R.
-
-This is not a tick-by-tick fixed 65% trailing stop. It is an input to the dynamic staircase/structure-aware exit policy and must allow ordinary market noise.
-
-## 8. Deterioration / exit pressure
-
-Exit pressure may increase from independent evidence such as:
-
-- failed continuation/new high or low
-- adverse lower-high/higher-low structure
-- VWAP loss/reclaim against the trade
-- momentum deceleration
-- volume collapse
-- sector divergence
-- broad-market reversal
-- abnormal adverse bar
-- volatility/regime shift
-- failed breakout retest
-
-Multiple independent deterioration signals should matter more than one noisy indicator.
-
-## 9. Retracement re-entry
-
-A harvested breakout may create a second, independent continuation opportunity.
+Retracement fraction is adverse movement from that favorable extreme divided by that impulse. The historical 15–20% shallow-retracement concept therefore refers to retracement of realized post-entry impulse.
 
 Sequence:
+`IMPULSE → HARVEST → CONTROLLED RETRACEMENT → REQUALIFY → MOMENTUM RE-EXPANSION → NEW ENTRY`
 
-`IMPULSE → HARVEST → CONTROLLED RETRACEMENT → SUPPORT/REQUALIFICATION → MOMENTUM RE-EXPANSION → NEW ENTRY`
+Every re-entry is a new episode with a new risk budget.
 
-Historical reconstructed geometry:
+## 12. First campaign — FROZEN SCOPE
+Use **50 liquid U.S. equities × approximately 2 years** of point-in-time intraday data, targeting roughly 25,000 symbol-days before qualification.
 
-- very high-confidence impulses may accept shallow ~15–20% retracements;
-- lower-confidence setups require deeper/cleaner reset and stronger requalification.
+- Freeze the 50-name universe construction rule before inspecting strategy outcomes.
+- Preserve delisted/corporate-action semantics where relevant; avoid survivorship contamination.
+- Create immutable, non-overlapping training/validation/sealed-holdout partitions before tuning.
+- Do not consume the sealed holdout until the registered promotion gate is met.
+- Target at least 300 valid paired episodes for any promotion claim; if qualification yields fewer, report insufficient evidence rather than weakening gates after seeing results.
 
-Every re-entry is a new Decision Episode/trade with a new risk budget. It is not an extension of the prior position.
-
-## 10. Hard boundaries
-
-- no overnight position for this strategy
+## 13. Hard boundaries
+- no overnight position
 - no look-ahead data
 - deterministic risk veto
-- explicit transaction costs/slippage in evaluation
-- no parameter changes based on sealed holdout results
-- baseline parameters versioned and immutable within a registered experiment
+- explicit costs/slippage
+- causal fill timing
+- no sealed-holdout retuning
+- immutable/versioned baseline within each registered experiment
 
-## 11. Athena adaptation surface
+## 14. Athena adaptation surface
+Athena may prospectively learn bounded changes to breakout-quality weighting, confidence calibration, bounded sizing, harvest timing/fraction, re-entry qualification, trail aggressiveness, deterioration weighting, regime behavior and setup abandonment. Hard capital/risk authority is outside the same learning loop.
 
-Athena may eventually propose/learn bounded changes to:
-
-- breakout-quality weighting/thresholds
-- confidence calibration
-- bounded size multiplier
-- harvest timing and fraction
-- re-entry qualification
-- trail aggressiveness
-- deterioration weighting
-- regime-specific behavior
-- setup abandonment
-
-Athena may not mutate hard capital/risk authority inside the same learning loop.
-
-## 12. Primary research question
-
+## 15. Primary research question
 Given the same strong deterministic ORB constitution and repeated unseen market episodes, can Athena produce a prospectively validated improvement in risk-adjusted realized value without violating hard risk constraints or overfitting protected evidence?
