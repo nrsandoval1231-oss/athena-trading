@@ -6,6 +6,9 @@ __pycache__/
 
 # Secrets/data
 .env
+# Bars and intermediate pulls are large and regenerable. The frozen
+# universe manifest under data/universe/ is neither: it is the campaign's
+# dataset identity, and it is tracked deliberately despite living here.
 data/
 artifacts/
 
