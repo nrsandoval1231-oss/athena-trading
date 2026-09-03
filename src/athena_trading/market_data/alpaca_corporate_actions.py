@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Iterable
+from collections.abc import Iterable
 
 ENDPOINT = "https://data.alpaca.markets/v1/corporate-actions"
 
