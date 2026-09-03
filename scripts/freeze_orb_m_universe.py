@@ -17,9 +17,10 @@ import argparse
 import json
 import os
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from statistics import median
+from zoneinfo import ZoneInfo
 
 from athena_trading.orb_m.universe import (
     PoolProvenance, SelectionRule, SymbolStatistics, select_universe,
@@ -38,22 +39,48 @@ def _iso(value: str) -> date:
     return datetime.strptime(value, "%Y-%m-%d").date()
 
 
-def _session_statistics(rows: list[str]) -> tuple[float, float, float, int]:
-    """Median price, median dollar volume, median opening volume, session count."""
-    sessions: dict[str, list[dict]] = {}
+MARKET_TZ = ZoneInfo("America/New_York")
+REGULAR_OPEN = time(9, 30)
+REGULAR_CLOSE = time(16, 0)
+
+
+def _session_statistics(rows: list[str], *, opening_minutes: int = 15
+                        ) -> tuple[float, float, float, int]:
+    """Median price, median dollar volume, median opening volume, session count.
+
+    Bars arrive stamped in UTC and cover extended hours.  Two consequences have
+    to be handled explicitly:
+
+    * Grouping on the UTC date splits a session, because after-hours trading
+      runs to 20:00 ET, which is past midnight UTC.  Sessions are therefore
+      keyed on the exchange-local date.
+    * The first bars of a raw day are 04:00 ET premarket, not the opening
+      range.  Opening volume is taken from the regular-hours window starting at
+      09:30 ET so it means what RVOL needs it to mean.
+
+    Statistics describe regular trading hours only; extended-hours bars are
+    excluded rather than blended into medians they would distort.
+    """
+    sessions: dict[str, list[tuple[datetime, dict]]] = {}
     for raw in rows:
         row = json.loads(raw)
-        sessions.setdefault(row["event_at"][:10], []).append(row)
-    prices, dollars, openings = [], [], []
-    for bars in sessions.values():
-        bars.sort(key=lambda item: item["event_at"])
-        closes = [float(b["close"]) for b in bars]
-        volumes = [float(b["volume"]) for b in bars]
-        prices.append(median(closes))
-        dollars.append(sum(c * v for c, v in zip(closes, volumes, strict=True)))
-        openings.append(sum(volumes[:15]))
+        local = datetime.fromisoformat(row["event_at"]).astimezone(MARKET_TZ)
+        if not REGULAR_OPEN <= local.time() < REGULAR_CLOSE:
+            continue
+        sessions.setdefault(local.date().isoformat(), []).append((local, row))
     if not sessions:
         return 0.0, 0.0, 0.0, 0
+    prices, dollars, openings = [], [], []
+    for bars in sessions.values():
+        bars.sort(key=lambda item: item[0])
+        closes = [float(row["close"]) for _, row in bars]
+        volumes = [float(row["volume"]) for _, row in bars]
+        prices.append(median(closes))
+        dollars.append(sum(c * v for c, v in zip(closes, volumes, strict=True)))
+        cutoff = (datetime.combine(bars[0][0].date(), REGULAR_OPEN, tzinfo=MARKET_TZ)
+                  + timedelta(minutes=opening_minutes))
+        openings.append(sum(volume for (stamp, _), volume in zip(bars, volumes, strict=True)
+                            if stamp < cutoff))
     return median(prices), median(dollars), median(openings), len(sessions)
 
 

@@ -59,3 +59,63 @@ def test_comment_lines_are_ignored(tmp_path, clean_env):
     env.write_text("#MASSIVE_API_KEY=commented\n", encoding="utf-8")
     _module().load_env_file(env)
     assert "MASSIVE_API_KEY" not in os.environ
+
+
+# --- session statistics ----------------------------------------------------
+
+def _bar(iso_utc: str, close: float, volume: float) -> str:
+    import json
+    return json.dumps({"event_at": iso_utc, "close": close, "volume": volume})
+
+
+def _one_session(day: str, *, opening_volume: float, later_volume: float) -> list[str]:
+    """A regular session plus premarket and after-hours bars, all stamped UTC.
+
+    09:30 ET is 14:30 UTC in winter. After-hours bars past 19:00 ET land on the
+    following UTC date, which is what previously split one session into two.
+    """
+    rows = [_bar(f"{day}T09:00:00+00:00", 100.0, 500.0)]          # 04:00 ET premarket
+    rows += [_bar(f"{day}T14:3{m}:00+00:00", 100.0, opening_volume / 5) for m in range(5)]
+    rows += [_bar(f"{day}T18:00:00+00:00", 100.0, later_volume)]   # 13:00 ET midday
+    rows.append(_bar(f"{day}T23:30:00+00:00", 100.0, 700.0))       # 18:30 ET after hours
+    return rows
+
+
+def test_after_hours_bars_do_not_create_a_phantom_session():
+    module = _module()
+    rows = _one_session("2023-12-05", opening_volume=1000.0, later_volume=2000.0)
+    # A bar at 01:00 UTC the next day is still the 5 December session locally,
+    # and being outside regular hours must not register as 6 December either.
+    rows.append(_bar("2023-12-06T01:00:00+00:00", 100.0, 300.0))
+    *_, sessions = module._session_statistics(rows)
+    assert sessions == 1
+
+
+def test_opening_volume_uses_the_regular_open_not_the_first_bars_of_the_day():
+    module = _module()
+    rows = _one_session("2023-12-05", opening_volume=1000.0, later_volume=2000.0)
+    *_, opening, _ = module._session_statistics(rows)
+    # 1000 across the 09:30-09:45 ET window; the 04:00 premarket bar contributes
+    # nothing, and midday volume is excluded.
+    assert opening == 1000.0
+
+
+def test_extended_hours_volume_is_excluded_from_dollar_volume():
+    module = _module()
+    rows = _one_session("2023-12-05", opening_volume=1000.0, later_volume=2000.0)
+    _, dollars, _, _ = module._session_statistics(rows)
+    assert dollars == 100.0 * 3000.0  # opening 1000 + midday 2000, no 500 or 700
+
+
+def test_sessions_are_counted_per_local_trading_day():
+    module = _module()
+    rows = (_one_session("2023-12-05", opening_volume=1000.0, later_volume=2000.0)
+            + _one_session("2023-12-06", opening_volume=1500.0, later_volume=2500.0))
+    *_, sessions = module._session_statistics(rows)
+    assert sessions == 2
+
+
+def test_no_regular_hours_bars_yields_zeroes_rather_than_raising():
+    module = _module()
+    assert _module()._session_statistics([_bar("2023-12-05T09:00:00+00:00", 1.0, 1.0)]) == (
+        0.0, 0.0, 0.0, 0)
