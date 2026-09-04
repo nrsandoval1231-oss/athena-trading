@@ -12,10 +12,24 @@ from ..orb_m.constitution import Constitution, ManagementParameters
 from ..orb_m.entry import BreakoutSignal, OpeningRange
 from ..orb_m.execution import run_position
 from ..orb_m.market import Bar
+from ..orb_m.session import run_full_session
 from .opportunities import OpportunityCompileError, _Session, _load_receipt, _parse_row
 from .training import AATValidationError, load_training_projection
 
 EVALUATOR_ID = "ORB_M_FIRST_BREAKOUT_NO_DETERIORATION_DIAGNOSTIC_V1"
+FULL_EVALUATOR_ID = "FROZEN_FULL_ORB_M_EVALUATOR_V1"
+SCORING_SEMANTICS = {
+    "schema_version": "aat-v1-action-scoring-v1",
+    "metric": "normalized_r",
+    "action_multipliers": {
+        "PASS": 0.0,
+        "ENTER_REDUCED": 0.5,
+        "ENTER_STANDARD": 1.0,
+        "ENTER_HIGH_CONVICTION": 2.0,
+    },
+    "regret": "best_legal_action_score_minus_actual_action_score",
+    "legal_actions": ["PASS", "ENTER_REDUCED", "ENTER_STANDARD", "ENTER_HIGH_CONVICTION"],
+}
 
 
 def _bar(raw: dict[str, Any], minute: int) -> Bar:
@@ -35,6 +49,8 @@ def evaluate_training_outcomes(
     protocol_path: str | Path,
     output_rows_path: str | Path,
     output_receipt_path: str | Path,
+    *,
+    full_session: bool = False,
 ) -> dict[str, Any]:
     """Evaluate selected opportunities without exposing outcomes to an Actor."""
     output_rows, output_receipt = Path(output_rows_path), Path(output_receipt_path)
@@ -108,9 +124,25 @@ def evaluate_training_outcomes(
         if not isinstance(atr14, (int, float)) or atr14 <= 0:
             raise AATValidationError("opportunity ATR14 is invalid")
         bars = [_bar(by_minute[minute][0], minute) for minute in range(390)]
-        result = run_position(signal, bars, float(atr14), constitution, parameters)
-        if result is None or result.exit_reason in {"OPEN", "DATA_EXHAUSTED"}:
-            raise AATValidationError("diagnostic outcome is unresolved")
+        if full_session:
+            session_result = run_full_session(opening, bars, float(atr14), constitution, parameters)
+            if not session_result.episodes:
+                raise AATValidationError("full-session outcome has no episodes")
+            net_r = session_result.net_r
+            peak_r = max(episode.result.peak_r for episode in session_result.episodes)
+            trough_r = min(episode.result.trough_r for episode in session_result.episodes)
+            entry_minute = session_result.episodes[0].result.entry_minute
+            bars_held = sum(episode.result.bars_held for episode in session_result.episodes)
+            exit_reason = session_result.episodes[-1].result.exit_reason
+            episode_count = len(session_result.episodes)
+            reentry_count = session_result.reentries
+        else:
+            result = run_position(signal, bars, float(atr14), constitution, parameters)
+            if result is None or result.exit_reason in {"OPEN", "DATA_EXHAUSTED"}:
+                raise AATValidationError("diagnostic outcome is unresolved")
+            net_r, peak_r, trough_r = result.net_r, result.peak_r, result.trough_r
+            entry_minute, bars_held, exit_reason = result.entry_minute, result.bars_held, result.exit_reason
+            episode_count, reentry_count = 1, 0
         session_evidence_hash = canonical_hash(tuple(
             {key: by_minute[minute][0].get(key) for key in (
                 "event_at", "available_at", "open", "high", "low", "close", "volume", "vwap", "transactions"
@@ -121,13 +153,15 @@ def evaluate_training_outcomes(
             "candidate_hash": opportunity.candidate_hash,
             "feature_hash": canonical_hash(opportunity.features),
             "session_evidence_hash": session_evidence_hash,
-            "net_r": result.net_r,
-            "peak_r": result.peak_r,
-            "trough_r": result.trough_r,
-            "entry_minute": result.entry_minute,
-            "bars_held": result.bars_held,
-            "exit_reason": result.exit_reason,
-            "evaluator": EVALUATOR_ID,
+            "net_r": net_r,
+            "peak_r": peak_r,
+            "trough_r": trough_r,
+            "entry_minute": entry_minute,
+            "bars_held": bars_held,
+            "exit_reason": exit_reason,
+            "episode_count": episode_count,
+            "reentry_count": reentry_count,
+            "evaluator": FULL_EVALUATOR_ID if full_session else EVALUATOR_ID,
             "partition": "TRAINING",
             "execution_authority": "ABSENT",
         }
@@ -140,8 +174,11 @@ def evaluate_training_outcomes(
     output_rows.parent.mkdir(parents=True, exist_ok=True)
     output_rows.write_text(payload, encoding="utf-8", newline="\n")
     receipt = {
-        "schema_version": "aat-v1-training-outcome-diagnostic-v1",
-        "evaluator": EVALUATOR_ID,
+        "schema_version": (
+            "aat-v1-training-full-session-outcome-v1"
+            if full_session else "aat-v1-training-outcome-diagnostic-v1"
+        ),
+        "evaluator": FULL_EVALUATOR_ID if full_session else EVALUATOR_ID,
         "source_projection_hash": source_receipt["projection_hash"],
         "opportunity_projection_hash": opportunity_receipt["projection_hash"],
         "constitution_hash": constitution.identity_hash,
@@ -151,7 +188,8 @@ def evaluate_training_outcomes(
         "rows_path": output_rows.name,
         "rows_sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
         "actor_visible": False,
-        "adaptation_evidence": False,
+        "adaptation_evidence": full_session,
+        "scoring_hash": canonical_hash(SCORING_SEMANTICS) if full_session else None,
         "contains_sealed_holdout": False,
         "execution_authority": "ABSENT",
     }

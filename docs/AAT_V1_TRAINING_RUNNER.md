@@ -147,3 +147,43 @@ contains six blockers; `TRAINING_OPPORTUNITIES_BELOW_FLOOR` is no longer one
 of them. These remain diagnostic TRAINING outcomes, not performance or
 adaptation evidence. No Actor call or sealed-holdout access occurred, and
 execution authority remains `ABSENT`.
+
+## Six-blocker closure: TRAINING-only readiness
+
+The six local blockers were closed on 3 September 2026 without consuming the
+sealed holdout or granting execution authority. `FROZEN_FULL_ORB_M_EVALUATOR_V1`
+walks the complete session, keeps both directions live, permits one qualified
+re-entry per direction, and uses completed-bar deterioration signals. The
+300-row run produced 688 evaluated episodes, including 313 re-entries across
+277 source rows. Those counts describe evaluator coverage only; they are not
+performance or adaptation claims.
+
+- full-session outcome result hash:
+  `f460f01e27ffe3adec2a4354df93b07de9354a830b4bc7fb491717cc5c06080e`;
+- outcome rows SHA-256:
+  `c62d9328d2d02a78e0d012e67835a629179536988128435c0c599fd31f83dab9`;
+- scoring hash:
+  `bcdcf129aaa0f9427cfa070364554c16e594a8c9bcd5d6bbba3de62de016be7c`;
+- protocol amendment hash:
+  `3d02c5ec67b921e40381ecc2693e9db73115398e708bbe22b704bac1541fabfa`;
+- lesson inventory hash:
+  `b1e287428b4ddfad5208c83a4e434c28757395ab2b3d524bcf6f432ecede317e`;
+- readiness report hash:
+  `526c8b1591e729a6bf45d7d36b94772ea8851d22105005d29bbbcf6257c9e4c4`;
+- readiness status: `READY_TRAINING_ONLY_WITH_PROVIDER_MODEL_MUTABILITY`;
+- local blockers: 0; promoted lessons: 0;
+- full repository validation: 175 tests passed.
+
+OpenAI exposes `gpt-5.6-terra` as a mutable provider alias and no dated Terra
+snapshot was available for registration. The authorized substitute binds the
+original Actor model, prompt, inference, and action-schema hashes plus the
+actual transport-ledger SHA-256 in a local immutable amendment. The readiness
+audit independently re-hashes that ledger. `PROVIDER_MODEL_MUTABILITY` remains
+a permanent limitation and is not represented as solved.
+
+The lesson inventory is deliberately empty because no promotion rule has been
+registered. Its hash-bound `NO_PROMOTED_LESSONS` disposition is negative
+knowledge: Arm D must receive empty memory, and no learned adaptation may be
+claimed. The scoring multipliers and moderate re-entry threshold are frozen V1
+implementation decisions, not author-confirmed or empirically calibrated
+parameters. Execution authority remains `ABSENT`.

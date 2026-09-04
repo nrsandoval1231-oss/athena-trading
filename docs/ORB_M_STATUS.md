@@ -4,9 +4,9 @@ Updated 3 September 2026.
 
 ## What exists
 
-The entry and management halves of the engine are implemented and tested
-(`src/athena_trading/orb_m/`, 148 tests). Nothing has been run against real
-market data.
+The entry, management, and frozen V1 session-evaluation path are implemented
+and tested. The evaluator has run on TRAINING evidence only; this is neither a
+performance claim nor validation on a sealed holdout.
 
 | Module | Responsibility | State |
 | --- | --- | --- |
@@ -17,8 +17,8 @@ market data.
 | `execution.py` | Bar-walking fill simulator | Complete |
 | `universe.py` | Point-in-time selection, immutable manifest | Complete |
 | Breakout Quality Score | Nine-component confidence score | **Not built** |
-| Deterioration detectors | Computing signals from bars | **Not built** (mechanism exists) |
-| Session runner | Both directions plus the re-entry branch | **Not built** |
+| `session.py` deterioration | Completed-bar, same-instrument V1 signals | Complete for frozen TRAINING evaluator |
+| `session.py` runner | Both directions plus one re-entry per direction | Complete for frozen TRAINING evaluator |
 
 `action_for()` already maps a confidence value onto PASS / REDUCED / STANDARD /
 HIGH_CONVICTION, and `exit_pressure()` already weighs named deterioration
@@ -45,7 +45,7 @@ Settled with the strategy author, not inferred:
 
 ## Decisions made in implementation
 
-Two guards the specification did not cover:
+Additional guards and frozen V1 choices the specification did not cover:
 
 - **Minimum stop distance.** `max(ORL, entry - ATR)` places the stop inside the
   noise when the opening range is narrow, and a tiny R denominator both inflates
@@ -53,6 +53,19 @@ Two guards the specification did not cover:
   share is floored at `min_stop_atr_fraction` (0.15) of ATR. Frames hitting the
   floor record `stop_basis == "ATR_FLOOR"` so they stay identifiable in analysis.
 - **Intra-bar ordering.** See below.
+- **Deterioration evidence.** V1 uses only completed bars from the same
+  instrument: declining volume, mirrored lower high/low, momentum
+  deceleration, adverse candle, VWAP loss, failed new extreme, volatility
+  regime shift, and failed opening-range retest. It does not invent absent
+  sector or market-proxy data.
+- **Re-entry strength.** The available evidence has no calibrated Breakout
+  Quality Score, so every re-entry uses the constitution's moderate-setup
+  retracement floor. This is a conservative implementation decision, not a
+  strategy-author confirmation.
+- **Action scoring.** The TRAINING protocol maps PASS / REDUCED / STANDARD /
+  HIGH_CONVICTION to 0 / 0.5 / 1 / 2 times normalized R. This makes regret
+  deterministic but is an implementation decision pending empirical
+  calibration.
 
 ## The intra-bar assumption
 
@@ -165,8 +178,7 @@ latter would let the campaign iterate without a human relaying every result.
 ## Next
 
 1. Inventory the existing local dataset before pulling anything.
-2. Breakout Quality Score, calibrated against real feature distributions rather
+2. Breakout Quality Score, calibrated against TRAINING feature distributions rather
    than invented weights — which is why the data step precedes it.
-3. Deterioration signal detection from bars.
-4. Session runner covering both directions and the re-entry branch.
-5. Freeze partitions, then run the campaign.
+3. Register a lesson-promotion rule before claiming any learned adaptation.
+4. Freeze partitions, then run the campaign without opening the sealed holdout.

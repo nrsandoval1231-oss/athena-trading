@@ -15,10 +15,12 @@ def main() -> int:
     parser.add_argument("--protocol", type=Path, required=True)
     parser.add_argument("--output-rows", type=Path, required=True)
     parser.add_argument("--output-receipt", type=Path, required=True)
+    parser.add_argument("--full-session", action="store_true")
     args = parser.parse_args()
     evaluate_training_outcomes(
         args.source_receipt, args.source_rows, args.opportunity_receipt,
         args.protocol, args.output_rows, args.output_receipt,
+        full_session=args.full_session,
     )
     return 0
 

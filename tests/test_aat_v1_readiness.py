@@ -4,7 +4,9 @@ import pytest
 
 from athena_trading.aat_v1 import AATValidationError
 from athena_trading.aat_v1.opportunities import compile_training_opportunities
-from athena_trading.aat_v1.outcomes import evaluate_training_outcomes
+from athena_trading.aat_v1.outcomes import SCORING_SEMANTICS, evaluate_training_outcomes
+from athena_trading.aat_v1.amendment import build_protocol_amendment
+from athena_trading.aat_v1.lessons import build_lesson_inventory
 from athena_trading.aat_v1.readiness import audit_adaptation_readiness
 from test_aat_v1_opportunities import _multi_session_source
 
@@ -23,7 +25,11 @@ def _evidence(tmp_path):
         "protocol": {
             "dataset_hash": "d" * 64, "assignment_hash": "a" * 64,
             "minimum_pairs": 1, "scoring_hash": "s" * 64,
-            "actor": {"model_id": "gpt-5.6-terra"},
+            "actor": {
+                "model_id": "gpt-5.6-terra", "model_hash": "m" * 64,
+                "prompt_hash": "q" * 64, "inference_hash": "i" * 64,
+                "action_schema_hash": "a" * 64,
+            },
         },
     }), encoding="utf-8")
     outcomes, outcome_receipt = tmp_path / "outcomes.jsonl", tmp_path / "outcomes.json"
@@ -43,7 +49,7 @@ def test_current_shape_is_durable_negative_knowledge(tmp_path):
     assert report["sealed_holdout_consumed"] is False
     assert report["execution_authority"] == "ABSENT"
     assert {
-        "ACTOR_MODEL_NOT_IMMUTABLE_SNAPSHOT",
+        "ACTOR_MODEL_IDENTITY_NOT_LOCALLY_BOUND",
         "REGISTERED_MINIMUM_PAIRS_BELOW_FLOOR",
         "TRAINING_OPPORTUNITIES_BELOW_FLOOR",
         "OUTCOME_EVALUATOR_DIAGNOSTIC_ONLY",
@@ -60,3 +66,54 @@ def test_tampered_outcome_receipt_is_rejected(tmp_path):
     outcomes.write_text(json.dumps(value), encoding="utf-8")
     with pytest.raises(AATValidationError, match="receipt hash mismatch"):
         audit_adaptation_readiness(protocol, opportunities, outcomes)
+
+
+def test_local_binding_and_empty_lesson_inventory_are_explicit(tmp_path):
+    protocol, opportunities, outcomes = _evidence(tmp_path)
+    ledger = tmp_path / "ledger.jsonl"
+    ledger.write_text('{"response":"bound"}\n', encoding="utf-8")
+    scoring = tmp_path / "scoring.json"
+    scoring.write_text(json.dumps(SCORING_SEMANTICS), encoding="utf-8")
+    amendment = build_protocol_amendment(protocol, ledger, scoring)
+    amendment_path = tmp_path / "amendment.json"
+    amendment_path.write_text(json.dumps(amendment), encoding="utf-8")
+
+    # Rebuild the one-row evidence with full-session semantics so the lesson
+    # inventory can prove an intentionally empty memory without inventing one.
+    full_rows, full_receipt = tmp_path / "full.jsonl", tmp_path / "full.json"
+    source_receipt = tmp_path / "history-receipt.json"
+    source_rows = tmp_path / "training-history.jsonl"
+    evaluate_training_outcomes(
+        source_receipt, source_rows, opportunities, protocol,
+        full_rows, full_receipt, full_session=True,
+    )
+    inventory = build_lesson_inventory(full_receipt)
+    inventory_path = tmp_path / "lessons.json"
+    inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+    report = audit_adaptation_readiness(
+        protocol, opportunities, full_receipt,
+        protocol_amendment_path=amendment_path,
+        transport_ledger_path=ledger,
+        lesson_inventory_path=inventory_path,
+    )
+    codes = {blocker["code"] for blocker in report["blockers"]}
+    assert codes == {"TRAINING_OPPORTUNITIES_BELOW_FLOOR"}
+    assert report["permanent_limitations"] == ["PROVIDER_MODEL_MUTABILITY"]
+    assert report["promoted_lesson_count"] == 0
+
+
+def test_tampered_protocol_amendment_is_rejected(tmp_path):
+    protocol, opportunities, outcomes = _evidence(tmp_path)
+    ledger = tmp_path / "ledger.jsonl"
+    ledger.write_text("{}\n", encoding="utf-8")
+    scoring = tmp_path / "scoring.json"
+    scoring.write_text(json.dumps(SCORING_SEMANTICS), encoding="utf-8")
+    amendment = build_protocol_amendment(protocol, ledger, scoring)
+    amendment["minimum_pairs"] = 1
+    amendment_path = tmp_path / "amendment.json"
+    amendment_path.write_text(json.dumps(amendment), encoding="utf-8")
+    with pytest.raises(AATValidationError, match="amendment hash mismatch"):
+        audit_adaptation_readiness(
+            protocol, opportunities, outcomes,
+            protocol_amendment_path=amendment_path,
+        )

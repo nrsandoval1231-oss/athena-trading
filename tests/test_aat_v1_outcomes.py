@@ -56,3 +56,20 @@ def test_rejects_non_atr_opportunity_projection(tmp_path):
             source_receipt, source_rows, opportunity_receipt, _protocol(tmp_path),
             tmp_path / "outcomes.jsonl", tmp_path / "outcomes.json",
         )
+
+
+def test_full_session_receipt_binds_scoring_and_is_eligible_evidence(tmp_path):
+    source_receipt, source_rows = _multi_session_source(tmp_path)
+    opportunities = tmp_path / "opportunities.jsonl"
+    opportunity_receipt = tmp_path / "opportunities.json"
+    compile_training_opportunities(
+        source_receipt, source_rows, opportunities, opportunity_receipt,
+        maximum_opportunities=1, require_atr14=True, require_resolved_session=True,
+    )
+    receipt = evaluate_training_outcomes(
+        source_receipt, source_rows, opportunity_receipt, _protocol(tmp_path),
+        tmp_path / "full.jsonl", tmp_path / "full.json", full_session=True,
+    )
+    assert receipt["evaluator"] == "FROZEN_FULL_ORB_M_EVALUATOR_V1"
+    assert receipt["adaptation_evidence"] is True
+    assert isinstance(receipt["scoring_hash"], str)

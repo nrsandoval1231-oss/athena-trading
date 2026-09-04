@@ -1,6 +1,6 @@
 import hashlib
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -9,7 +9,7 @@ from athena_trading.aat_v1 import OpportunityCompileError, compile_training_oppo
 
 def _source(tmp_path, *, breakout=True, sealed=False):
     rows = tmp_path / "training.jsonl"
-    start = datetime(2026, 2, 2, 14, 30, tzinfo=timezone.utc)
+    start = datetime(2026, 2, 2, 14, 30, tzinfo=UTC)
     payload = []
     for minute in range(17):
         close = 10.5 if breakout and minute == 16 else 10.0
@@ -36,7 +36,7 @@ def _source(tmp_path, *, breakout=True, sealed=False):
 def _multi_session_source(tmp_path):
     rows = tmp_path / "training-history.jsonl"
     payload = []
-    start = datetime(2026, 2, 2, 14, 30, tzinfo=timezone.utc)
+    start = datetime(2026, 2, 2, 14, 30, tzinfo=UTC)
     for session_index in range(16):
         session_start = start + timedelta(days=session_index)
         for minute in range(390):
