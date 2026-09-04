@@ -27,6 +27,8 @@ it is consumed and must never be tuned against, resealed, or reused. No final
 claim is supported: the frozen compiler found only 249 of the required 300
 qualified opportunities, so evaluation ended `INVALID_EVIDENCE` before any
 Actor call.
+The consumed dataset assignment and authorization are recorded in a tracked
+negative-knowledge registry that future export paths must check.
 
 ## Layout
 

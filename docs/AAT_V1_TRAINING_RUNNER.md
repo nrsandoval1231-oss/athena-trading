@@ -146,6 +146,13 @@ not evaluable from this holdout.
 - Actor calls: 0; additional model cost: $0; claim authorized: false;
   execution authority: `ABSENT`.
 
+The consumed state is now enforced by the tracked registry
+`configs/aat_consumed_holdouts_v1.json`, canonical hash
+`4cf3fd33452a86352d57262be0181271093147ab4ccff99cb64fea63e79b85aa`.
+It binds the dataset assignment, authorization, raw holdout projection,
+opportunity projection, and terminal preflight result. Both the Trading gate
+and Core exporter reject reuse of the authorization or dataset assignment.
+
 ## Four-arm matched TRAINING comparison
 
 On 4 September 2026 the registered four-arm comparison completed across the

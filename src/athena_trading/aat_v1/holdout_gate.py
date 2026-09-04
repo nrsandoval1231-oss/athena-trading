@@ -14,6 +14,54 @@ from ..athena_adapter.contracts import canonical_hash
 from .training import AATValidationError
 
 
+def load_consumed_holdouts(path: str | Path) -> dict[str, Any]:
+    """Load immutable negative knowledge about holdouts that are no longer fresh."""
+    try:
+        registry = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise AATValidationError("consumed-holdout registry is unreadable") from exc
+    entries = registry.get("entries") if isinstance(registry, dict) else None
+    if (
+        not isinstance(registry, dict)
+        or registry.get("schema_version") != "aat-consumed-holdout-registry-v1"
+        or not isinstance(entries, list)
+    ):
+        raise AATValidationError("consumed-holdout registry is malformed")
+    required = {
+        "authorization_id", "contract_hash", "dataset_hash", "assignment_hash",
+        "holdout_projection_hash", "opportunity_projection_hash", "preflight_result_hash",
+        "consumed_at_utc", "disposition", "qualified_opportunity_count", "execution_authority",
+    }
+    if any(
+        not isinstance(entry, dict)
+        or not required.issubset(entry)
+        or entry.get("execution_authority") != "ABSENT"
+        or entry.get("disposition") not in {"INVALID_EVIDENCE", "CLAIM_SUPPORTED", "CLAIM_NOT_SUPPORTED"}
+        for entry in entries
+    ):
+        raise AATValidationError("consumed-holdout registry entry is invalid")
+    if len({entry["authorization_id"] for entry in entries}) != len(entries):
+        raise AATValidationError("consumed-holdout registry has duplicate authorization")
+    return registry
+
+
+def assert_fresh_holdout(
+    registry: Mapping[str, Any], *, authorization_id: str,
+    dataset_hash: str, assignment_hash: str, holdout_projection_hash: str | None = None,
+) -> None:
+    """Reject any attempted reuse of an authorization, dataset assignment, or projection."""
+    for entry in registry.get("entries", ()):
+        if entry.get("authorization_id") == authorization_id:
+            raise AATValidationError("sealed-holdout authorization was already consumed")
+        if (
+            entry.get("dataset_hash") == dataset_hash
+            and entry.get("assignment_hash") == assignment_hash
+        ):
+            raise AATValidationError("sealed-holdout dataset assignment was already consumed")
+        if holdout_projection_hash and entry.get("holdout_projection_hash") == holdout_projection_hash:
+            raise AATValidationError("sealed-holdout projection was already consumed")
+
+
 def audit_holdout_preflight(
     contract_path: str | Path, authorization_path: str | Path,
     opportunity_receipt_path: str | Path,

@@ -4,9 +4,11 @@ import json
 import hashlib
 
 from athena_trading.aat_v1.holdout_gate import (
+    assert_fresh_holdout,
     audit_holdout_preflight,
     evaluate_claim,
     validate_holdout_authorization,
+    load_consumed_holdouts,
 )
 from athena_trading.athena_adapter.contracts import canonical_hash
 from athena_trading.aat_v1.training import AATValidationError
@@ -108,3 +110,20 @@ def test_preflight_blocks_actor_when_opportunities_are_below_frozen_minimum(tmp_
     result = audit_holdout_preflight(contract_path, authorization_path, receipt_path)
     assert result["status"] == "INVALID_EVIDENCE"
     assert result["actor_called"] is False
+
+
+def test_tracked_consumption_registry_prevents_v1_reuse():
+    root = Path(__file__).parents[1]
+    registry = load_consumed_holdouts(root / "configs/aat_consumed_holdouts_v1.json")
+    entry = registry["entries"][0]
+    assert entry["disposition"] == "INVALID_EVIDENCE"
+    with pytest.raises(AATValidationError, match="dataset assignment was already consumed"):
+        assert_fresh_holdout(
+            registry, authorization_id="new-authorization",
+            dataset_hash=entry["dataset_hash"], assignment_hash=entry["assignment_hash"],
+        )
+    with pytest.raises(AATValidationError, match="authorization was already consumed"):
+        assert_fresh_holdout(
+            registry, authorization_id=entry["authorization_id"],
+            dataset_hash="new-dataset", assignment_hash="new-assignment",
+        )
