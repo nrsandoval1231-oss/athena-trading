@@ -1,7 +1,21 @@
 import pytest
+from pathlib import Path
+import json
 
 from athena_trading.aat_v1.holdout_gate import evaluate_claim, validate_holdout_authorization
 from athena_trading.aat_v1.training import AATValidationError
+
+
+def test_registered_authorization_is_contract_bound_and_unused():
+    root = Path(__file__).parents[1]
+    authorization = json.loads(
+        (root / "configs/aat_v1_sealed_holdout_authorization_v1.json").read_text(encoding="utf-8")
+    )
+    validate_holdout_authorization(
+        authorization,
+        contract_hash="269a2e4842ac591d1f89de5b518bd9c2ffc49d682e2e313156df8c75e37fd904",
+        prior_receipts=[],
+    )
 
 
 def _contract():

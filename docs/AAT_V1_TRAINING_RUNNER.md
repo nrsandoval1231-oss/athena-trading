@@ -96,6 +96,32 @@ and applies the frozen bootstrap, effect, and drawdown gates to both
 comparators. These controls were exercised with synthetic fixtures only. No
 production authorization receipt was created and no sealed evidence was read.
 
+## One-time holdout authorization and export
+
+On 4 September 2026 the repository owner explicitly instructed the project to
+continue past the frozen authorization boundary. That instruction was recorded
+as authorization `aat-v1-owner-authorization-2026-09-04`, bound to the final
+claim-contract hash and the existing $20 ceiling. Authorization hash:
+`845cf5d3fb72991cd9866085c0b47ccb32f875c3f4451d83bd48e962cf3e45aa`.
+
+Athena Core then exported exactly the 203,735 rows assigned to the registered
+sealed holdout. The exporter reverified every canonical evidence ID against
+the original frozen source and refused overwrite or contract drift. The sealed
+holdout is now consumed and may not be reused, resealed, tuned against, or
+treated as fresh evidence again.
+
+- holdout projection hash:
+  `d3764af4c21500f077404ebb15e4ba4b48af96217d426270fad4382f3e120784`;
+- holdout rows SHA-256:
+  `2d311d317ed604608f97b770dcf5b1f733fb3f2eeb2fa8bcdca360fe3153b64e`;
+- source SHA-256 remained:
+  `ef97982d3e015db27347dea5a4d988734bcc46a7a89d600ff3343f89b110635a`;
+- Actor calls: 0; incremental model cost: $0; execution authority: `ABSENT`.
+
+No claim result exists yet. The next implementation must compile the fixed
+holdout opportunities without reusing the TRAINING-only compiler interface or
+changing its frozen ORB-M semantics.
+
 ## Four-arm matched TRAINING comparison
 
 On 4 September 2026 the registered four-arm comparison completed across the

@@ -21,8 +21,10 @@ The subsequent 300-opportunity four-arm TRAINING comparison is complete and
 audit-passing, but remains in-sample prompt-steering evidence—not proof that
 Athena adaptation works. The final claim contract is frozen; the one-time
 sealed holdout still requires separate authorization and remains untouched.
-The single-use authorization gateway and deterministic claim scorer are ready;
-their current coverage uses synthetic fixtures only.
+The single-use authorization gateway and deterministic claim scorer are ready.
+The authorized sealed holdout has now been identity-verified and exported, so
+it is consumed and must never be tuned against, resealed, or reused. No final
+claim result exists yet.
 
 ## Layout
 

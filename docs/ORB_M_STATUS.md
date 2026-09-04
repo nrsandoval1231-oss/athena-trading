@@ -223,10 +223,9 @@ fixes, and a real freeze with provider keys — not a second pool invention.
    rather than invented weights.
 2. The final claim contract is frozen and hash-bound to the audit-passing
    TRAINING comparison; it still authorizes no adaptation claim.
-3. Open the one-time sealed holdout only
-   under a separately identified, contract-bound authorization. The evaluator
-   and single-use gateway are implemented and tested; no production
-   authorization receipt exists yet.
+3. The one-time sealed holdout was explicitly authorized and exported with
+   identity verification. It is now consumed. Compile and evaluate it exactly
+   once under the frozen claim contract; never tune, reseal, or reuse it.
 
 ## Data
 
