@@ -221,8 +221,8 @@ fixes, and a real freeze with provider keys — not a second pool invention.
 
 1. Breakout Quality Score, calibrated against TRAINING feature distributions
    rather than invented weights.
-2. Freeze the final claim contract. The bounded four-arm TRAINING comparison
-   is complete and audit-passing, but authorizes no adaptation claim.
+2. The final claim contract is frozen and hash-bound to the audit-passing
+   TRAINING comparison; it still authorizes no adaptation claim.
 3. Open the one-time sealed holdout only
    under a separately authorized evaluation.
 

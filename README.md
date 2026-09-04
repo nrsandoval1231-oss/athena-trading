@@ -19,7 +19,8 @@ A preregistered TRAINING-only gate promotes one abstention lesson (PASS versus
 standard sizing) and retains two rejected alternatives as negative knowledge.
 The subsequent 300-opportunity four-arm TRAINING comparison is complete and
 audit-passing, but remains in-sample prompt-steering evidence—not proof that
-Athena adaptation works.
+Athena adaptation works. The final claim contract is frozen; the one-time
+sealed holdout still requires separate authorization and remains untouched.
 
 ## Layout
 

@@ -63,6 +63,31 @@ invented exact cost.
   `0f60516bd3df904e46c6f05592df81aed96088ab9aa4cb374ec9d1bd69a139ff`;
 - sealed holdout consumed: false; execution authority: `ABSENT`.
 
+## Frozen final claim contract
+
+The final AAT-V1 claim contract was frozen on 5 September 2026 without reading
+sealed-holdout content. It binds the registered protocol and completed
+four-arm TRAINING evidence. A future one-time evaluation may support only the
+claim `AAT_V1_MEMORY_IMPROVES_DECISION_QUALITY`, comparing D against both the
+memoryless B arm and naive-memory C arm on at least 300 matched sealed-holdout
+opportunities.
+
+Support requires every comparator to show at least 0.01R mean paired-regret
+improvement, a positive deterministic 95% bootstrap lower bound, no drawdown
+regression above 0.1R, and at least 100 observations in each LONG and SHORT
+regime. Missing, mismatched, reused, or incomplete evidence is invalid;
+otherwise any failed gate produces `CLAIM_NOT_SUPPORTED`. Neither outcome
+grants execution authority. The mutable Terra provider alias remains a
+permanent limitation.
+
+- contract hash:
+  `269a2e4842ac591d1f89de5b518bd9c2ffc49d682e2e313156df8c75e37fd904`;
+- freeze receipt hash:
+  `fd13d70c59147fca250036d180c5a736a6a5528c357899c6c7161e1486921c6c`;
+- status: `FROZEN_AWAITING_SEPARATE_HOLDOUT_AUTHORIZATION`;
+- claim authorized: false; sealed holdout accessed: false; execution authority:
+  `ABSENT`.
+
 ## Four-arm matched TRAINING comparison
 
 On 4 September 2026 the registered four-arm comparison completed across the
