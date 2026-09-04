@@ -21,9 +21,14 @@ from .market import Bar
 
 def fill_price(raw: float, direction: str, *, is_entry: bool,
                constitution: Constitution) -> float:
-    """Apply slippage against the position on both sides of the trade."""
+    """Apply slippage and per-share commission against the position.
+
+    Both costs are adverse on entry and exit.  Commission is a fixed currency
+    offset per share; slippage remains a proportional haircut.
+    """
     adverse = 1 if (direction == "LONG") == is_entry else -1
-    return raw * (1 + adverse * constitution.slippage_bps / 10_000)
+    slipped = raw * (1 + adverse * constitution.slippage_bps / 10_000)
+    return slipped + adverse * constitution.commission_per_share
 
 
 def _touches_stop(bar: Bar, direction: str, stop: float) -> bool:

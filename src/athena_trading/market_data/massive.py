@@ -76,7 +76,13 @@ def _request_with_retry(url:str,*,max_retries:int,retry_backoff_seconds:float)->
         try:
             with urlopen(url,timeout=60) as response:
                 return response.read(),{"attempt_count":attempt+1,"retry_count":attempt,"elapsed_seconds":round(time.monotonic()-started,6)}
-        except (HTTPError,URLError) as exc:
+        except HTTPError as exc:
+            # Permanent 4xx (and any non-transient status) must fail fast: retrying
+            # a 404 or 401 burns the budget and masks caller bugs.
+            if getattr(exc, "code", None) not in TRANSIENT_HTTP_STATUSES:
+                raise RuntimeError(f"Massive request failed with HTTP {exc.code}") from exc
+            if attempt==max_retries: raise RuntimeError("Massive request failed after retries") from exc
+        except URLError as exc:
             if attempt==max_retries: raise RuntimeError("Massive request failed after retries") from exc
         time.sleep(retry_backoff_seconds*(2**attempt))
     raise AssertionError
