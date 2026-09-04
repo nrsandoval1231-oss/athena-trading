@@ -96,3 +96,27 @@ an edge, performance estimate, validation result, or basis for promotion. The
 sample is tiny, selected from TRAINING, and omits the unbuilt deterioration
 detector and full session/re-entry runner. Execution authority remains
 `ABSENT`.
+
+## Adaptation readiness gate
+
+`audit_aat_v1_adaptation_readiness.py` verifies the registered protocol,
+opportunity projection, outcome receipt, and their row hashes before evaluating
+readiness. The command returns exit code 2 for durable negative knowledge and
+cannot call an Actor or consume a holdout.
+
+The real audit on 3 September 2026 returned
+`BLOCKED_NEGATIVE_KNOWLEDGE`, report hash
+`7b7cb7d5b2d4764f73e1229e3a2f3ad7f8c4efa6509c9109c3addfdbe89315d4`,
+with seven blockers:
+
+1. `gpt-5.6-terra` is an alias, not an immutable dated snapshot.
+2. The registered `minimum_pairs` is 1; the hard floor is 300.
+3. The current outcome-ready sample contains 10 opportunities, not 300.
+4. The outcome evaluator is explicitly diagnostic-only.
+5. Full session, re-entry, and deterioration semantics are absent.
+6. The outcome receipt does not bind the registered scoring hash.
+7. No hash-bound TRAINING lesson inventory exists.
+
+Full repository validation after adding the gate: 169 tests passed. The audit
+made no API request, consumed no sealed evidence, and left execution authority
+`ABSENT`.
