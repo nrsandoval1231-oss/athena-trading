@@ -7,6 +7,7 @@ alter the strategy itself.
 from .constitution import (
     ADAPTIVE_SURFACE, BreakoutAction, Constitution, ManagementParameters, TrailStage,
 )
+from .deterioration import DeteriorationContext, detect_signals, pressure_by_minute
 from .entry import (
     AttemptBudget, BreakoutSignal, OpeningRange, RiskFrame, build_risk_frame,
     detect_breakout, freeze_opening_range,
@@ -15,6 +16,10 @@ from .execution import ExecutionResult, run_position
 from .management import (
     PositionState, action_for, exit_pressure, stage_for, trail_stop_r,
 )
+from .quality import (
+    COMPONENT_NAMES, BreakoutQualityInputs, BreakoutQualityResult, score_breakout,
+)
+from .session import EpisodeRecord, SessionRiskState, SymbolSessionResult, run_symbol_session
 from .universe import (
     PoolProvenance, SelectionRule, SymbolStatistics, UniverseManifest,
     select_universe,
@@ -26,13 +31,15 @@ from .market import (
 
 __all__ = [
     "ADAPTIVE_SURFACE", "AttemptBudget", "Bar", "BreakoutAction", "BreakoutSignal",
-    "Constitution", "ExecutionResult", "ManagementParameters", "OpeningRange",
+    "BreakoutQualityInputs", "BreakoutQualityResult", "COMPONENT_NAMES",
+    "Constitution", "DeteriorationContext", "EpisodeRecord", "ExecutionResult",
+    "ManagementParameters", "OpeningRange",
     "PoolProvenance", "PositionState", "PremarketContext", "PriorSession",
-    "RiskFrame", "SelectionRule", "SymbolStatistics", "TrailStage",
-    "UniverseManifest",
+    "RiskFrame", "SelectionRule", "SessionRiskState", "SymbolStatistics",
+    "SymbolSessionResult", "TrailStage", "UniverseManifest",
     "action_for", "average_true_range", "build_risk_frame", "detect_breakout",
-    "exit_pressure", "freeze_opening_range", "gap_percent", "premarket_context",
-    "relative_volume", "run_position", "select_universe", "session_vwap",
-    "stage_for", "trail_stop_r",
-    "true_range",
+    "detect_signals", "exit_pressure", "freeze_opening_range", "gap_percent",
+    "premarket_context", "pressure_by_minute", "relative_volume",
+    "run_position", "run_symbol_session", "score_breakout", "select_universe",
+    "session_vwap", "stage_for", "trail_stop_r", "true_range",
 ]
