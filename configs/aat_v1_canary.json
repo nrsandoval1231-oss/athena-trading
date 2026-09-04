@@ -5,7 +5,7 @@
   "actor_arms": ["B_MEMORYLESS", "C_NAIVE_MEMORY", "D_ATHENA"],
   "call_ceiling": 30,
   "token_ceiling": 38400,
-  "spend_ceiling_usd": 10.0,
+  "spend_ceiling_usd": 20.0,
   "retries_per_call_ceiling": 0,
   "partition": "TRAINING",
   "sealed_holdout_access": false,

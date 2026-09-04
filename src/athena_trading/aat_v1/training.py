@@ -34,7 +34,8 @@ def _safe_path(path: Path) -> None:
         raise AATValidationError("SEALED_HOLDOUT path is forbidden")
 
 
-def _protocol(path: Path) -> Mapping[str, Any]:
+def load_registered_protocol(path: str | Path) -> Mapping[str, Any]:
+    path = Path(path)
     _safe_path(path)
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -68,7 +69,7 @@ def load_training_projection(receipt_path: str | Path, protocol_path: str | Path
     projection_hash = projection_payload.pop("projection_hash", None)
     if projection_hash != canonical_hash(projection_payload):
         raise AATValidationError("opportunity projection hash mismatch")
-    registered = _protocol(protocol_file)
+    registered = load_registered_protocol(protocol_file)
     protocol = registered["protocol"]
     for key in ("dataset_hash", "assignment_hash"):
         if receipt.get(key) != protocol.get(key):
