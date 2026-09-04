@@ -15,6 +15,11 @@ the current readiness state is
 been consumed, no performance or learned-adaptation claim has been made, and
 execution authority remains `ABSENT`.
 
+A preregistered TRAINING-only gate currently promotes one abstention lesson
+(PASS versus standard sizing) and retains two rejected alternatives as negative
+knowledge. This is input to a future bounded four-arm comparison, not evidence
+that Athena adaptation works.
+
 ## Layout
 
 - `src/athena_trading/strategies/` — trading strategies

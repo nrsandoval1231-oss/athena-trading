@@ -8,27 +8,10 @@ from typing import Any
 
 from ..athena_adapter.contracts import canonical_hash
 from .amendment import load_protocol_amendment
+from .lessons import INVENTORY_SCHEMA, load_promotion_rule
 from .outcomes import FULL_EVALUATOR_ID
+from .receipts import verified_receipt
 from .training import AATValidationError, load_registered_protocol, load_training_projection
-
-def verified_receipt(path: Path, *, hash_field: str) -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise AATValidationError(f"receipt is unreadable: {path.name}") from exc
-    if not isinstance(value, dict):
-        raise AATValidationError(f"receipt is malformed: {path.name}")
-    payload = dict(value)
-    claimed = payload.pop(hash_field, None)
-    if claimed != canonical_hash(payload):
-        raise AATValidationError(f"receipt hash mismatch: {path.name}")
-    rows_name, rows_hash = value.get("rows_path"), value.get("rows_sha256")
-    if not isinstance(rows_name, str) or not isinstance(rows_hash, str):
-        raise AATValidationError(f"row binding is missing: {path.name}")
-    rows_path = path.parent / rows_name
-    if not rows_path.is_file() or hashlib.sha256(rows_path.read_bytes()).hexdigest() != rows_hash:
-        raise AATValidationError(f"row hash mismatch: {path.name}")
-    return value
 
 
 def audit_adaptation_readiness(
@@ -39,6 +22,8 @@ def audit_adaptation_readiness(
     protocol_amendment_path: str | Path | None = None,
     transport_ledger_path: str | Path | None = None,
     lesson_inventory_path: str | Path | None = None,
+    promotion_rule_path: str | Path | None = None,
+    scoring_config_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Return reproducible negative knowledge; never run an Actor or holdout."""
     protocol_file = Path(protocol_path)
@@ -119,6 +104,24 @@ def audit_adaptation_readiness(
             raise AATValidationError("lesson inventory is not TRAINING-only")
         if lessons.get("execution_authority") != "ABSENT" or not isinstance(lessons.get("lessons"), list):
             raise AATValidationError("lesson inventory authority or rows are malformed")
+        if lessons.get("schema_version") == INVENTORY_SCHEMA:
+            if promotion_rule_path is None or scoring_config_path is None:
+                raise AATValidationError("lesson rule and scoring bindings are required")
+            rule = load_promotion_rule(promotion_rule_path)
+            try:
+                scoring = json.loads(Path(scoring_config_path).read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise AATValidationError("lesson scoring configuration is unreadable") from exc
+            if lessons.get("promotion_rule_hash") != canonical_hash(rule):
+                raise AATValidationError("lesson promotion rule hash mismatch")
+            if lessons.get("scoring_hash") != canonical_hash(scoring):
+                raise AATValidationError("lesson scoring hash mismatch")
+            promoted = [
+                row for row in lessons["lessons"]
+                if isinstance(row, dict) and row.get("disposition") == "PROMOTED"
+            ]
+            if len(promoted) > rule["maximum_promoted_lessons"]:
+                raise AATValidationError("lesson promotion count exceeds registered maximum")
 
     report = {
         "schema_version": "aat-v1-adaptation-readiness-v1",
@@ -127,6 +130,9 @@ def audit_adaptation_readiness(
         "protocol_amendment_hash": amendment.get("amendment_hash") if amendment else None,
         "opportunity_projection_hash": opportunity_receipt["projection_hash"],
         "outcome_result_hash": outcome_receipt["result_hash"],
+        "lesson_inventory_hash": lessons.get("inventory_hash") if isinstance(lessons, dict) else None,
+        "promotion_rule_hash": lessons.get("promotion_rule_hash") if isinstance(lessons, dict) else None,
+        "lesson_scoring_hash": lessons.get("scoring_hash") if isinstance(lessons, dict) else None,
         "blocker_count": len(blockers),
         "blockers": blockers,
         "permanent_limitations": limitations if amendment else [],

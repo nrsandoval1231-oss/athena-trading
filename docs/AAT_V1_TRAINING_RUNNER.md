@@ -185,9 +185,45 @@ actual transport-ledger SHA-256 in a local immutable amendment. The readiness
 audit independently re-hashes that ledger. `PROVIDER_MODEL_MUTABILITY` remains
 a permanent limitation and is not represented as solved.
 
-The lesson inventory is deliberately empty because no promotion rule has been
-registered. Its hash-bound `NO_PROMOTED_LESSONS` disposition is negative
-knowledge: Arm D must receive empty memory, and no learned adaptation may be
-claimed. The scoring multipliers and moderate re-entry threshold are frozen V1
-implementation decisions, not author-confirmed or empirically calibrated
-parameters. Execution authority remains `ABSENT`.
+At that checkpoint the lesson inventory was deliberately empty because no
+promotion rule had been registered. Its hash-bound `NO_PROMOTED_LESSONS`
+disposition required Arm D to receive empty memory. The scoring multipliers and
+moderate re-entry threshold remain frozen V1 implementation decisions, not
+author-confirmed or empirically calibrated parameters. Execution authority
+remains `ABSENT`.
+
+## TRAINING-only lesson promotion
+
+On 4 September 2026, a deterministic rule was preregistered before inspecting
+candidate-policy effects. It compares the frozen global PASS, reduced-size,
+and high-conviction actions against ENTER_STANDARD on all 300 TRAINING
+outcomes. Promotion requires at least 300 total observations, at least 100 LONG
+and 100 SHORT observations, mean improvement of 0.01R, positive deterministic
+95% bootstrap lower bounds overall and in both direction regimes, and no
+drawdown regression above 0.1R. At most one eligible global action may be
+promoted; any later TRAINING lower bound at or below zero or drawdown regression
+requires revocation.
+
+The registered rule produced one promoted TRAINING lesson: PASS rather than
+ENTER_STANDARD for this registered opportunity population. PASS improved the
+hypothetical action score by 0.06038R on average with a 0.04424R lower bound.
+The direction strata were 169 LONG and 131 SHORT rows, with positive lower
+bounds of 0.04404R and 0.02874R. Reduced sizing was eligible but rejected as
+weaker than PASS. High-conviction sizing was rejected for negative effect,
+uncertainty, regime contradiction, and drawdown regression.
+
+These are in-sample TRAINING policy diagnostics, not trading-performance or
+learned-adaptation claims. No Actor was called in this step, the earlier
+empty-memory canary was not relabeled as an adaptation run, and the promoted
+lesson has no execution authority.
+
+- promotion rule hash:
+  `49e9d73aa57f46018727a8c96d182be49f2f03cd9b67511b8c239d1ea4c4ef04`;
+- lesson inventory hash:
+  `9156aca7b76382a263cfa67a5fbca6bd61bf8e43710da320909c75121de2b2bc`;
+- readiness report hash:
+  `9ad899ded7b3c8864c5fb56a73e1390df813eb4c2c8b69bd58916a63bc58d7e6`;
+- readiness: `READY_TRAINING_ONLY_WITH_PROVIDER_MODEL_MUTABILITY`, zero local
+  blockers, one promoted TRAINING lesson;
+- full repository validation: Ruff passed and 200 tests passed;
+- sealed holdout consumed: false; execution authority: `ABSENT`.

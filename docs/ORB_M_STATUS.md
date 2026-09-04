@@ -204,8 +204,10 @@ identity hashes recorded here travel into Athena evidence, so
 
 1. Breakout Quality Score, calibrated against TRAINING feature distributions
    rather than invented weights.
-2. Register a lesson-promotion rule before claiming any learned adaptation.
-3. Freeze partitions, then run the campaign without opening the sealed holdout.
+2. Run the bounded four-arm TRAINING comparison with equal C/D memory budgets;
+   do not relabel the earlier empty-memory transport canary as adaptation.
+3. Freeze the final claim contract, then open the one-time sealed holdout only
+   under a separately authorized evaluation.
 
 ## Data
 

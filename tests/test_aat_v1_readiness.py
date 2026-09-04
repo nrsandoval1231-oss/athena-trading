@@ -40,6 +40,29 @@ def _evidence(tmp_path):
     return protocol, opportunity_receipt, outcome_receipt
 
 
+def _promotion_files(tmp_path):
+    scoring = tmp_path / "scoring.json"
+    scoring.write_text(json.dumps(SCORING_SEMANTICS), encoding="utf-8")
+    rule = tmp_path / "promotion.json"
+    rule.write_text(json.dumps({
+        "schema_version": "aat-v1-lesson-promotion-rule-v1",
+        "baseline_action": "ENTER_STANDARD",
+        "candidate_actions": ["PASS", "ENTER_REDUCED", "ENTER_HIGH_CONVICTION"],
+        "minimum_support": 300,
+        "minimum_regime_support": 1,
+        "minimum_effect_r": 0.01,
+        "confidence_level": 0.95,
+        "bootstrap_resamples": 1000,
+        "bootstrap_seed": 7,
+        "regime_feature": "direction",
+        "required_regimes": ["LONG", "SHORT"],
+        "max_drawdown_regression_r": 0.1,
+        "maximum_promoted_lessons": 1,
+        "revocation_rule": "REVOKE_ON_NEW_TRAINING_LCB_NONPOSITIVE_OR_DRAWNDOWN_REGRESSION",
+    }), encoding="utf-8")
+    return scoring, rule
+
+
 def test_current_shape_is_durable_negative_knowledge(tmp_path):
     protocol, opportunities, outcomes = _evidence(tmp_path)
     report = audit_adaptation_readiness(protocol, opportunities, outcomes)
@@ -72,8 +95,7 @@ def test_local_binding_and_empty_lesson_inventory_are_explicit(tmp_path):
     protocol, opportunities, outcomes = _evidence(tmp_path)
     ledger = tmp_path / "ledger.jsonl"
     ledger.write_text('{"response":"bound"}\n', encoding="utf-8")
-    scoring = tmp_path / "scoring.json"
-    scoring.write_text(json.dumps(SCORING_SEMANTICS), encoding="utf-8")
+    scoring, rule = _promotion_files(tmp_path)
     amendment = build_protocol_amendment(protocol, ledger, scoring)
     amendment_path = tmp_path / "amendment.json"
     amendment_path.write_text(json.dumps(amendment), encoding="utf-8")
@@ -87,7 +109,9 @@ def test_local_binding_and_empty_lesson_inventory_are_explicit(tmp_path):
         source_receipt, source_rows, opportunities, protocol,
         full_rows, full_receipt, full_session=True,
     )
-    inventory = build_lesson_inventory(full_receipt)
+    inventory = build_lesson_inventory(
+        opportunities, protocol, full_receipt, rule, scoring
+    )
     inventory_path = tmp_path / "lessons.json"
     inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
     report = audit_adaptation_readiness(
@@ -95,19 +119,23 @@ def test_local_binding_and_empty_lesson_inventory_are_explicit(tmp_path):
         protocol_amendment_path=amendment_path,
         transport_ledger_path=ledger,
         lesson_inventory_path=inventory_path,
+        promotion_rule_path=rule,
+        scoring_config_path=scoring,
     )
     codes = {blocker["code"] for blocker in report["blockers"]}
     assert codes == {"TRAINING_OPPORTUNITIES_BELOW_FLOOR"}
     assert report["permanent_limitations"] == ["PROVIDER_MODEL_MUTABILITY"]
     assert report["promoted_lesson_count"] == 0
+    assert report["lesson_inventory_hash"] == inventory["inventory_hash"]
+    assert report["promotion_rule_hash"] == inventory["promotion_rule_hash"]
+    assert report["lesson_scoring_hash"] == inventory["scoring_hash"]
 
 
 def test_tampered_protocol_amendment_is_rejected(tmp_path):
     protocol, opportunities, outcomes = _evidence(tmp_path)
     ledger = tmp_path / "ledger.jsonl"
     ledger.write_text("{}\n", encoding="utf-8")
-    scoring = tmp_path / "scoring.json"
-    scoring.write_text(json.dumps(SCORING_SEMANTICS), encoding="utf-8")
+    scoring, _ = _promotion_files(tmp_path)
     amendment = build_protocol_amendment(protocol, ledger, scoring)
     amendment["minimum_pairs"] = 1
     amendment_path = tmp_path / "amendment.json"

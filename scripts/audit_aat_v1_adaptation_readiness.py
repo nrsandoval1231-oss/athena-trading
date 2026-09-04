@@ -16,6 +16,8 @@ def main() -> int:
     parser.add_argument("--protocol-amendment", type=Path)
     parser.add_argument("--transport-ledger", type=Path)
     parser.add_argument("--lesson-inventory", type=Path)
+    parser.add_argument("--promotion-rule", type=Path)
+    parser.add_argument("--scoring-config", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.output.exists():
@@ -25,6 +27,8 @@ def main() -> int:
         protocol_amendment_path=args.protocol_amendment,
         transport_ledger_path=args.transport_ledger,
         lesson_inventory_path=args.lesson_inventory,
+        promotion_rule_path=args.promotion_rule,
+        scoring_config_path=args.scoring_config,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8", newline="\n")
