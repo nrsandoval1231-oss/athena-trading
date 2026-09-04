@@ -224,7 +224,9 @@ fixes, and a real freeze with provider keys — not a second pool invention.
 2. The final claim contract is frozen and hash-bound to the audit-passing
    TRAINING comparison; it still authorizes no adaptation claim.
 3. Open the one-time sealed holdout only
-   under a separately authorized evaluation.
+   under a separately identified, contract-bound authorization. The evaluator
+   and single-use gateway are implemented and tested; no production
+   authorization receipt exists yet.
 
 ## Data
 

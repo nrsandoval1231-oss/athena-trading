@@ -88,6 +88,14 @@ permanent limitation.
 - claim authorized: false; sealed holdout accessed: false; execution authority:
   `ABSENT`.
 
+The evaluation boundary now also has deterministic, fail-closed enforcement.
+It rejects authorization that is not separately identified, contract-bound,
+single-use, and unused; rejects incomplete three-arm pairs, wrong partitions,
+authority drift, duplicate identities, and insufficient LONG/SHORT support;
+and applies the frozen bootstrap, effect, and drawdown gates to both
+comparators. These controls were exercised with synthetic fixtures only. No
+production authorization receipt was created and no sealed evidence was read.
+
 ## Four-arm matched TRAINING comparison
 
 On 4 September 2026 the registered four-arm comparison completed across the
