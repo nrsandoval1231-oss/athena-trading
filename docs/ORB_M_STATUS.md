@@ -106,11 +106,15 @@ mention afterwards. Finer-grained data than one-minute bars would shrink it.
 - **`peak_retention` is recollected, not measured.** The 0.65 default is a
   starting point to be fitted. Building toward it would fit the author's memory
   rather than the data.
-- **The engine exists twice.** `nrsandoval1231-oss/Athena` still carries
-  `src/athena_arena/orb_m/*` and both ORB-M scripts. The port copied rather than
-  moved, so there are two divergent copies and the statistics fixes recorded
-  here are absent from the Athena Core one. This is a live domain-boundary
-  violation.
+- **The engine existed twice — resolved.** The domain split copied ORB-M into
+  this repository rather than moving it, leaving a second, diverging copy in
+  `nrsandoval1231-oss/Athena` that never received the statistics fixes.
+  `src/athena_arena/orb_m/*`, both ORB-M scripts and the six test modules have
+  been removed there (Athena `473ffe6`); its suite goes 507 to 382, exactly the
+  125 ORB-M tests, with nothing else referencing them. Athena Core now carries
+  `docs/ATHENA_DOMAIN_BOUNDARY.md` as the canonical statement of what lives
+  where, and its README says strategy code belongs here. **This repository is
+  the only home for the engine.**
 - **`tzdata` is a Windows-only dependency and CI cannot see it.** `zoneinfo` has
   no tz database to read on Windows, so the exchange-local grouping raises
   `ZoneInfoNotFoundError` there. CI runs on Linux and reports green regardless.
