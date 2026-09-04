@@ -19,7 +19,10 @@ from .management import (
 from .quality import (
     COMPONENT_NAMES, BreakoutQualityInputs, BreakoutQualityResult, score_breakout,
 )
-from .session import EpisodeRecord, SessionRiskState, SymbolSessionResult, run_symbol_session
+from .session import (
+    EpisodeRecord, SessionEpisode, SessionResult, SessionRiskState,
+    SymbolSessionResult, deterioration_by_minute, run_full_session, run_symbol_session,
+)
 from .universe import (
     PoolProvenance, SelectionRule, SymbolStatistics, UniverseManifest,
     select_universe,
@@ -35,11 +38,13 @@ __all__ = [
     "Constitution", "DeteriorationContext", "EpisodeRecord", "ExecutionResult",
     "ManagementParameters", "OpeningRange",
     "PoolProvenance", "PositionState", "PremarketContext", "PriorSession",
-    "RiskFrame", "SelectionRule", "SessionRiskState", "SymbolStatistics",
+    "RiskFrame", "SelectionRule", "SessionEpisode", "SessionResult",
+    "SessionRiskState", "SymbolStatistics",
     "SymbolSessionResult", "TrailStage", "UniverseManifest",
     "action_for", "average_true_range", "build_risk_frame", "detect_breakout",
-    "detect_signals", "exit_pressure", "freeze_opening_range", "gap_percent",
+    "detect_signals", "deterioration_by_minute", "exit_pressure",
+    "freeze_opening_range", "gap_percent",
     "premarket_context", "pressure_by_minute", "relative_volume",
-    "run_position", "run_symbol_session", "score_breakout", "select_universe",
-    "session_vwap", "stage_for", "trail_stop_r", "true_range",
+    "run_full_session", "run_position", "run_symbol_session", "score_breakout",
+    "select_universe", "session_vwap", "stage_for", "trail_stop_r", "true_range",
 ]
