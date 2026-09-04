@@ -120,3 +120,30 @@ with seven blockers:
 Full repository validation after adding the gate: 169 tests passed. The audit
 made no API request, consumed no sealed evidence, and left execution authority
 `ABSENT`.
+
+### 300-opportunity scale check
+
+The first attempt to scale the V2 compiler correctly failed because one
+selected session lacked a complete future bar sequence. V3 adds an explicit
+complete-current-session requirement rather than silently emitting an
+unresolved or data-exhausted result.
+
+The corrected 300-row TRAINING run completed on 3 September 2026:
+
+- compiler: `ORB_M_FIRST_CLOSE_BREAKOUT_V3_RESOLVED_ATR14`;
+- opportunity projection hash:
+  `ef8b572fe54ae95493692a8700f17af0e3e48e3a4f2d32c6c9dc49d1d49377ea`;
+- opportunity rows SHA-256:
+  `7b61627062ec3ac58e61e008fe5d4d631b29246c28ae639f16848296435c9e12`;
+- resolved diagnostic outcomes: 300;
+- outcome result hash:
+  `dbf7b29ebb0ff7ed2336c05c759b05c0d5f6f8a03d1c219b8a35eff4ace73f91`;
+- outcome rows SHA-256:
+  `54cda402668121cfb0cb1360e36ef432f1abfa04531cbefb6651572357d92ebd`.
+
+Readiness report
+`ab7d2652372424fe54cfa0bb5c365ef738d91b28c2bda62b5531a838b707788b`
+contains six blockers; `TRAINING_OPPORTUNITIES_BELOW_FLOOR` is no longer one
+of them. These remain diagnostic TRAINING outcomes, not performance or
+adaptation evidence. No Actor call or sealed-holdout access occurred, and
+execution authority remains `ABSENT`.

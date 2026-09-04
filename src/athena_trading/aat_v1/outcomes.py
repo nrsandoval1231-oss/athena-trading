@@ -42,7 +42,10 @@ def evaluate_training_outcomes(
         raise AATValidationError("refusing to overwrite outcome evidence")
     source_receipt = _load_receipt(Path(source_receipt_path), Path(source_rows_path))
     opportunity_receipt, opportunities = load_training_projection(opportunity_receipt_path, protocol_path)
-    if opportunity_receipt.get("compiler") != "ORB_M_FIRST_CLOSE_BREAKOUT_V2_ATR14":
+    if opportunity_receipt.get("compiler") not in {
+        "ORB_M_FIRST_CLOSE_BREAKOUT_V2_ATR14",
+        "ORB_M_FIRST_CLOSE_BREAKOUT_V3_RESOLVED_ATR14",
+    }:
         raise AATValidationError("outcomes require ATR14-qualified opportunities")
     if opportunity_receipt.get("source_projection_hash") != source_receipt.get("projection_hash"):
         raise AATValidationError("opportunity/source projection mismatch")

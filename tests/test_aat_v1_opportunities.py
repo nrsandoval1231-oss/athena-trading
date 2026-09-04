@@ -124,3 +124,12 @@ def test_atr14_mode_requires_only_complete_prior_sessions(tmp_path):
     assert result["compiler"] == "ORB_M_FIRST_CLOSE_BREAKOUT_V2_ATR14"
     assert result["requires_15_complete_prior_sessions"] is True
     assert opportunity["features"]["atr14"] == pytest.approx(0.2)
+
+
+def test_resolved_session_mode_requires_atr14(tmp_path):
+    receipt, rows = _source(tmp_path)
+    with pytest.raises(OpportunityCompileError, match="requires ATR14"):
+        compile_training_opportunities(
+            receipt, rows, tmp_path / "out.jsonl", tmp_path / "out.json",
+            maximum_opportunities=1, require_resolved_session=True,
+        )

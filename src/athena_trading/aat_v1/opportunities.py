@@ -98,12 +98,15 @@ def compile_training_opportunities(
     *,
     maximum_opportunities: int,
     require_atr14: bool = False,
+    require_resolved_session: bool = False,
 ) -> dict[str, Any]:
     """Write a bounded, deterministic opportunity projection and receipt."""
     source_receipt_path, source_rows_path = Path(receipt_path), Path(rows_path)
     output_rows, output_receipt = Path(output_rows_path), Path(output_receipt_path)
     if maximum_opportunities < 1:
         raise OpportunityCompileError("maximum opportunities must be positive")
+    if require_resolved_session and not require_atr14:
+        raise OpportunityCompileError("resolved-session mode requires ATR14 qualification")
     if output_rows.exists() or output_receipt.exists():
         raise OpportunityCompileError("refusing to overwrite output")
     receipt = _load_receipt(source_receipt_path, source_rows_path)
@@ -147,6 +150,8 @@ def compile_training_opportunities(
     candidates: list[tuple[datetime, str, dict[str, Any]]] = []
     for session in sessions.values():
         if set(session.opening) != set(range(constitution.opening_minutes)):
+            continue
+        if require_resolved_session and {minute for minute, _, _ in session.regular} != set(range(390)):
             continue
         opening_high = max(float(row["high"]) for row in session.opening.values())
         opening_low = min(float(row["low"]) for row in session.opening.values())
@@ -220,7 +225,11 @@ def compile_training_opportunities(
         "assignment_hash": receipt["assignment_hash"],
         "protocol_hash": receipt["protocol_hash"],
         "partition": "TRAINING",
-        "compiler": "ORB_M_FIRST_CLOSE_BREAKOUT_V2_ATR14" if require_atr14 else "ORB_M_FIRST_CLOSE_BREAKOUT_V1",
+        "compiler": (
+            "ORB_M_FIRST_CLOSE_BREAKOUT_V3_RESOLVED_ATR14" if require_resolved_session
+            else "ORB_M_FIRST_CLOSE_BREAKOUT_V2_ATR14" if require_atr14
+            else "ORB_M_FIRST_CLOSE_BREAKOUT_V1"
+        ),
         "requires_15_complete_prior_sessions": require_atr14,
         "constitution_hash": constitution.identity_hash,
         "rows_path": output_rows.name,
@@ -230,6 +239,8 @@ def compile_training_opportunities(
         "contains_sealed_holdout": False,
         "execution_authority": "ABSENT",
     }
+    if require_resolved_session:
+        result["requires_complete_current_session"] = True
     result["projection_hash"] = canonical_hash(result)
     output_receipt.parent.mkdir(parents=True, exist_ok=True)
     output_receipt.write_text(json.dumps(result, sort_keys=True, indent=2) + "\n", encoding="utf-8", newline="\n")
