@@ -21,16 +21,20 @@ holdout.
 | `market.py` | Point-in-time features, Wilder true range, VWAP, RVOL, gap | Complete |
 | `entry.py` | Range freeze, close-based trigger, frozen R, attempt budget | Complete |
 | `management.py` | APDE stages, staircase trail, peak retention, exit pressure | Complete |
-| `execution.py` | Bar-walking fill simulator | Complete |
+| `execution.py` | Bar-walking fill simulator (slippage + commission) | Complete |
 | `universe.py` | Point-in-time selection, immutable manifest | Complete |
-| Breakout Quality Score | Nine-component confidence score | **Not built** |
-| `session.py` deterioration | Completed-bar, same-instrument V1 signals | Complete for frozen TRAINING evaluator |
-| `session.py` runner | Both directions plus one re-entry per direction | Complete for frozen TRAINING evaluator |
+| `quality.py` | Breakout Quality Score (nine equal-weighted components) | Complete |
+| `deterioration.py` | Detectors from bars → signals `exit_pressure` weighs | Complete |
+| `session.py` | `run_full_session` (AAT) + `run_symbol_session` (BQS/ceilings) | Complete |
 
-`action_for()` already maps a confidence value onto PASS / REDUCED / STANDARD /
-HIGH_CONVICTION, and `exit_pressure()` already weighs named deterioration
-signals against a threshold. What is missing in both cases is the code that
-produces the inputs.
+`action_for()` maps confidence onto PASS / REDUCED / STANDARD / HIGH_CONVICTION.
+`score_breakout()` produces that confidence and **fails closed**
+(`ok=False`, action PASS) when required inputs are missing. `exit_pressure()`
+weighs named deterioration signals; `detect_signals` / `pressure_by_minute`
+produce those signals from bars so `run_position` exits can fire.
+`run_full_session()` remains the frozen AAT / TRAINING evaluator contract.
+`run_symbol_session()` enforces constitutional `max_open_positions`,
+`max_daily_loss_r`, and `max_drawdown_r` (not enforced by `run_position` alone).
 
 ## Confirmed specification
 
@@ -60,15 +64,23 @@ Additional guards and frozen V1 choices the specification did not cover:
   share is floored at `min_stop_atr_fraction` (0.15) of ATR. Frames hitting the
   floor record `stop_basis == "ATR_FLOOR"` so they stay identifiable in analysis.
 - **Intra-bar ordering.** See below.
+- **BQS weights.** Nine components are equal-weighted until real feature
+  distributions from the campaign data are measured. Inventing calibrated
+  weights before that measurement would dress a guess as knowledge.
+- **Commission.** `commission_per_share` is applied as an adverse currency
+  offset in `fill_price` on both entry and exit (preferred over dropping the
+  field).
+- **Massive retries.** `_request_with_retry` retries only
+  `TRANSIENT_HTTP_STATUSES`; permanent 4xx fail fast.
 - **Deterioration evidence.** V1 uses only completed bars from the same
   instrument: declining volume, mirrored lower high/low, momentum
   deceleration, adverse candle, VWAP loss, failed new extreme, volatility
   regime shift, and failed opening-range retest. It does not invent absent
   sector or market-proxy data.
-- **Re-entry strength.** The available evidence has no calibrated Breakout
-  Quality Score, so every re-entry uses the constitution's moderate-setup
-  retracement floor. This is a conservative implementation decision, not a
-  strategy-author confirmation.
+- **Re-entry strength.** `run_full_session` (AAT) still uses the constitution's
+  moderate-setup retracement floor. `run_symbol_session` applies BQS plus the
+  strong/moderate retracement bands; BQS weights remain uncalibrated until
+  campaign feature distributions exist.
 - **Action scoring.** The TRAINING protocol maps PASS / REDUCED / STANDARD /
   HIGH_CONVICTION to 0 / 0.5 / 1 / 2 times normalized R. This makes regret
   deterministic but is an implementation decision pending empirical
@@ -201,6 +213,11 @@ identity hashes recorded here travel into Athena evidence, so
 `athena_arena.contracts` and fails if the two diverge.
 
 ## Next
+
+Campaign path modules (`quality`, `deterioration`, `run_symbol_session`) are
+implemented. Remaining work is operational: smoke re-run after statistics
+fixes, and a real freeze with provider keys — not a second pool invention.
+
 
 1. Breakout Quality Score, calibrated against TRAINING feature distributions
    rather than invented weights.

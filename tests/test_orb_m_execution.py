@@ -130,3 +130,11 @@ def test_a_ratcheted_stop_exits_above_the_original_invalidation():
     assert result.peak_r >= 3.0
     assert result.net_r > 0.0
     assert result.exit_reason == "STOP"
+
+
+def test_commission_per_share_is_charged_against_the_position():
+    bars = [bar(16, 101.5, 101.6, 101.4, 101.5), bar(17, 101.4, 101.5, 98.5, 98.8)]
+    frictionless = run(bars).net_r
+    costed = run(bars, constitution=Constitution(slippage_bps=0.0,
+                                                commission_per_share=0.05)).net_r
+    assert costed < frictionless
