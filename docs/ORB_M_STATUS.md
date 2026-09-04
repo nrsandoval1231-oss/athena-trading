@@ -204,9 +204,9 @@ identity hashes recorded here travel into Athena evidence, so
 
 1. Breakout Quality Score, calibrated against TRAINING feature distributions
    rather than invented weights.
-2. Run the bounded four-arm TRAINING comparison with equal C/D memory budgets;
-   do not relabel the earlier empty-memory transport canary as adaptation.
-3. Freeze the final claim contract, then open the one-time sealed holdout only
+2. Freeze the final claim contract. The bounded four-arm TRAINING comparison
+   is complete and audit-passing, but authorizes no adaptation claim.
+3. Open the one-time sealed holdout only
    under a separately authorized evaluation.
 
 ## Data

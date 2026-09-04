@@ -69,18 +69,21 @@ def validate_actor_identity(actor: Mapping[str, Any], *, model_id: str) -> None:
         raise AATValidationError("registered Actor identity drift")
 
 
-def _packet(row: TrainingRow, actor_identity: str) -> Mapping[str, Any]:
-    # No lesson inventory exists yet. Empty memory is explicit and makes this a
-    # transport canary, never evidence of adaptation between B/C/D.
+def build_actor_packet(
+    row: TrainingRow, actor_identity: str,
+    memory: Sequence[Mapping[str, Any]] = (),
+) -> Mapping[str, Any]:
+    # Canary callers leave memory empty. The four-arm runner supplies only
+    # separately verified, budget-equal lesson projections.
     return {
         "candidate_hash": row.opportunity_id,
         "features": dict(row.features),
-        "memory": [],
+        "memory": [dict(item) for item in memory],
         "actor_identity": actor_identity,
     }
 
 
-def _payload(model_id: str, packet: Mapping[str, Any]) -> Mapping[str, Any]:
+def build_actor_payload(model_id: str, packet: Mapping[str, Any]) -> Mapping[str, Any]:
     return {
         "model": model_id,
         "store": False,
@@ -98,7 +101,7 @@ def price_requests(rows: Sequence[TrainingRow], *, model_id: str, actor_identity
                    pricing: Mapping[str, Any]) -> Mapping[str, Any]:
     requests = [
         {"arm": arm, "opportunity_id": row.opportunity_id,
-         "payload": _payload(model_id, _packet(row, actor_identity))}
+         "payload": build_actor_payload(model_id, build_actor_packet(row, actor_identity))}
         for row in rows for arm in ARMS
     ]
     # UTF-8 byte length is a conservative token ceiling for text tokenization.

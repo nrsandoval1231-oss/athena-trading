@@ -63,6 +63,36 @@ invented exact cost.
   `0f60516bd3df904e46c6f05592df81aed96088ab9aa4cb374ec9d1bd69a139ff`;
 - sealed holdout consumed: false; execution authority: `ABSENT`.
 
+## Four-arm matched TRAINING comparison
+
+On 4 September 2026 the registered four-arm comparison completed across the
+same 300 TRAINING opportunities: deterministic ENTER_STANDARD (A), memoryless
+Terra (B), Terra with the strongest rejected lesson (C), and Terra with the
+promoted PASS lesson (D). Arms C and D each received a 12-token memory item.
+The Actor produced 900 accepted decisions from 918 attempts; 18 attempts were
+rejected fail-closed. One decision exhausted its two registered attempts, and
+an immutable recovery record authorized exactly one same-inference retry.
+
+The final evidence contains 1,200 matched episodes. Mean regret was 0.13895R
+for A, 0.12172R for B, 0.10877R for C, and 0.07858R for D. D selected PASS in
+300 of 300 TRAINING episodes. This is an in-sample prompt-steering result: the
+PASS lesson was derived from these same TRAINING outcomes, so it is neither an
+adaptation claim nor trading-performance evidence. The independent audit
+therefore passes the comparison infrastructure while explicitly setting
+`claim_authorized` to false.
+
+- final result hash:
+  `aa0bb85683fc7b0062f97143bcdb9d996257625ef805d595e2dbec13cdaf7702`;
+- ledger SHA-256:
+  `654d7333b8dcb9bc9209971b22d29b0d6afc59711f91642c4af21bbb20fe8e15`;
+- episode rows SHA-256:
+  `e4918daa4cfc5e0fffb66c3e7d18dce063d9091990174113e38f0724477b113e`;
+- audit hash:
+  `6df8e9105acbbcdd496809e39fe931c4222ed2d739e1d64a1cbb3ed3a3200452`;
+- measured incremental cost: $2.213500; cumulative upper bound including the
+  prior canary: $2.309388, below the registered $20 ceiling;
+- sealed holdout consumed: false; execution authority: `ABSENT`.
+
 The original ignored result used the mean planned request size for its two-call
 diagnostic allowance and reported `$0.0958772`. The immutable amendment
 `artifacts/aat-v1/terra-canary-amendment.json` replaces only that bound with
