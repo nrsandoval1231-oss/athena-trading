@@ -56,7 +56,9 @@ def evaluate_training_outcomes(
     output_rows, output_receipt = Path(output_rows_path), Path(output_receipt_path)
     if output_rows.exists() or output_receipt.exists():
         raise AATValidationError("refusing to overwrite outcome evidence")
-    source_receipt = _load_receipt(Path(source_receipt_path), Path(source_rows_path))
+    source_receipt = _load_receipt(
+        Path(source_receipt_path), Path(source_rows_path), partition="TRAINING"
+    )
     opportunity_receipt, opportunities = load_training_projection(opportunity_receipt_path, protocol_path)
     if opportunity_receipt.get("compiler") not in {
         "ORB_M_FIRST_CLOSE_BREAKOUT_V2_ATR14",

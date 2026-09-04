@@ -19,6 +19,7 @@ from ..orb_m.market import average_true_range
 
 _EASTERN = ZoneInfo("America/New_York")
 _RAW_SCHEMA = "athena-aat-v1-training-projection-v1"
+_HOLDOUT_RAW_SCHEMA = "athena-aat-v1-sealed-holdout-projection-v1"
 _OPPORTUNITY_SCHEMA = "athena-aat-v1-opportunity-projection-v1"
 
 
@@ -42,24 +43,34 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _load_receipt(path: Path, rows_path: Path) -> dict[str, Any]:
-    if "holdout" in str(path).lower() or "holdout" in str(rows_path).lower():
+def _load_receipt(path: Path, rows_path: Path, *, partition: str) -> dict[str, Any]:
+    if partition == "TRAINING" and (
+        "holdout" in str(path).lower() or "holdout" in str(rows_path).lower()
+    ):
         raise OpportunityCompileError("holdout paths are forbidden")
     try:
         receipt = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise OpportunityCompileError("raw TRAINING receipt is unreadable") from exc
-    if receipt.get("schema_version") != _RAW_SCHEMA:
-        raise OpportunityCompileError("raw TRAINING receipt schema mismatch")
-    if receipt.get("capability") != "TRAINING_ONLY":
-        raise OpportunityCompileError("source capability is not TRAINING_ONLY")
-    if receipt.get("contains_sealed_holdout") is not False:
-        raise OpportunityCompileError("source does not deny sealed holdout content")
+    expected = {
+        "TRAINING": (_RAW_SCHEMA, "TRAINING_ONLY", False, "training"),
+        "SEALED_HOLDOUT": (
+            _HOLDOUT_RAW_SCHEMA, "ONE_TIME_SEALED_HOLDOUT_EVALUATION", True, "holdout"
+        ),
+    }.get(partition)
+    if expected is None:
+        raise OpportunityCompileError("unsupported opportunity partition")
+    schema, capability, contains_holdout, prefix = expected
+    if receipt.get("schema_version") != schema or receipt.get("capability") != capability:
+        raise OpportunityCompileError(f"raw {partition} receipt schema or capability mismatch")
+    if receipt.get("contains_sealed_holdout") is not contains_holdout:
+        label = "sealed holdout" if partition == "TRAINING" else "sealed-holdout"
+        raise OpportunityCompileError(f"source {label} declaration mismatch for {partition}")
     if receipt.get("execution_authority") != "ABSENT":
         raise OpportunityCompileError("execution authority must be ABSENT")
-    expected = receipt.get("training_rows_sha256")
-    if not isinstance(expected, str) or _sha256(rows_path) != expected:
-        raise OpportunityCompileError("raw TRAINING rows hash mismatch")
+    expected_hash = receipt.get(f"{prefix}_rows_sha256")
+    if not isinstance(expected_hash, str) or _sha256(rows_path) != expected_hash:
+        raise OpportunityCompileError(f"raw {partition} rows hash mismatch")
     return receipt
 
 
@@ -90,7 +101,7 @@ def _parse_row(raw: Any, line_number: int) -> tuple[str, str, int, dict[str, Any
     return symbol, local.date().isoformat(), minute, raw, available_at
 
 
-def compile_training_opportunities(
+def _compile_opportunities(
     receipt_path: str | Path,
     rows_path: str | Path,
     output_rows_path: str | Path,
@@ -99,6 +110,9 @@ def compile_training_opportunities(
     maximum_opportunities: int,
     require_atr14: bool = False,
     require_resolved_session: bool = False,
+    partition: str = "TRAINING",
+    context_receipt_path: str | Path | None = None,
+    context_rows_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Write a bounded, deterministic opportunity projection and receipt."""
     source_receipt_path, source_rows_path = Path(receipt_path), Path(rows_path)
@@ -109,28 +123,54 @@ def compile_training_opportunities(
         raise OpportunityCompileError("resolved-session mode requires ATR14 qualification")
     if output_rows.exists() or output_receipt.exists():
         raise OpportunityCompileError("refusing to overwrite output")
-    receipt = _load_receipt(source_receipt_path, source_rows_path)
+    receipt = _load_receipt(source_receipt_path, source_rows_path, partition=partition)
     sessions: dict[tuple[str, str], _Session] = {}
+    eligible_sessions: set[tuple[str, str]] = set()
     source_row_count = 0
-    with source_rows_path.open(encoding="utf-8") as stream:
-        for line_number, line in enumerate(stream, 1):
-            source_row_count += 1
-            try:
-                parsed = _parse_row(json.loads(line), line_number)
-            except json.JSONDecodeError as exc:
-                raise OpportunityCompileError(f"row {line_number} is invalid JSON") from exc
-            if parsed is None:
-                continue
-            symbol, day, minute, raw, available_at = parsed
-            session = sessions.setdefault((symbol, day), _Session(symbol, day))
-            if minute in session.opening or any(item[0] == minute for item in session.regular):
-                raise OpportunityCompileError(f"duplicate regular minute for {symbol} {day}")
-            session.regular.append((minute, raw, available_at))
-            if 0 <= minute < 15:
-                session.opening[minute] = raw
 
-    if source_row_count != receipt.get("training_row_count"):
-        raise OpportunityCompileError("raw TRAINING row count mismatch")
+    def ingest(path: Path, *, eligible: bool) -> int:
+        count = 0
+        with path.open(encoding="utf-8") as stream:
+            for line_number, line in enumerate(stream, 1):
+                count += 1
+                try:
+                    parsed = _parse_row(json.loads(line), line_number)
+                except json.JSONDecodeError as exc:
+                    raise OpportunityCompileError(f"row {line_number} is invalid JSON") from exc
+                if parsed is None:
+                    continue
+                symbol, day, minute, raw, available_at = parsed
+                key = (symbol, day)
+                session = sessions.setdefault(key, _Session(symbol, day))
+                if minute in session.opening or any(item[0] == minute for item in session.regular):
+                    raise OpportunityCompileError(f"duplicate regular minute for {symbol} {day}")
+                session.regular.append((minute, raw, available_at))
+                if 0 <= minute < 15:
+                    session.opening[minute] = raw
+                if eligible:
+                    eligible_sessions.add(key)
+        return count
+
+    if (context_receipt_path is None) != (context_rows_path is None):
+        raise OpportunityCompileError("context receipt and rows must be supplied together")
+    if context_receipt_path is not None and context_rows_path is not None:
+        context_receipt = _load_receipt(
+            Path(context_receipt_path), Path(context_rows_path), partition="TRAINING"
+        )
+        context_count = ingest(Path(context_rows_path), eligible=False)
+        if context_count != context_receipt.get("training_row_count"):
+            raise OpportunityCompileError("raw TRAINING context row count mismatch")
+        if (
+            context_receipt.get("dataset_hash") != receipt.get("dataset_hash")
+            or context_receipt.get("assignment_hash") != receipt.get("assignment_hash")
+            or context_receipt.get("protocol_hash") != receipt.get("protocol_hash")
+        ):
+            raise OpportunityCompileError("TRAINING context identity mismatch")
+    source_row_count = ingest(source_rows_path, eligible=True)
+
+    count_field = "training_row_count" if partition == "TRAINING" else "holdout_row_count"
+    if source_row_count != receipt.get(count_field):
+        raise OpportunityCompileError(f"raw {partition} row count mismatch")
 
     constitution = Constitution()
     complete_daily: dict[str, list[tuple[str, tuple[float, float, float]]]] = {}
@@ -148,7 +188,9 @@ def compile_training_opportunities(
         for values in complete_daily.values():
             values.sort(key=lambda item: item[0])
     candidates: list[tuple[datetime, str, dict[str, Any]]] = []
-    for session in sessions.values():
+    for key, session in sessions.items():
+        if key not in eligible_sessions:
+            continue
         if set(session.opening) != set(range(constitution.opening_minutes)):
             continue
         if require_resolved_session and {minute for minute, _, _ in session.regular} != set(range(390)):
@@ -224,7 +266,7 @@ def compile_training_opportunities(
         "dataset_hash": receipt["dataset_hash"],
         "assignment_hash": receipt["assignment_hash"],
         "protocol_hash": receipt["protocol_hash"],
-        "partition": "TRAINING",
+        "partition": partition,
         "compiler": (
             "ORB_M_FIRST_CLOSE_BREAKOUT_V3_RESOLVED_ATR14" if require_resolved_session
             else "ORB_M_FIRST_CLOSE_BREAKOUT_V2_ATR14" if require_atr14
@@ -236,7 +278,7 @@ def compile_training_opportunities(
         "row_count": len(selected),
         "rows_sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
         "contains_outcomes": False,
-        "contains_sealed_holdout": False,
+        "contains_sealed_holdout": partition == "SEALED_HOLDOUT",
         "execution_authority": "ABSENT",
     }
     if require_resolved_session:
@@ -245,3 +287,32 @@ def compile_training_opportunities(
     output_receipt.parent.mkdir(parents=True, exist_ok=True)
     output_receipt.write_text(json.dumps(result, sort_keys=True, indent=2) + "\n", encoding="utf-8", newline="\n")
     return result
+
+
+def compile_training_opportunities(
+    receipt_path: str | Path, rows_path: str | Path,
+    output_rows_path: str | Path, output_receipt_path: str | Path, *,
+    maximum_opportunities: int, require_atr14: bool = False,
+    require_resolved_session: bool = False,
+) -> dict[str, Any]:
+    return _compile_opportunities(
+        receipt_path, rows_path, output_rows_path, output_receipt_path,
+        maximum_opportunities=maximum_opportunities, require_atr14=require_atr14,
+        require_resolved_session=require_resolved_session, partition="TRAINING",
+    )
+
+
+def compile_holdout_opportunities(
+    receipt_path: str | Path, rows_path: str | Path,
+    output_rows_path: str | Path, output_receipt_path: str | Path, *,
+    maximum_opportunities: int, require_atr14: bool = False,
+    require_resolved_session: bool = False,
+    context_receipt_path: str | Path | None = None,
+    context_rows_path: str | Path | None = None,
+) -> dict[str, Any]:
+    return _compile_opportunities(
+        receipt_path, rows_path, output_rows_path, output_receipt_path,
+        maximum_opportunities=maximum_opportunities, require_atr14=require_atr14,
+        require_resolved_session=require_resolved_session, partition="SEALED_HOLDOUT",
+        context_receipt_path=context_receipt_path, context_rows_path=context_rows_path,
+    )

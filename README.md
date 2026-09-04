@@ -24,7 +24,9 @@ sealed holdout still requires separate authorization and remains untouched.
 The single-use authorization gateway and deterministic claim scorer are ready.
 The authorized sealed holdout has now been identity-verified and exported, so
 it is consumed and must never be tuned against, resealed, or reused. No final
-claim result exists yet.
+claim is supported: the frozen compiler found only 249 of the required 300
+qualified opportunities, so evaluation ended `INVALID_EVIDENCE` before any
+Actor call.
 
 ## Layout
 

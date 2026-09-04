@@ -122,6 +122,30 @@ No claim result exists yet. The next implementation must compile the fixed
 holdout opportunities without reusing the TRAINING-only compiler interface or
 changing its frozen ORB-M semantics.
 
+## Final holdout disposition: invalid evidence
+
+The dedicated compiler reused the frozen
+`ORB_M_FIRST_CLOSE_BREAKOUT_V3_RESOLVED_ATR14` semantics and used only the
+previously known TRAINING projection as point-in-time ATR history. Candidate
+selection remained restricted to sealed sessions. It produced 249 qualified
+opportunities, below the frozen minimum of 300.
+
+The preflight therefore ended the evaluation as `INVALID_EVIDENCE` before any
+Actor call. The threshold will not be relaxed and the consumed holdout will not
+be mined, extended, resealed, or reused. This result neither supports nor
+refutes the adaptation claim; it establishes that the preregistered claim is
+not evaluable from this holdout.
+
+- opportunity projection hash:
+  `e088945ba2c75e14192187552380396d41f09f5c3aecd31d62ac49bd86a785b9`;
+- opportunity rows SHA-256:
+  `5477305c2e598cdd8cc71d51abc6534f960d512d9613b8384a64550ea4e75d64`;
+- qualified opportunities: 249; frozen minimum: 300;
+- preflight result hash:
+  `29891a9ecd711a120c626a8d31594788d9c76ef1ee060a385660f99bef6416b5`;
+- Actor calls: 0; additional model cost: $0; claim authorized: false;
+  execution authority: `ABSENT`.
+
 ## Four-arm matched TRAINING comparison
 
 On 4 September 2026 the registered four-arm comparison completed across the

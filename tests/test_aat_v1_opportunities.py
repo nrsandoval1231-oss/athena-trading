@@ -4,7 +4,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from athena_trading.aat_v1 import OpportunityCompileError, compile_training_opportunities
+from athena_trading.aat_v1 import (
+    OpportunityCompileError,
+    compile_holdout_opportunities,
+    compile_training_opportunities,
+)
 
 
 def _source(tmp_path, *, breakout=True, sealed=False):
@@ -132,4 +136,28 @@ def test_resolved_session_mode_requires_atr14(tmp_path):
         compile_training_opportunities(
             receipt, rows, tmp_path / "out.jsonl", tmp_path / "out.json",
             maximum_opportunities=1, require_resolved_session=True,
+        )
+
+
+def test_holdout_compiler_preserves_semantics_but_requires_holdout_capability(tmp_path):
+    receipt, rows = _source(tmp_path)
+    value = json.loads(receipt.read_text(encoding="utf-8"))
+    value.update({
+        "schema_version": "athena-aat-v1-sealed-holdout-projection-v1",
+        "capability": "ONE_TIME_SEALED_HOLDOUT_EVALUATION",
+        "contains_sealed_holdout": True,
+        "holdout_row_count": value.pop("training_row_count"),
+        "holdout_rows_sha256": value.pop("training_rows_sha256"),
+    })
+    receipt.write_text(json.dumps(value), encoding="utf-8")
+    result = compile_holdout_opportunities(
+        receipt, rows, tmp_path / "holdout-opportunities.jsonl",
+        tmp_path / "holdout-opportunities.json", maximum_opportunities=1,
+    )
+    assert result["partition"] == "SEALED_HOLDOUT"
+    assert result["contains_sealed_holdout"] is True
+    with pytest.raises(OpportunityCompileError, match="holdout paths are forbidden"):
+        compile_training_opportunities(
+            receipt, rows, tmp_path / "training-out.jsonl", tmp_path / "training-out.json",
+            maximum_opportunities=1,
         )

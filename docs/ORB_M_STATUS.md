@@ -224,8 +224,10 @@ fixes, and a real freeze with provider keys — not a second pool invention.
 2. The final claim contract is frozen and hash-bound to the audit-passing
    TRAINING comparison; it still authorizes no adaptation claim.
 3. The one-time sealed holdout was explicitly authorized and exported with
-   identity verification. It is now consumed. Compile and evaluate it exactly
-   once under the frozen claim contract; never tune, reseal, or reuse it.
+   identity verification. The frozen compiler found 249 qualified
+   opportunities versus the required 300, so preflight ended
+   `INVALID_EVIDENCE` before Actor calls. The holdout is consumed and cannot be
+   tuned, resealed, or reused.
 
 ## Data
 

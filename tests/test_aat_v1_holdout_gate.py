@@ -1,8 +1,14 @@
 import pytest
 from pathlib import Path
 import json
+import hashlib
 
-from athena_trading.aat_v1.holdout_gate import evaluate_claim, validate_holdout_authorization
+from athena_trading.aat_v1.holdout_gate import (
+    audit_holdout_preflight,
+    evaluate_claim,
+    validate_holdout_authorization,
+)
+from athena_trading.athena_adapter.contracts import canonical_hash
 from athena_trading.aat_v1.training import AATValidationError
 
 
@@ -72,3 +78,33 @@ def test_claim_requires_both_comparators_to_pass():
 def test_claim_evidence_fails_closed_on_missing_pair():
     with pytest.raises(AATValidationError, match="matched-pair evidence is incomplete"):
         evaluate_claim(_contract(), _episodes()[:-1])
+
+
+def test_preflight_blocks_actor_when_opportunities_are_below_frozen_minimum(tmp_path):
+    contract = _contract() | {
+        "minimum_opportunity_count": 300,
+    }
+    contract_path = tmp_path / "contract.json"
+    contract_path.write_text(json.dumps(contract), encoding="utf-8")
+    authorization = {
+        "schema_version": "aat-v1-sealed-holdout-authorization-v1",
+        "contract_hash": canonical_hash(contract), "scope": "ONE_TIME_SEALED_HOLDOUT_EVALUATION",
+        "single_use": True, "execution_authority": "ABSENT", "authorization_id": "auth-1",
+        "authorized_by": "owner", "authorized_at_utc": "2026-09-04T00:00:00Z",
+    }
+    authorization_path = tmp_path / "authorization.json"
+    authorization_path.write_text(json.dumps(authorization), encoding="utf-8")
+    rows = tmp_path / "opportunities.jsonl"
+    rows.write_text("{}\n", encoding="utf-8")
+    receipt = {
+        "partition": "SEALED_HOLDOUT", "contains_sealed_holdout": True,
+        "contains_outcomes": False, "execution_authority": "ABSENT",
+        "rows_path": rows.name, "rows_sha256": hashlib.sha256(rows.read_bytes()).hexdigest(),
+        "row_count": 249,
+    }
+    receipt["projection_hash"] = canonical_hash(receipt)
+    receipt_path = tmp_path / "receipt.json"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    result = audit_holdout_preflight(contract_path, authorization_path, receipt_path)
+    assert result["status"] == "INVALID_EVIDENCE"
+    assert result["actor_called"] is False
