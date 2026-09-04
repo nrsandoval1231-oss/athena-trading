@@ -118,3 +118,41 @@ def test_sessions_are_counted_per_local_trading_day():
 def test_no_regular_hours_bars_yields_zeroes_rather_than_raising():
     premarket_only = [_bar("2023-12-05T09:00:00+00:00", 1.0, 1.0)]
     assert _module()._session_statistics(premarket_only) == (0.0, 0.0, 0.0, 0)
+
+
+def test_the_opening_window_comes_from_the_constitution():
+    """Restating 15 here would let this drift from the window actually traded."""
+    from athena_trading.orb_m.constitution import Constitution
+    assert _module().OPENING_MINUTES == Constitution().opening_minutes
+
+
+def test_the_opening_range_excludes_the_bar_that_closes_it():
+    """09:45 ET is the freeze point, so the 09:45 bar belongs to what follows."""
+    rows = [_bar("2023-12-05T14:30:00+00:00", 100.0, 7.0),   # 09:30 ET
+            _bar("2023-12-05T14:44:00+00:00", 100.0, 3.0),   # 09:44 ET, inside
+            _bar("2023-12-05T14:45:00+00:00", 100.0, 99.0)]  # 09:45 ET, outside
+    *_, opening, _ = _module()._session_statistics(rows)
+    assert opening == 10.0
+
+
+def test_daylight_saving_is_honoured_on_both_sides_of_the_change():
+    """09:30 ET is 13:30 UTC under EDT but 14:30 UTC under EST.
+
+    Each day carries a premarket block, so a fixed-offset reading would pick
+    premarket volume for one of the two sessions rather than the opening range.
+    """
+    rows = [_bar(f"2023-10-27T08:{m:02d}:00+00:00", 100.0, 100.0) for m in range(15)]
+    rows += [_bar("2023-10-27T13:30:00+00:00", 100.0, 4.0)]   # 09:30 EDT
+    rows += [_bar(f"2023-12-05T09:{m:02d}:00+00:00", 100.0, 100.0) for m in range(15)]
+    rows += [_bar("2023-12-05T14:30:00+00:00", 100.0, 6.0)]   # 09:30 EST
+    *_, opening, sessions = _module()._session_statistics(rows)
+    assert sessions == 2
+    assert opening == 5.0
+
+
+def test_a_session_that_traded_nothing_at_the_open_contributes_zero():
+    """A dead open is signal for a liquidity ranking, not a missing value."""
+    rows = [_bar("2023-12-05T16:00:00+00:00", 100.0, 42.0)]  # 11:00 ET only
+    *_, opening, sessions = _module()._session_statistics(rows)
+    assert sessions == 1
+    assert opening == 0.0

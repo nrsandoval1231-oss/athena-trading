@@ -1,12 +1,19 @@
 # Athena ORB-M v1.0 — status
 
-Updated 3 September 2026.
+Updated 4 September 2026.
 
 ## What exists
 
 The entry, management, and frozen V1 session-evaluation path are implemented
-and tested. The evaluator has run on TRAINING evidence only; this is neither a
-performance claim nor validation on a sealed holdout.
+and tested.
+
+The universe path **has** now been run against real market data: a three-symbol
+smoke pull returns 84 sessions and an AAPL median opening volume of 4,078,500,
+cross-checked by hand against the raw bar file, and the candidate pool builder
+independently arrives at the same 84 sessions from daily aggregates. Everything
+downstream has been evaluated only against TRAINING evidence or synthetic
+fixtures. This is neither a performance claim nor validation on a sealed
+holdout.
 
 | Module | Responsibility | State |
 | --- | --- | --- |
@@ -92,18 +99,39 @@ mention afterwards. Finer-grained data than one-minute bars would shrink it.
 
 ## Open risks
 
-- **Survivorship bias.** `configs/orb_m_candidate_pool.txt` is 277 names
-  assembled from model knowledge of currently liquid equities. Companies
-  delisted or acquired during a 2024–2025 window cannot appear. The freeze
-  records `carries_survivorship_bias: true` and warns. Replacing this with a
-  December 2023 constituent or liquidity export is the single highest-value
-  improvement available to the campaign's credibility.
+- **Survivorship bias — resolved, pending use.**
+  `configs/orb_m_candidate_pool_point_in_time.txt` replaces the 277-name
+  model-knowledge pool with 400 names built from daily grouped aggregates over
+  the lookback, intersected with the provider's common-stock reference **as of
+  2023-12-29**. Each grouped file lists what traded on its own day, so names
+  that later delisted are present; asking the type filter for today's listings
+  would have reintroduced the same bias, which is why it is asked as of the
+  lookback. Measured against the grouped data through 2026-06, sixteen members
+  stop appearing in the exchange record and twelve of those fall inside the
+  campaign window; five the old pool could not have contained. The old pool is
+  still on disk and still carries the bias — it must not be used to freeze this
+  campaign.
+- **Extended-hours bars in price and dollar volume.** Resolved: statistics now
+  describe regular hours only. Recorded because the earlier behaviour silently
+  blended premarket into medians.
 - **Adaptive surface breadth.** 27 adaptable fields searched simultaneously
   against ~1,000 episodes will find noise. Freeze all but one, promote or
   reject, then unfreeze the next.
 - **`peak_retention` is recollected, not measured.** The 0.65 default is a
   starting point to be fitted. Building toward it would fit the author's memory
   rather than the data.
+- **The engine existed twice — resolved.** The domain split copied ORB-M into
+  this repository rather than moving it, leaving a second, diverging copy in
+  `nrsandoval1231-oss/Athena` that never received the statistics fixes.
+  `src/athena_arena/orb_m/*`, both ORB-M scripts and the six test modules have
+  been removed there (Athena `473ffe6`); its suite goes 507 to 382, exactly the
+  125 ORB-M tests, with nothing else referencing them. Athena Core now carries
+  `docs/ATHENA_DOMAIN_BOUNDARY.md` as the canonical statement of what lives
+  where, and its README says strategy code belongs here. **This repository is
+  the only home for the engine.**
+- **`tzdata` is a Windows-only dependency and CI cannot see it.** `zoneinfo` has
+  no tz database to read on Windows, so the exchange-local grouping raises
+  `ZoneInfoNotFoundError` there. CI runs on Linux and reports green regardless.
 
 ## Running the universe freeze
 
@@ -111,7 +139,7 @@ Requires `MASSIVE_API_KEY` and network access to the provider.
 
 ```text
 python scripts/freeze_orb_m_universe.py stats \
-  --pool configs/orb_m_candidate_pool.txt \
+  --pool configs/orb_m_candidate_pool_point_in_time.txt \
   --lookback-end 2023-12-29 --campaign-start 2024-01-02 \
   --campaign-end 2025-12-31 \
   --output data/universe/stats.json --data-root data
@@ -119,16 +147,43 @@ python scripts/freeze_orb_m_universe.py stats \
 python scripts/freeze_orb_m_universe.py freeze \
   --stats data/universe/stats.json \
   --output data/universe/manifest.json \
-  --provenance CURRENT_SNAPSHOT
+  --provenance POINT_IN_TIME
 ```
 
-Both outputs are write-once. `--provenance POINT_IN_TIME` is only honest if the
-pool genuinely reflects December 2023 listings.
+Both outputs are write-once, so choose a new path rather than deleting one.
+`POINT_IN_TIME` is honest for the pool above and **not** for
+`configs/orb_m_candidate_pool.txt`.
 
-A three-symbol smoke run is worth doing first; the last one caught two real
-defects in the statistics code (sessions keyed on UTC rather than exchange-local
-dates, and opening volume measured over premarket bars rather than the opening
-range).
+Expect roughly an hour: 400 symbols over 120 calendar days of minute bars.
+`--pool-size` on the builder trims it, but not far below ~200 — `SelectionRule`
+keeps 50, and a pool near that size makes the rule decorative.
+
+A three-symbol smoke run is worth doing first. The last one caught two real
+defects in the statistics code, both silent — they produced plausible numbers
+rather than raising, so the suite stayed green while the ranking was computed
+over premarket noise. A correct run returns 84 sessions and an AAPL median
+opening volume of 4,078,500.
+
+## Rebuilding the candidate pool
+
+```text
+python scripts/build_orb_m_pool.py \
+  --grouped-root <daily grouped aggregates> \
+  --lookback-end 2023-12-29 --campaign-start 2024-01-02 \
+  --pool-size 400 \
+  --output configs/orb_m_candidate_pool_point_in_time.txt \
+  --manifest configs/orb_m_candidate_pool_point_in_time.manifest.json \
+  --env-file <a dotenv holding POLYGON_API_KEY>
+```
+
+Funnel on the committed pool: 11,768 tickers seen, 9,333 with 95% session
+coverage, 4,841 typed common stock, 942 clearing the frozen price and ADV
+floors, top 400 by median daily dollar volume. The type filter is load-bearing —
+SPY, QQQ and IWM rank 1st, 4th and 8th on raw dollar volume.
+
+The grouped cache stores a **zero-row placeholder for every market holiday**,
+32 of them. Counting those as sessions inflates any coverage denominator and
+quietly relaxes the floor; the builder drops them and a test pins that.
 
 ## Where this sits relative to Athena Core
 
@@ -145,40 +200,44 @@ identity hashes recorded here travel into Athena evidence, so
 `tests/test_athena_adapter.py` pins digests taken from
 `athena_arena.contracts` and fails if the two diverge.
 
-## Environment
-
-The universe pull cannot run from a Claude Code remote session: the network
-policy denies `CONNECT api.massive.com:443`, and no key is present. It runs from
-the author's Windows machine, or from a remote session once the host is
-allowlisted and `MASSIVE_API_KEY` is added as an environment secret. Doing the
-latter would let the campaign iterate without a human relaying every result.
-
-## Unfinished business at handoff
-
-- **The smoke run has not been repeated since the statistics fixes.** The last
-  three-symbol run reported `sessions_observed` of 92 and an AAPL
-  `median_opening_volume` of 16,680, both wrong. After the fix the expected
-  figures are roughly 82 sessions and an opening volume in the millions.
-  Re-run it and confirm before spending hours on 277 symbols. Output paths are
-  write-once, so use a new filename.
-- **An existing local dataset may make the pull unnecessary.** The author
-  reports market data already collected at
-  `C:\Users\NickSandoval\Nick OS\02_Projects\Trading`. It was never
-  inventoried. Before pulling, establish four things: granularity (one-minute
-  bars are required; daily is useless for a 15-minute opening range), whether
-  extended-hours bars are included, symbol and date coverage, and provenance —
-  which provider, adjusted or unadjusted, and whether retrieval dates and
-  content hashes were recorded. Data without recorded provenance is usable for
-  research but weakens the immutable-evidence property the Gauntlet path
-  depends on, and the manifest must say so.
-- **The candidate pool is unverified against the provider.** A few of its 277
-  symbols may no longer resolve; the stats command logs and skips those rather
-  than aborting.
-
 ## Next
 
-1. Inventory the existing local dataset before pulling anything.
-2. Breakout Quality Score, calibrated against TRAINING feature distributions rather
-   than invented weights — which is why the data step precedes it.
-3. Register a lesson-promotion rule before claiming any learned adaptation.
-4. Freeze partitions, then run the campaign without opening the sealed holdout.
+1. Breakout Quality Score, calibrated against TRAINING feature distributions
+   rather than invented weights.
+2. Register a lesson-promotion rule before claiming any learned adaptation.
+3. Freeze partitions, then run the campaign without opening the sealed holdout.
+
+## Data
+
+**In use.** Minute bars from Massive, unadjusted, extended hours included
+(04:00–20:00 ET), pulled on demand into `data/` (gitignored, regenerable).
+Daily grouped aggregates from Polygon, unadjusted, one file per session, held
+outside this repository under the Trading project; the 84 files consumed by a
+pool build are hashed individually into that pool's manifest.
+
+**Evaluated and rejected.** The Polygon minute cache under the Trading project,
+and its copies under `Desktop/Eggman` — including `eggbot-historical-data.zip`,
+which is the same 17,544 files archived rather than a superset. It is 1-minute,
+but regular-session only and covers 1,974 symbols across 651 days at a **median
+of 11 days per symbol**, clustered around each symbol's earnings dates. SPY
+alone has continuous coverage. It is an earnings-event cache, not a panel, and
+using it would measure earnings-gap sessions exclusively. It cannot substitute
+for the universe pull.
+
+**A provider caveat.** The Polygon plan in use cannot answer *current* listing
+status: `/v3/reference/tickers/{ticker}` returns 404 for tickers that plainly
+still trade. Do not build delisting checks on it — measure disappearance from
+the grouped aggregates instead. Querying that endpoint *with an explicit date*
+works, and is what the pool builder relies on.
+
+## Environment
+
+The universe pull needs `MASSIVE_API_KEY` and network access to
+`api.massive.com`; the pool builder needs `POLYGON_API_KEY`, currently in the
+screener's `.env` under the Trading project rather than this repository's.
+
+A Claude Code **remote** session has neither — the network policy denies CONNECT
+to that host — so pulls run from the Windows machine unless the host is
+allowlisted and the key added as an environment secret. A session running
+**locally on the Windows machine** does have both, and the smoke run and pool
+build recorded here were done that way.

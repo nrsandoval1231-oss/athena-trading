@@ -174,6 +174,10 @@ performance or adaptation claims.
 - local blockers: 0; promoted lessons: 0;
 - full repository validation: 175 tests passed.
 
+After merging the point-in-time universe completion branch on 4 September
+2026, the combined repository passed Ruff and all 197 tests. The AAT receipt
+hashes above did not change.
+
 OpenAI exposes `gpt-5.6-terra` as a mutable provider alias and no dated Terra
 snapshot was available for registration. The authorized substitute binds the
 original Actor model, prompt, inference, and action-schema hashes plus the
