@@ -6,6 +6,11 @@ Actor, read a mixed dataset, score outcomes, contact a broker, or grant
 authority. The projection receipt must bind `dataset_hash`, `assignment_hash`,
 `protocol_hash`, row count, and an exact SHA-256 of the JSONL file.
 
+The initial canary is capped at $10 total spend. It may contain at most ten
+opportunities and therefore at most 30 Actor calls: deterministic Arm A makes
+no model request, while Arms B, C, and D each make one. No request may occur
+while the plan remains `UNPRICED`.
+
 The command requires explicit call, token, and spend ceilings and refuses to
 overwrite its output. A future live training runner must be separately
 authorized and may only consume this validated boundary.

@@ -19,8 +19,9 @@ def _fixture(tmp_path):
 def test_training_projection_and_dry_plan(tmp_path):
     receipt, protocol = _fixture(tmp_path)
     value, rows = load_training_projection(receipt, protocol)
-    plan = plan_training_run(value, rows, call_ceiling=4, token_ceiling=2000, spend_ceiling_usd=1)
-    assert plan["planned_calls"] == 4
+    plan = plan_training_run(value, rows, call_ceiling=3, token_ceiling=2000, spend_ceiling_usd=1)
+    assert plan["planned_calls"] == 3
+    assert plan["actor_arm_count"] == 3
     assert plan["dry_run"] is True
     assert plan["execution_authority"] == "ABSENT"
 

@@ -110,9 +110,11 @@ def plan_training_run(receipt: Mapping[str, Any], rows: Sequence[TrainingRow], *
         raise AATValidationError("explicit call, token, and spend ceilings are required")
     if call_ceiling < 1 or token_ceiling < 1 or spend_ceiling_usd < 0:
         raise AATValidationError("ceilings must be non-negative/positive as applicable")
-    calls = len(rows) * 4
+    # Arm A is deterministic and must never be attributed to or billed as an
+    # Actor call. Only B/C/D invoke the pinned model.
+    calls = len(rows) * 3
     tokens_per_call = 256 + 64 + max(1, max(len(canonical_json(row.features)) for row in rows) // 4)
     tokens = calls * tokens_per_call
     if calls > call_ceiling or tokens > token_ceiling:
         raise AATValidationError("explicit run ceiling exceeded")
-    return {"schema_version": "athena-aat-v1-training-plan-v1", "protocol_hash": receipt["protocol_hash"], "dataset_hash": receipt["dataset_hash"], "partition": "TRAINING", "row_count": len(rows), "arm_count": 4, "planned_calls": calls, "planned_tokens": tokens, "spend_ceiling_usd": spend_ceiling_usd, "spend_estimate": "UNPRICED", "dry_run": True, "execution_authority": "ABSENT"}
+    return {"schema_version": "athena-aat-v1-training-plan-v1", "protocol_hash": receipt["protocol_hash"], "dataset_hash": receipt["dataset_hash"], "partition": "TRAINING", "row_count": len(rows), "arm_count": 4, "actor_arm_count": 3, "planned_calls": calls, "planned_tokens": tokens, "spend_ceiling_usd": spend_ceiling_usd, "spend_estimate": "UNPRICED", "dry_run": True, "execution_authority": "ABSENT"}
