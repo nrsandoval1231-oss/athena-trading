@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 from ..athena_adapter.contracts import canonical_hash
 from ..orb_m.constitution import Constitution
+from ..orb_m.market import average_true_range
 
 _EASTERN = ZoneInfo("America/New_York")
 _RAW_SCHEMA = "athena-aat-v1-training-projection-v1"
@@ -96,6 +97,7 @@ def compile_training_opportunities(
     output_receipt_path: str | Path,
     *,
     maximum_opportunities: int,
+    require_atr14: bool = False,
 ) -> dict[str, Any]:
     """Write a bounded, deterministic opportunity projection and receipt."""
     source_receipt_path, source_rows_path = Path(receipt_path), Path(rows_path)
@@ -128,6 +130,20 @@ def compile_training_opportunities(
         raise OpportunityCompileError("raw TRAINING row count mismatch")
 
     constitution = Constitution()
+    complete_daily: dict[str, list[tuple[str, tuple[float, float, float]]]] = {}
+    if require_atr14:
+        for session in sessions.values():
+            by_minute = {minute: row for minute, row, _ in session.regular}
+            if set(by_minute) != set(range(390)):
+                continue
+            daily = (
+                max(float(row["high"]) for row in by_minute.values()),
+                min(float(row["low"]) for row in by_minute.values()),
+                float(by_minute[389]["close"]),
+            )
+            complete_daily.setdefault(session.symbol, []).append((session.day, daily))
+        for values in complete_daily.values():
+            values.sort(key=lambda item: item[0])
     candidates: list[tuple[datetime, str, dict[str, Any]]] = []
     for session in sessions.values():
         if set(session.opening) != set(range(constitution.opening_minutes)):
@@ -135,6 +151,12 @@ def compile_training_opportunities(
         opening_high = max(float(row["high"]) for row in session.opening.values())
         opening_low = min(float(row["low"]) for row in session.opening.values())
         opening_volume = sum(float(row["volume"]) for row in session.opening.values())
+        atr14 = None
+        if require_atr14:
+            prior = [daily for day, daily in complete_daily.get(session.symbol, []) if day < session.day]
+            if len(prior) < 15:
+                continue
+            atr14 = average_true_range(prior[-15:])
         observed: list[dict[str, Any]] = [session.opening[index] for index in range(15)]
         for minute, row, available_at in sorted(session.regular, key=lambda item: item[0]):
             if minute < 15:
@@ -175,6 +197,8 @@ def compile_training_opportunities(
                 ),
                 "source_adjusted": bool(row.get("adjusted")),
             }
+            if atr14 is not None:
+                features["atr14"] = atr14
             opportunity = {
                 "opportunity_id": canonical_hash(identity_seed),
                 "candidate_hash": constitution.identity_hash,
@@ -196,7 +220,8 @@ def compile_training_opportunities(
         "assignment_hash": receipt["assignment_hash"],
         "protocol_hash": receipt["protocol_hash"],
         "partition": "TRAINING",
-        "compiler": "ORB_M_FIRST_CLOSE_BREAKOUT_V1",
+        "compiler": "ORB_M_FIRST_CLOSE_BREAKOUT_V2_ATR14" if require_atr14 else "ORB_M_FIRST_CLOSE_BREAKOUT_V1",
+        "requires_15_complete_prior_sessions": require_atr14,
         "constitution_hash": constitution.identity_hash,
         "rows_path": output_rows.name,
         "row_count": len(selected),

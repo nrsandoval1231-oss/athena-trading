@@ -68,3 +68,31 @@ diagnostic allowance and reported `$0.0958772`. The immutable amendment
 `artifacts/aat-v1/terra-canary-amendment.json` replaces only that bound with
 the maximum-request calculation above; it does not alter the ledger or any
 Actor output.
+
+## Outcome-readiness diagnostic
+
+A second, independently hashed opportunity projection requires 15 complete
+earlier TRAINING sessions before computing ATR14. It preserves the same frozen
+15-minute close-breakout rule and contains no outcomes. On 3 September 2026 it
+produced ten rows:
+
+- compiler: `ORB_M_FIRST_CLOSE_BREAKOUT_V2_ATR14`;
+- projection hash:
+  `9d01a497285a2e8c890063a910800307fc974d320ba1f4c419cc4fef5788deae`;
+- rows SHA-256:
+  `d708495ae7916597bcb16c5adb8efa9ab301f67fbcd67ae5e747887250ae7552`.
+
+The separate future-bar evaluator resolved all ten using adverse-first fills,
+the frozen constitution and management defaults, and no deterioration signal.
+It is therefore labeled
+`ORB_M_FIRST_BREAKOUT_NO_DETERIORATION_DIAGNOSTIC_V1`, is never Actor-visible,
+and is not adaptation evidence. Its result hash is
+`8d1ca4ba7b81cccfb04ad52c6b0216d271b7ca73c1ffad4c798dd6fdd41f9df9`
+and its rows SHA-256 is
+`0c6f02f5399357eefea369546dd2ccbeeece6d7d1b120bb54b4d0c379c5570ea`.
+
+The ten-row diagnostic happened to average approximately +0.20R. That is not
+an edge, performance estimate, validation result, or basis for promotion. The
+sample is tiny, selected from TRAINING, and omits the unbuilt deterioration
+detector and full session/re-entry runner. Execution authority remains
+`ABSENT`.

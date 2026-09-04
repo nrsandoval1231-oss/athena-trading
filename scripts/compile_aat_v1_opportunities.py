@@ -14,10 +14,12 @@ def main() -> int:
     parser.add_argument("--maximum-opportunities", type=int, required=True)
     parser.add_argument("--output-rows", type=Path, required=True)
     parser.add_argument("--output-receipt", type=Path, required=True)
+    parser.add_argument("--require-atr14", action="store_true")
     args = parser.parse_args()
     compile_training_opportunities(
         args.receipt, args.rows, args.output_rows, args.output_receipt,
         maximum_opportunities=args.maximum_opportunities,
+        require_atr14=args.require_atr14,
     )
     return 0
 
