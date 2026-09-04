@@ -6,5 +6,6 @@ from .training import (
     load_training_projection,
     plan_training_run,
 )
+from .opportunities import OpportunityCompileError, compile_training_opportunities
 
-__all__ = ["AATValidationError", "TrainingRow", "load_training_projection", "plan_training_run"]
+__all__ = ["AATValidationError", "OpportunityCompileError", "TrainingRow", "compile_training_opportunities", "load_training_projection", "plan_training_run"]

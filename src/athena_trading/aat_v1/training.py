@@ -15,7 +15,7 @@ from typing import Any
 from ..athena_adapter.contracts import canonical_hash, canonical_json
 
 _FORBIDDEN = {"sealed_holdout", "holdout", "outcome", "regret", "partition", "ticker", "timestamp", "date"}
-_SCHEMA = "athena-aat-v1-training-projection-v1"
+_SCHEMA = "athena-aat-v1-opportunity-projection-v1"
 
 
 class AATValidationError(ValueError):
@@ -62,8 +62,12 @@ def load_training_projection(receipt_path: str | Path, protocol_path: str | Path
         raise AATValidationError("training projection receipt schema mismatch")
     if receipt.get("partition") != "TRAINING" or receipt.get("execution_authority") != "ABSENT":
         raise AATValidationError("projection is not TRAINING-only with absent authority")
-    if any(key in json.dumps(receipt, sort_keys=True).lower() for key in ("sealed_holdout",)):
-        raise AATValidationError("receipt contains SEALED_HOLDOUT marker")
+    if receipt.get("contains_outcomes") is not False or receipt.get("contains_sealed_holdout") is not False:
+        raise AATValidationError("projection must explicitly exclude outcomes and sealed holdout content")
+    projection_payload = dict(receipt)
+    projection_hash = projection_payload.pop("projection_hash", None)
+    if projection_hash != canonical_hash(projection_payload):
+        raise AATValidationError("opportunity projection hash mismatch")
     registered = _protocol(protocol_file)
     protocol = registered["protocol"]
     for key in ("dataset_hash", "assignment_hash"):
