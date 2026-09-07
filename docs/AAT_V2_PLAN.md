@@ -1,0 +1,250 @@
+# AAT-V2 Implementation Plan
+
+Companion to `docs/AAT_V2_VISION.md`. That document says what we are building
+and why. This one says in what order, in which files, and what has to be true
+before each step is allowed to start.
+
+Status: PROPOSED. No code written. Nothing here is registered evidence.
+
+## Ground rules for the whole plan
+
+1. **AAT-V1 is immutable.** No file under `src/athena_trading/aat_v1/` changes
+   its behaviour, and no V1 identity hash changes by a single byte. Phase 2
+   touches that directory and is the one place this rule needs a test to prove
+   it held.
+2. **The constitution does not move.** `orb_m/constitution.py` is untouched in
+   every phase. If a phase seems to need a constitution change, the phase is
+   wrong.
+3. **One-way dependencies.** The new `exogenous/` package may import from
+   `athena_adapter/`. It may not import from `orb_m/` or `aat_v1/`. The
+   deterministic strategy must stay runnable with `exogenous/` deleted, and a
+   test asserts that.
+4. **Nothing spends money or calls a model until Phase 3**, and Phase 3 does
+   not start without explicit authorization.
+5. **`execution_authority` stays `ABSENT`** in every receipt, every phase.
+
+---
+
+## Phase 1 — exogenous evidence layer
+
+Pure infrastructure. Adds no evidence, makes no claim, calls nothing.
+
+### 1.1 Record contract — `src/athena_trading/exogenous/contracts.py`
+
+`ExogenousRecord`: frozen dataclass carrying `source`, `symbol`, `event_at`,
+`available_at`, `payload`, `revision_of`.
+
+The two timestamps stay separate and both are required. `event_at` is when the
+fact became true; `available_at` is when it first became observable. For an
+earnings figure those are weeks apart, and collapsing them is the leak that
+makes exogenous backtests worthless.
+
+Enforced at construction:
+- both timestamps timezone-aware, `available_at >= event_at`
+- `source` drawn from a frozen vocabulary (`news`, `sentiment`,
+  `fundamentals`, `macro`) — a new source is a schema change, not a new string
+- `symbol` required except for market-wide sources
+- non-empty payload
+
+`visible_records(records, as_of=..., symbol=..., lookback_seconds=...)` is the
+single visibility path. Rules: `available_at <= as_of` inclusive, revisions
+dropped rather than substituted (a replay sees the stale number the trader
+actually had), deterministic sort by `(available_at, record_id)` so analyst
+output never depends on input file order.
+
+`assert_no_lookahead()` is the belt-and-braces check callers run on an
+already-filtered set.
+
+### 1.2 Analyst compressors — `src/athena_trading/exogenous/analysts.py`
+
+This is where TradingAgents' analyst-team split gets borrowed and stripped of
+its authority. Their analysts *decide*; ours *compress*. Each is a pure
+function from visible records to a fixed, versioned key set. No model call, no
+network, fully reproducible from a snapshot hash.
+
+Four compressors, each emitting a frozen key set:
+- **news** — item counts over trailing windows, scheduled-event flag, coverage
+  density relative to the symbol's own baseline
+- **sentiment** — mean and dispersion of pre-scored sentiment, mention volume
+  vs. baseline (only if a defensible source is found; see open decisions)
+- **fundamentals** — days since last first-publication report, surprise bucket
+- **macro** — regime flags from macro series
+
+Every continuous value is **bucketed** before it leaves the compressor.
+Precision the strategy cannot act on is precision the Actor can overfit to.
+Bucket edges are frozen constants and part of the compressor version hash.
+
+Each compressor carries a version string. Changing a compressor changes its
+version and invalidates prior snapshots rather than silently re-scoring them.
+
+Deliberately unvalidated: these scoring semantics are guesses. They are frozen
+so they are *reproducible*, not because they are known to be predictive. The
+docstrings must say so, so nobody later mistakes a frozen constant for a
+validated one.
+
+### 1.3 Snapshot projection — `src/athena_trading/exogenous/snapshot.py`
+
+Joins compressed features to opportunity ids and writes a projection plus a
+receipt, mirroring the existing `aat_v1/opportunities.py` shape: canonical
+hash, `rows_sha256`, row count, `contains_sealed_holdout`,
+`execution_authority: ABSENT`, and the compressor versions in the receipt so a
+snapshot names the code that produced it.
+
+Fetching is a separate receipted step. Compression is pure and offline.
+
+### 1.4 Coverage measurement — `scripts/measure_exogenous_coverage.py`
+
+Reports coverage rate per source across the frozen 50-name universe. This is
+the input to the coverage-floor decision in the vision doc: if coverage is thin
+the treatment is weak for most opportunities and the comparison loses power.
+Better to learn that here than after registering a protocol.
+
+### 1.5 Tests
+
+- as-of boundary: a record at exactly `as_of` is visible; one microsecond later
+  is not
+- revision records never surface, in place of their original or otherwise
+- naive-datetime and `available_at < event_at` rejected at construction
+- compressor determinism: shuffled input, identical output hash
+- bucket edges pinned by explicit expected values
+- snapshot receipt round-trips and detects a mutated row file
+- `exogenous/` imports nothing from `orb_m/` or `aat_v1/`
+
+**Exit criteria:** tests green, coverage report produced for the frozen
+universe, zero changes outside `exogenous/`, `scripts/`, `tests/`, `docs/`.
+
+---
+
+## Phase 2 — portable Actor identity
+
+The one phase that touches `aat_v1/`. Small, contained, and the riskiest to get
+wrong, because V1 receipts must keep verifying.
+
+### 2.1 Provider registry — `src/athena_trading/aat_v1/providers.py`
+
+Today `actor_canary.py` hardcodes `API_URL`, derives
+`model_hash = canonical_hash({"provider": "openai", "model": model_id})`,
+requires pricing `source_url` to start with `developers.openai.com`, and
+`readiness.py` pins the literal `gpt-5.6-terra`. That is why
+`PROVIDER_MODEL_MUTABILITY` is a permanent limitation rather than a managed
+axis.
+
+A provider descriptor carries: provider id, endpoint URL, request builder,
+response text extractor, usage extractor, and the allowed pricing source-URL
+prefix. The registry returns a descriptor by provider id.
+
+**Byte-compatibility requirement.** For `provider="openai"` the registry must
+reproduce the existing `model_hash`, `prompt_hash`, `inference_hash` and
+`action_schema_hash` exactly. A test pins the current V1 digests as literals
+and fails if any of them move. Without that test this phase is not safe to
+merge.
+
+### 2.2 Rewiring
+
+`actor_canary.py` and `four_arm.py` take a provider descriptor instead of
+module-level constants, defaulting to the OpenAI descriptor so existing call
+sites and receipts are unchanged. `readiness.py` reads the model id from the
+registered protocol instead of a literal.
+
+### 2.3 Tests
+
+- V1 digests pinned as literals, unchanged
+- a second provider produces a *different* `model_hash` (identity is
+  provider-scoped, not model-name-scoped)
+- pricing validation rejects a source URL from the wrong provider
+- an unregistered provider id fails closed
+
+**Exit criteria:** the full existing test suite passes untouched, plus the new
+pinning test.
+
+### 2.4 Non-consuming sufficiency probe — `aat_v1/holdout_gate.py`
+
+Separable from the provider work; grouped here because it is the other small
+fix to existing code.
+
+`audit_holdout_preflight()` hardcodes `"sealed_holdout_consumed": True`, so
+merely *asking whether the dataset is big enough* burns the authorization. That
+is what cost the V1 holdout: the compiler found 249 of a required 300, the gate
+correctly returned `INVALID_EVIDENCE`, and the authorization was spent on a
+question that should have been answered before it was issued.
+
+Add `probe_holdout_sufficiency()`: takes the candidate dataset assignment and
+the frozen contract, returns the qualified-opportunity count and a
+sufficient/insufficient verdict, sets `sealed_holdout_consumed: False`, and
+touches no authorization. Run it at dataset-construction time, before sealing.
+
+To keep the probe from becoming a tuning channel it returns a count and a
+boolean only — no per-symbol breakdown, no distribution — and each probe is
+logged with the assignment hash so repeated probing against one assignment is
+visible in the record.
+
+**Exit criteria:** probe cannot run against an authorization, cannot mark
+anything consumed, and its result hash is reproducible.
+
+---
+
+## Phase 3 — V2 protocol and arm E
+
+Requires explicit authorization to start. This is the experiment.
+
+Sequence:
+1. Draw the V2 dataset assignment — TRAINING and sealed holdout — **before any
+   exogenous feature is inspected**.
+2. Run the Phase 2 sufficiency probe against the holdout candidate. If it comes
+   up short, redraw. No authorization is issued until the probe clears.
+3. Freeze the V2 claim contract: minimum pairs, scoring semantics, arm
+   definitions, exogenous feature key set and bucket edges.
+4. Register the V2 protocol with the compressor versions and provider-scoped
+   Actor identity bound in.
+5. Extend the Actor packet with the exogenous feature vector for arms B/C/D
+   only. Arm A is the frozen deterministic strategy and cannot consume them by
+   construction — that asymmetry is the treatment.
+6. Optional arm E: bounded bull/bear deliberation, capped at the *same* total
+   token budget as a single arm-D call, so a win from deliberation cannot be a
+   win from spending more.
+7. Run the TRAINING comparison. Audit it. Expect it to be in-sample evidence
+   and label it as such.
+
+**Exit criteria:** audit-passing TRAINING result, honestly labelled as
+in-sample.
+
+---
+
+## Phase 4 — V2 sealed holdout
+
+Separate authorization, single use, same gateway as V1. Runs once. The result
+stands whatever it says, including "adaptation did not help", and the
+consumed-holdout registry gets its entry either way.
+
+---
+
+## Sequencing and what can run in parallel
+
+Phase 1 and Phase 2 are independent and can be built in either order or at the
+same time — they share no files. Phase 3 needs both. Phase 4 needs Phase 3.
+
+Recommended order: **Phase 2 first**, despite the numbering. It is the smaller
+change, it removes a limitation that currently blocks readiness, and the
+sufficiency probe in 2.4 prevents repeating the mistake that cost the V1
+holdout. Phase 1 is the larger build and nothing downstream is blocked by
+starting it second.
+
+## Where this can go wrong
+
+**The pinning test in 2.1 is the load-bearing one.** If provider-registry
+refactoring silently changes a V1 hash, every V1 receipt stops verifying and
+the audit trail breaks. Write that test before the refactor, not after.
+
+**Exogenous provenance is the real bet.** If `available_at` is wrong in the
+source data, every guard in Phase 1 is theater. Source provenance needs the
+same treatment `docs/HISTORICAL_SOURCE_PROVENANCE.md` gives bars, documented
+before Phase 3 registers anything.
+
+**Thin coverage silently weakens the experiment.** If most opportunities have
+no exogenous evidence, arms B/C/D are effectively arm A with extra steps and the
+comparison produces a null for a boring reason. 1.4 exists to catch that early;
+the coverage floor belongs in the V2 contract.
+
+**Scope creep into the constitution.** The temptation in Phase 3 will be to let
+exogenous features adjust something the constitution freezes. That converts the
+experiment into a different strategy and the evidence stops transferring.
