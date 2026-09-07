@@ -100,6 +100,7 @@ before the data, register before the run, and let an insufficient result end as
 | Capability | Borrowed from | Change from V1 |
 | --- | --- | --- |
 | Exogenous record contract + as-of enforcement | their data breadth | new |
+| Six-category source surface (news, macro, social, fundamentals, prediction markets) | their data breadth | new; see `docs/EXOGENOUS_SOURCES_V1.md` |
 | Deterministic analyst compressors | their analyst-team split | new, authority removed |
 | Bucketed exogenous feature vector in the Actor packet | — | new, arms B/C/D only |
 | Provider registry for Actor identity | their multi-provider support | replaces hardcoded OpenAI transport |
@@ -202,12 +203,13 @@ audit is a success. A positive result that cannot name its mechanism is not.
 These need an answer before Phase 3 registers anything. Phases 1 and 2 can
 proceed without them.
 
-**Which exogenous sources actually get used.** TradingAgents pulls news,
-StockTwits, Reddit, FRED, Alpha Vantage and Polymarket. Social sentiment has
-the worst point-in-time provenance of the set and the highest coverage bias
-toward names that already moved. My recommendation is news and macro first,
-fundamentals second, social sentiment only if a source with a defensible
-`available_at` can be found — and possibly never.
+~~**Which exogenous sources actually get used.**~~ **Resolved:** copy the full
+TradingAgents breadth — news, macro, StockTwits, Reddit, fundamentals and
+Polymarket — tiered by relevance to a 09:45 ET intraday decision and graded by
+provenance. See `docs/EXOGENOUS_SOURCES_V1.md`. That document also corrects an
+error in an earlier draft of this one: fundamentals, not social sentiment, is
+the worst point-in-time risk in the set, because affordable fundamentals APIs
+serve restated figures that silently backfill the originals.
 
 **Whether arm E is worth its cost.** A deliberation loop multiplies token spend
 per opportunity. It is the most interesting thing TradingAgents does and the

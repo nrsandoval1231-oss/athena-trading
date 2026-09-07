@@ -55,7 +55,19 @@ output never depends on input file order.
 `assert_no_lookahead()` is the belt-and-braces check callers run on an
 already-filtered set.
 
-### 1.2 Analyst compressors — `src/athena_trading/exogenous/analysts.py`
+### 1.2 Per-source ingest
+
+Six source categories, specified in `docs/EXOGENOUS_SOURCES_V1.md`, each with
+its own receipted ingest step. Order is Tier 1 (macro via ALFRED vintages, news
+with first-seen publication timestamps) → coverage measurement → Tier 2
+(StockTwits, Reddit, fundamentals as filing events only) if coverage clears the
+floor → Polymarket stub.
+
+Ingest is separate and receipted. Compression is pure and offline. Compressors
+map to categories rather than vendors, so swapping a source inside a category
+does not change the feature key set.
+
+### 1.3 Analyst compressors — `src/athena_trading/exogenous/analysts.py`
 
 This is where TradingAgents' analyst-team split gets borrowed and stripped of
 its authority. Their analysts *decide*; ours *compress*. Each is a pure
@@ -82,7 +94,7 @@ so they are *reproducible*, not because they are known to be predictive. The
 docstrings must say so, so nobody later mistakes a frozen constant for a
 validated one.
 
-### 1.3 Snapshot projection — `src/athena_trading/exogenous/snapshot.py`
+### 1.4 Snapshot projection — `src/athena_trading/exogenous/snapshot.py`
 
 Joins compressed features to opportunity ids and writes a projection plus a
 receipt, mirroring the existing `aat_v1/opportunities.py` shape: canonical
@@ -92,14 +104,14 @@ snapshot names the code that produced it.
 
 Fetching is a separate receipted step. Compression is pure and offline.
 
-### 1.4 Coverage measurement — `scripts/measure_exogenous_coverage.py`
+### 1.5 Coverage measurement — `scripts/measure_exogenous_coverage.py`
 
 Reports coverage rate per source across the frozen 50-name universe. This is
 the input to the coverage-floor decision in the vision doc: if coverage is thin
 the treatment is weak for most opportunities and the comparison loses power.
 Better to learn that here than after registering a protocol.
 
-### 1.5 Tests
+### 1.6 Tests
 
 - as-of boundary: a record at exactly `as_of` is visible; one microsecond later
   is not

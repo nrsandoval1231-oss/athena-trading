@@ -48,7 +48,8 @@ See `docs/MIGRATION_COMPLETE.md`, `docs/MIGRATION_MATRIX_V1.md`,
 
 ## Proposed next experiment
 
-`docs/AAT_V2_VISION.md` and `docs/AAT_V2_PLAN.md` propose AAT-V2: an
+`docs/AAT_V2_VISION.md`, `docs/AAT_V2_PLAN.md` and
+`docs/EXOGENOUS_SOURCES_V1.md` propose AAT-V2: an
 exogenous (non-price) evidence layer, provider-portable Actor identity, and a
 non-consuming holdout sufficiency probe. Proposal only — no code, no registered
 evidence, and AAT-V1 remains frozen and closed.
