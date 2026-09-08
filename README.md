@@ -69,6 +69,8 @@ symbols, split by symbol, drawn before any exogenous feature existed. The
 comparison itself is blocked on data acquisition: the claim contract requires a
 measured exogenous coverage rate and refuses to freeze against an intended one.
 
+A full progress, status and handoff report is at `docs/AAT_V2_HANDOFF.md`.
+
 No phase holds registered evidence or supports any claim. No contract is
 frozen and no protocol registered. AAT-V1 remains frozen and closed, and its
 `PROVIDER_MODEL_MUTABILITY` limitation stands.
