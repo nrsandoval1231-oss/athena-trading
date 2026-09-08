@@ -11,8 +11,7 @@ Athena itself is domain-neutral adaptive intelligence. This repository owns mark
 The point-in-time 400-name candidate pool and 50-name universe are frozen. The
 full-session TRAINING evaluator and AAT-V1 readiness boundary are implemented;
 the current readiness state is
-`READY_TRAINING_ONLY_WITH_PROVIDER_MODEL_MUTABILITY`. The sealed holdout is
-consumed (`INVALID_EVIDENCE`) and is not reopened here. No performance or
+`READY_TRAINING_ONLY_WITH_PROVIDER_MODEL_MUTABILITY`. No performance or
 learned-adaptation claim has been made. AAT / TRAINING execution authority
 remains `ABSENT`.
 
@@ -20,11 +19,10 @@ A preregistered TRAINING-only gate promotes one abstention lesson (PASS versus
 standard sizing) and retains two rejected alternatives as negative knowledge.
 The subsequent 300-opportunity four-arm TRAINING comparison is complete and
 audit-passing, but remains in-sample prompt-steering evidence—not proof that
-Athena adaptation works. The final claim contract is frozen; the one-time
-sealed holdout still requires separate authorization and remains untouched.
-The single-use authorization gateway and deterministic claim scorer are ready.
-The authorized sealed holdout has now been identity-verified and exported, so
-it is consumed and must never be tuned against, resealed, or reused. No final
+Athena adaptation works. The final claim contract is frozen. The single-use
+authorization gateway and deterministic claim scorer are ready. The AAT-V1
+sealed holdout has been identity-verified and exported; it is consumed
+(`INVALID_EVIDENCE`) and must not be tuned, resealed, or reused. No final
 claim is supported: the frozen compiler found only 249 of the required 300
 qualified opportunities, so evaluation ended `INVALID_EVIDENCE` before any
 Actor call.
