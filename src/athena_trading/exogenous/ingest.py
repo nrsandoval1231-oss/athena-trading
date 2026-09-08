@@ -7,8 +7,10 @@ writes a hashed store the compressors can be replayed against.
 
 No network access lives here.  A vendor adapter is a pure function from one raw
 row to one record, so a source swap is a new adapter and not a new pipeline.
-No vendor has been selected; ``passthrough_adapter`` handles rows already in
-contract shape and is what the tests exercise.
+``passthrough_adapter`` handles rows already in contract shape.
+``alfred_adapter`` maps FRED ALFRED vintage observations onto macro records;
+live ALFRED fetches live in ``alfred.py``, fail closed without a key, and are
+not invoked from this module.  No historical dump is stored here.
 """
 from __future__ import annotations
 

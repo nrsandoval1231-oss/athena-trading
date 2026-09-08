@@ -5,7 +5,9 @@ the "which exogenous sources" open decision: **all six categories TradingAgents
 uses**, tiered by what they are actually worth to an intraday ORB decision and
 graded by whether their point-in-time provenance can be defended.
 
-Status: PROPOSED. No ingest code written, no vendor selected, no data acquired.
+Status: PROPOSED. The ALFRED macro adapter exists and is fixture-tested; see
+`docs/ALFRED_MACRO_SOURCE_PROVENANCE.md`. No exogenous data has been acquired.
+Coverage has not been measured. No V2 claim is frozen.
 
 ## The decision moment shapes everything
 
@@ -108,7 +110,9 @@ separate source with its own timestamp discipline. If a defensible consensus
 series cannot be sourced, ship the release-event flags without the surprise
 bucket rather than guessing.
 
-**Grade: A.** Use ALFRED vintages, never the current-view FRED series.
+**Grade: A.** Use ALFRED vintages, never the current-view FRED series. The
+adapter is `alfred_adapter` in `src/athena_trading/exogenous/alfred.py`. Data
+has not been acquired; this grade is about provenance, not measured coverage.
 
 ---
 

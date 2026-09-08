@@ -151,6 +151,7 @@ Six modules, ~1,080 lines, 61 tests. Stdlib only.
 | `analysts.py` | Five deterministic compressors → 24 frozen feature keys |
 | `ingest.py` | Receipted record store; anti-backfill guard |
 | `snapshot.py` | Joins features to opportunities; per-source coverage rates |
+| `alfred.py` | FRED ALFRED vintage adapter; fixture-tested; no data acquired |
 | `__init__.py` | Public surface |
 
 Plus `scripts/measure_exogenous_coverage.py`.
@@ -315,6 +316,7 @@ deleted and redrawn under the fix.
 | Phase 2 sufficiency probe | Built, verified on the 249/300 case |
 | Phase 3 arms / packet / contract | Built, 49 tests |
 | Phase 3 dataset assignment | **Drawn and frozen** |
+| Macro ALFRED adapter | Built, fixture-tested. No data acquired. |
 | Phase 3 coverage measurement | **Blocked — no data** |
 | Phase 3 claim contract freeze | **Blocked — needs measured coverage** |
 | Phase 3 protocol registration | **Blocked — needs the contract** |
@@ -344,20 +346,22 @@ cannot exist until Tier-1 ingest runs, and the refusal is deliberate.
 
 ### Immediate: acquire Tier-1 data
 
-This is the critical path and it needs decisions and credentials, not code.
+The ALFRED macro adapter exists (`src/athena_trading/exogenous/alfred.py`,
+provenance in `docs/ALFRED_MACRO_SOURCE_PROVENANCE.md`). Data has not been
+acquired and coverage has not been measured. The remaining critical path is
+credentials and a news vendor, not a second record type.
 
-1. **Macro (grade A).** Use FRED's **ALFRED vintage archive**, never the
-   current-view series. ALFRED serves each series as it stood on a given date,
-   including the original print before revision — exactly the as-of semantics
-   the contract wants. Free and documented. Best-solved provenance in the set.
+1. **Macro (grade A).** Pull ALFRED vintages with `FRED_API_KEY` through
+   `fetch_alfred_observations` (vintage window required; never the current-view
+   series). Map with `alfred_adapter`. Do not commit a dump.
 2. **News (grade A−).** Pick a source and enforce first-seen publication
    timestamps at ingest. GDELT is free with real event timestamps and noisy; a
    commercial wire archive is cleaner if budget allows. Whichever is chosen,
    write a provenance document to the standard of
    `docs/HISTORICAL_SOURCE_PROVENANCE.md` before Phase 3 registers anything.
-3. Write the vendor adapters. An adapter is a pure per-row function
-   (`Adapter = Callable[[Mapping], ExogenousRecord]`), so a source swap is a
-   new adapter and not a new pipeline. `passthrough_adapter` is the reference.
+3. Remaining vendor adapters stay a pure per-row function
+   (`Adapter = Callable[[Mapping], ExogenousRecord]`). `passthrough_adapter` is
+   still the contract-shaped reference; `alfred_adapter` is the macro vendor.
 
 ### Then, in order
 

@@ -46,3 +46,9 @@ The Polygon minute cache under the Trading project (and its copies under
 `Desktop/Eggman`) is 1-minute but regular-session only, and covers a median of
 11 days per symbol clustered around each symbol's earnings dates. It is an
 earnings-event cache, not a panel, and cannot substitute for a universe pull.
+
+## Macro — ALFRED vintages
+
+The macro adapter and its point-in-time rules are documented in
+`docs/ALFRED_MACRO_SOURCE_PROVENANCE.md`. No ALFRED series has been pulled into
+this repository; coverage has not been measured.

@@ -6,7 +6,8 @@ before each step is allowed to start.
 
 Status: Phases 1-2 BUILT. Phase 3 machinery BUILT and the assignment drawn;
 the run itself is blocked on data acquisition. Phase 4 proposed. No contract
-is frozen, no protocol registered, no data acquired, no vendor selected.
+is frozen, no protocol registered, no data acquired. The ALFRED macro adapter
+exists; news still has no vendor. Coverage has not been measured.
 
 ## Ground rules for the whole plan
 
@@ -32,15 +33,15 @@ is frozen, no protocol registered, no data acquired, no vendor selected.
 Pure infrastructure. Adds no evidence, makes no claim, calls nothing.
 
 Delivered in `src/athena_trading/exogenous/`: `contracts.py`, `buckets.py`,
-`analysts.py`, `ingest.py`, `snapshot.py`, plus
-`scripts/measure_exogenous_coverage.py` and 61 tests. Twenty-four bucketed
-feature keys across five source categories. The full suite passes with the
-package physically deleted, so the deterministic strategy carries no dependency
-on it.
+`analysts.py`, `ingest.py`, `snapshot.py`, `alfred.py`, plus
+`scripts/measure_exogenous_coverage.py`. Twenty-four bucketed feature keys
+across five source categories. The full suite passes with the package
+physically deleted, so the deterministic strategy carries no dependency on it.
 
-What is *not* built: no vendor adapter beyond the passthrough, and no data. The
-adapter surface is a pure per-row function so a source swap is a new adapter
-rather than a new pipeline.
+The ALFRED macro adapter is built (`exogenous/alfred.py`, provenance in
+`docs/ALFRED_MACRO_SOURCE_PROVENANCE.md`). News still has no vendor. No
+exogenous data has been acquired. The adapter surface remains a pure per-row
+function so a source swap is a new adapter rather than a new pipeline.
 
 ### 1.1 Record contract — `src/athena_trading/exogenous/contracts.py`
 

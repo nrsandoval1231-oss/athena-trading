@@ -6,6 +6,14 @@ supports no claim.  It must never import from ``orb_m`` or ``aat_v1``: the
 deterministic strategy stays runnable with this directory deleted.
 """
 
+from .alfred import (
+    AlfredError,
+    MissingAlfredCredentialsError,
+    alfred_adapter,
+    annotate_alfred_revisions,
+    fetch_alfred_observations,
+    stamp_scheduled_availability,
+)
 from .analysts import (
     COMPRESSOR_VERSION,
     AnalystError,
@@ -41,11 +49,13 @@ from .snapshot import (
 )
 
 __all__ = [
-    "ABSENT", "COMPRESSOR_VERSION", "SOURCES", "AnalystError", "ExogenousContractError",
-    "ExogenousLeakageError", "ExogenousRecord", "IngestError", "SnapshotError",
-    "assert_no_lookahead", "assert_stable_availability", "bucket", "build_snapshot",
-    "compress_all", "compress_opportunity", "compressor_identity", "coverage",
-    "coverage_rates", "feature_keys", "load_opportunity_index", "load_record_store",
-    "normalize", "parse_record", "passthrough_adapter", "ratio_bucket", "visible_records",
-    "write_record_store",
+    "ABSENT", "COMPRESSOR_VERSION", "SOURCES", "AlfredError", "AnalystError",
+    "ExogenousContractError", "ExogenousLeakageError", "ExogenousRecord", "IngestError",
+    "MissingAlfredCredentialsError", "SnapshotError", "alfred_adapter",
+    "annotate_alfred_revisions", "assert_no_lookahead", "assert_stable_availability",
+    "bucket", "build_snapshot", "compress_all", "compress_opportunity",
+    "compressor_identity", "coverage", "coverage_rates", "feature_keys",
+    "fetch_alfred_observations", "load_opportunity_index", "load_record_store",
+    "normalize", "parse_record", "passthrough_adapter", "ratio_bucket",
+    "stamp_scheduled_availability", "visible_records", "write_record_store",
 ]
