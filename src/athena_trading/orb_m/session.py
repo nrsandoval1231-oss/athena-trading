@@ -309,11 +309,11 @@ def _first_open(bars: Sequence[Bar]) -> float | None:
     return min(regular, key=lambda item: item.event_at).open
 
 
-def _quality_for(
+def quality_for(
     signal: BreakoutSignal, bars: Sequence[Bar], prior: PriorSession,
     constitution: Constitution, parameters: ManagementParameters, *,
-    market_alignment: float | None,
-    sector_alignment: float | None,
+    market_alignment: float | None = None,
+    sector_alignment: float | None = None,
 ) -> BreakoutQualityResult:
     signal_bars = [bar for bar in bars if bar.minute == signal.signal_minute]
     if not signal_bars:
@@ -443,7 +443,7 @@ def run_symbol_session(
         signal = min(candidates, key=lambda item: (item.signal_minute, item.direction))
         cursor[signal.direction] = signal.signal_minute + 1
 
-        quality = _quality_for(
+        quality = quality_for(
             signal, bars, prior, constitution, parameters,
             market_alignment=market_alignment, sector_alignment=sector_alignment,
         )

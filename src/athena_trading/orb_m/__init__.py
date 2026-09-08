@@ -21,7 +21,8 @@ from .quality import (
 )
 from .session import (
     EpisodeRecord, SessionEpisode, SessionResult, SessionRiskState,
-    SymbolSessionResult, deterioration_by_minute, run_full_session, run_symbol_session,
+    SymbolSessionResult, deterioration_by_minute, quality_for, run_full_session,
+    run_symbol_session,
 )
 from .universe import (
     PoolProvenance, SelectionRule, SymbolStatistics, UniverseManifest,
@@ -44,7 +45,7 @@ __all__ = [
     "action_for", "average_true_range", "build_risk_frame", "detect_breakout",
     "detect_signals", "deterioration_by_minute", "exit_pressure",
     "freeze_opening_range", "gap_percent",
-    "premarket_context", "pressure_by_minute", "relative_volume",
+    "premarket_context", "pressure_by_minute", "quality_for", "relative_volume",
     "run_full_session", "run_position", "run_symbol_session", "score_breakout",
     "select_universe", "session_vwap", "stage_for", "trail_stop_r", "true_range",
 ]
