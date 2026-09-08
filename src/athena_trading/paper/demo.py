@@ -31,6 +31,12 @@ def _bar(minute: int, open_: float, high: float, low: float, close: float,
     return Bar(_BASE + timedelta(minutes=minute), minute, open_, high, low, close, volume)
 
 
+def demo_bar_session():
+    """In-memory copy of the shipped paper-bar fixture."""
+    from .bars import BarSession
+    return BarSession(DEMO_SYMBOL, DEMO_PRIOR, demo_bars())
+
+
 def demo_bars() -> tuple[Bar, ...]:
     """Opening range plus a long close-through that the engine will take."""
     bars = []

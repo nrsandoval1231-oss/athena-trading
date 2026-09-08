@@ -28,24 +28,41 @@ holdout.
 | `session.py` | `run_full_session` (AAT) + `run_symbol_session` (BQS/ceilings) | Complete |
 | `athena_trading.execution` | PAPER-only authority, `OrderIntent` from an ORB-M decision | Complete |
 | `athena_trading.risk` | Halt gate: refuse before send on constitutional ceilings | Complete |
-| `athena_trading.paper` | Session runner, fixture broker, Alpaca paper adapter | Complete |
+| `athena_trading.paper` | Session runner, bar walker, fixture broker, Alpaca paper adapter | Complete |
 
 Paper execution is **not** live trading. `ExecutionAuthority` is `ABSENT` or
-`PAPER`; `LIVE` is rejected. The runner consumes `run_symbol_session`
-decisions, sizes a DAY market entry, and calls `send_gated` so
-`max_open_positions`, `max_daily_loss_r`, and `max_drawdown_r` veto the
-broker. CI proves the loop with `FixtureBroker` (no network, no keys).
+`PAPER`; `LIVE` is rejected. Two runners exist:
+
+* `run_orb_m_paper_session` — batch: `run_symbol_session` then send sendable
+  decisions. Kept as `--dry-run`.
+* `walk_paper_session` — causal: each completed bar is a prefix; a sendable
+  close-through becomes an entry through `OrderIntent` / `RiskHaltGate` /
+  `BrokerAdapter`. This is `--walk-bars`.
+
+Harvests, trails, and flatten stay engine-side. The walker may call
+`run_position` on the arrived prefix so the halt ledger can `register_close`;
+it does **not** place broker-side stops. `DATA_EXHAUSTED` on a live prefix is
+ignored (the engine-side position is still open).
+
+CI proves the walk with `configs/fixtures/orb_m_paper_bars_v1.json` (schema
+`athena-orb-m-paper-bars-v1`, timezone-aware timestamps; no Massive pull).
 `AlpacaPaperBroker.from_env()` fails closed when `ALPACA_API_KEY` /
 `ALPACA_API_SECRET` are missing. The adapter is pinned to
 `https://paper-api.alpaca.markets`.
 
-What this increment does **not** do: stream harvests/trails to the broker,
-pull Massive bars, grant live-money authority, retune ORB-M, or reopen the
-consumed AAT holdout / claim contract. Demo parameters lower the PASS
-threshold so the dry-run has a sendable decision; that is wiring, not a
+What this increment does **not** do: live-money authority, live streaming,
+broker-side stops/harvests, a required provider pull, ORB-M retune, or reopen
+the consumed AAT holdout / claim contract. Demo parameters lower the PASS
+threshold so the fixture has a sendable decision; that is wiring, not a
 campaign retune.
 
-Dry-run (no network, no keys):
+Walk fixture bars (no network, no keys):
+
+```text
+python scripts/run_orb_m_paper.py --walk-bars
+```
+
+Decision-dump dry-run (still no network):
 
 ```text
 python scripts/run_orb_m_paper.py --dry-run
@@ -239,12 +256,11 @@ identity hashes recorded here travel into Athena evidence, so
 ## Next
 
 Campaign path modules (`quality`, `deterioration`, `run_symbol_session`) and
-the paper execution loop (`execution`, `risk`, `paper`) are implemented.
-Remaining operational work is a smoke re-run after statistics fixes and a
-real freeze with provider keys — not a second pool invention. A continuous
-live-market paper loop (streaming bars, broker-side stops/harvests) is still
-absent; the path above is session-from-decisions plus an optional Alpaca
-paper preflight.
+the paper execution loop (`execution`, `risk`, `paper`, including a causal
+bar walker) are implemented. Remaining operational work is a smoke re-run
+after statistics fixes and a real freeze with provider keys — not a second
+pool invention. A continuous live-market paper loop (streaming bars,
+broker-side stops/harvests) is still absent.
 
 
 1. Breakout Quality Score, calibrated against TRAINING feature distributions

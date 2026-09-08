@@ -53,25 +53,40 @@ live trading.
 
 ## Paper session (not live trading)
 
-The paper loop consumes ORB-M campaign decisions from `run_symbol_session`,
-builds an entry `OrderIntent`, refuses the send if `SessionRiskState` would
-breach `max_open_positions` / `max_daily_loss_r` / `max_drawdown_r`, then
-submits / cancels / tracks through a `BrokerAdapter`.
+The paper loop can consume ORB-M campaign decisions from
+`run_symbol_session`, or **walk a recorded bar sequence** bar by bar.
+Each completed bar is shown to the engine as a prefix. When a sendable
+close-through fires, it builds an entry `OrderIntent`, refuses the send if
+`SessionRiskState` would breach `max_open_positions` / `max_daily_loss_r` /
+`max_drawdown_r`, then submits / cancels / tracks through a `BrokerAdapter`.
 
 It does **not** stream harvests, trails, or hard-flat exits to the broker;
-those remain engine-side. It does **not** pull Massive bars. It does **not**
-enable live money. It does **not** reopen the AAT holdout.
+those remain engine-side (`run_position` on the arrived prefix so the halt
+ledger can close, not broker-side stops). It does **not** pull Massive bars.
+It does **not** enable live money. It does **not** reopen the AAT holdout.
+Live streaming is not implemented.
 
-Deterministic dry-run (no network, no API keys):
+Walk fixture bars (no network, no API keys):
+
+```text
+python scripts/run_orb_m_paper.py --walk-bars
+```
+
+Halt-gate demonstration on that walk:
+
+```text
+python scripts/run_orb_m_paper.py --walk-bars --halt-demo
+```
+
+Recorded bars use schema `athena-orb-m-paper-bars-v1` (timezone-aware
+timestamps). The shipped fixture is `configs/fixtures/orb_m_paper_bars_v1.json`.
+Pass `--bars path.json --authority PAPER` to walk another file. Naive
+timestamps fail closed.
+
+The earlier decision-dump dry-run remains:
 
 ```text
 python scripts/run_orb_m_paper.py --dry-run
-```
-
-Halt-gate demonstration (still no network):
-
-```text
-python scripts/run_orb_m_paper.py --dry-run --halt-demo
 ```
 
 Optional Alpaca paper call. Missing `ALPACA_API_KEY` / `ALPACA_API_SECRET`

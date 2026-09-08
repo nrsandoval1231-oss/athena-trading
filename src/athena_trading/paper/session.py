@@ -38,6 +38,7 @@ class PaperAction:
     intent: OrderIntent | None
     halt: HaltDecision
     order: BrokerOrder | None
+    bar_minute: int | None = None
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,8 @@ class PaperSessionResult:
     actions: tuple[PaperAction, ...]
     halt_reason: str | None
     authority: ExecutionAuthority
+    bars_processed: int = 0
+    mode: str = "decisions"
 
     @property
     def submitted(self) -> tuple[BrokerOrder, ...]:
@@ -222,6 +225,8 @@ def result_as_dict(result: PaperSessionResult) -> dict:
         "halt_reason": result.halt_reason,
         "submitted": len(result.submitted),
         "blocked": len(result.blocked),
+        "bars_processed": result.bars_processed,
+        "mode": result.mode,
         "live_trading": False,
         "orders": [
             {

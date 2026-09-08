@@ -7,6 +7,7 @@ are not this package and are not touched by a paper session.
 from .alpaca import (
     PAPER_API_BASE, AlpacaPaperBroker, AlpacaPaperError, MissingCredentialsError,
 )
+from .bars import DEFAULT_BARS_PATH, BarSession, load_bar_session
 from .demo import DEMO_CONSTITUTION, DEMO_EQUITY, DEMO_PARAMETERS, DEMO_SYMBOL, demo_bars
 from .fixture import FixtureBroker
 from .session import (
@@ -14,3 +15,5 @@ from .session import (
     load_paper_config, result_as_dict, run_dry_run, run_orb_m_paper_session,
     run_paper_session, track_order,
 )
+from .walk import run_walk_fixture, walk_paper_session
+
