@@ -4,8 +4,9 @@ Companion to `docs/AAT_V2_VISION.md`. That document says what we are building
 and why. This one says in what order, in which files, and what has to be true
 before each step is allowed to start.
 
-Status: Phases 1-2 BUILT. Phases 3-4 proposed. Nothing here is registered
-evidence, no data has been acquired, and no second vendor has been selected.
+Status: Phases 1-2 BUILT. Phase 3 machinery BUILT and the assignment drawn;
+the run itself is blocked on data acquisition. Phase 4 proposed. No contract
+is frozen, no protocol registered, no data acquired, no vendor selected.
 
 ## Ground rules for the whole plan
 
@@ -226,11 +227,41 @@ anything consumed, and its result hash is reproducible.
 
 ---
 
-## Phase 3 — V2 protocol and arm E
+## Phase 3 — V2 protocol and arm E — MACHINERY BUILT, RUN BLOCKED
 
-Requires explicit authorization to start. This is the experiment.
+Authorized and started. `src/athena_trading/aat_v2/` holds `arms.py`,
+`packet.py`, `assignment.py` and `contract.py`, plus
+`scripts/draw_aat_v2_assignment.py` and 49 tests.
 
-Sequence:
+**Step 1 is done.** `configs/aat_v2_dataset_assignment_v1.json` was drawn at
+seed 20260908 over the frozen 50-name universe: 35 TRAINING symbols, 15
+holdout, split by symbol so no name straddles partitions. It was drawn while no
+exogenous feature existed anywhere in the repository, which is the strongest
+form of "drawn before looking" available.
+
+The draw surfaced a real defect. The first version split by symbol alone, and
+GOOG and GOOGL landing in the same partition was luck, not design. Dual-class
+shares of one issuer move together, so splitting them would have let the
+holdout measure memorization of the same tape. `LINKED_SYMBOL_GROUPS` now binds
+them into one draw unit, curated by hand rather than inferred — a
+prefix-matching rule fires on V/VZ, BA/BAC and C/CVX, which are unrelated
+issuers. A test checks sixty seeds.
+
+**Steps 5 and 6 are done.** `packet.py` carries the exogenous vector for arms
+B-E and refuses to build one for arm A at all, since arm A is the frozen
+strategy rather than an Actor with features withheld. Both directions fail
+closed: a treated arm without the vector would silently degrade to a V1 packet
+and produce a null for the wrong reason. `arms.py` holds arm E to the same
+total output budget as one arm-D call, so a win from deliberation cannot be a
+win from spending more tokens.
+
+**Steps 2, 3, 4 and 7 are blocked on data**, not on code. `freeze_claim_contract`
+requires a *measured* coverage rate and refuses to accept an intended one; that
+number cannot exist until Tier-1 ingest runs. The refusal is deliberate. The
+unblocking work is source selection and provenance documentation per
+`docs/EXOGENOUS_SOURCES_V1.md`, which needs vendor decisions and credentials.
+
+Original sequence, for reference:
 1. Draw the V2 dataset assignment — TRAINING and sealed holdout — **before any
    exogenous feature is inspected**.
 2. Run the Phase 2 sufficiency probe against the holdout candidate. If it comes

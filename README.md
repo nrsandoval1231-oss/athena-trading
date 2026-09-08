@@ -62,5 +62,13 @@ registered V1 digest, and `probe_holdout_sufficiency` answers the
 is-the-dataset-big-enough question without consuming an authorization — the
 gap that cost the V1 holdout at 249 of 300.
 
-Neither phase holds registered evidence or supports any claim. AAT-V1 remains
-frozen and closed, and its `PROVIDER_MODEL_MUTABILITY` limitation stands.
+Phase 3's machinery is built in `src/athena_trading/aat_v2/`, and the V2
+dataset assignment is drawn and frozen at
+`configs/aat_v2_dataset_assignment_v1.json` — 35 TRAINING and 15 holdout
+symbols, split by symbol, drawn before any exogenous feature existed. The
+comparison itself is blocked on data acquisition: the claim contract requires a
+measured exogenous coverage rate and refuses to freeze against an intended one.
+
+No phase holds registered evidence or supports any claim. No contract is
+frozen and no protocol registered. AAT-V1 remains frozen and closed, and its
+`PROVIDER_MODEL_MUTABILITY` limitation stands.
