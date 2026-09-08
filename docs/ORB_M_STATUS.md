@@ -1,6 +1,6 @@
 # Athena ORB-M v1.0 — status
 
-Updated 4 September 2026.
+Updated 8 September 2026.
 
 ## What exists
 
@@ -26,6 +26,30 @@ holdout.
 | `quality.py` | Breakout Quality Score (nine equal-weighted components) | Complete |
 | `deterioration.py` | Detectors from bars → signals `exit_pressure` weighs | Complete |
 | `session.py` | `run_full_session` (AAT) + `run_symbol_session` (BQS/ceilings) | Complete |
+| `athena_trading.execution` | PAPER-only authority, `OrderIntent` from an ORB-M decision | Complete |
+| `athena_trading.risk` | Halt gate: refuse before send on constitutional ceilings | Complete |
+| `athena_trading.paper` | Session runner, fixture broker, Alpaca paper adapter | Complete |
+
+Paper execution is **not** live trading. `ExecutionAuthority` is `ABSENT` or
+`PAPER`; `LIVE` is rejected. The runner consumes `run_symbol_session`
+decisions, sizes a DAY market entry, and calls `send_gated` so
+`max_open_positions`, `max_daily_loss_r`, and `max_drawdown_r` veto the
+broker. CI proves the loop with `FixtureBroker` (no network, no keys).
+`AlpacaPaperBroker.from_env()` fails closed when `ALPACA_API_KEY` /
+`ALPACA_API_SECRET` are missing. The adapter is pinned to
+`https://paper-api.alpaca.markets`.
+
+What this increment does **not** do: stream harvests/trails to the broker,
+pull Massive bars, grant live-money authority, retune ORB-M, or reopen the
+consumed AAT holdout / claim contract. Demo parameters lower the PASS
+threshold so the dry-run has a sendable decision; that is wiring, not a
+campaign retune.
+
+Dry-run (no network, no keys):
+
+```text
+python scripts/run_orb_m_paper.py --dry-run
+```
 
 `action_for()` maps confidence onto PASS / REDUCED / STANDARD / HIGH_CONVICTION.
 `score_breakout()` produces that confidence and **fails closed**
@@ -214,9 +238,13 @@ identity hashes recorded here travel into Athena evidence, so
 
 ## Next
 
-Campaign path modules (`quality`, `deterioration`, `run_symbol_session`) are
-implemented. Remaining work is operational: smoke re-run after statistics
-fixes, and a real freeze with provider keys — not a second pool invention.
+Campaign path modules (`quality`, `deterioration`, `run_symbol_session`) and
+the paper execution loop (`execution`, `risk`, `paper`) are implemented.
+Remaining operational work is a smoke re-run after statistics fixes and a
+real freeze with provider keys — not a second pool invention. A continuous
+live-market paper loop (streaming bars, broker-side stops/harvests) is still
+absent; the path above is session-from-decisions plus an optional Alpaca
+paper preflight.
 
 
 1. Breakout Quality Score, calibrated against TRAINING feature distributions
