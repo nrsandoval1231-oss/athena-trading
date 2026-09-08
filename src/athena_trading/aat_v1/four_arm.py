@@ -11,7 +11,6 @@ from urllib.request import Request, urlopen
 
 from ..athena_adapter.contracts import canonical_hash
 from .actor_canary import (
-    API_URL,
     INFERENCE,
     build_actor_packet,
     build_actor_payload,
@@ -19,6 +18,7 @@ from .actor_canary import (
     validate_actor_identity,
     _validate_decision,
 )
+from .providers import OPENAI
 from .readiness import audit_adaptation_readiness
 from .receipts import verified_receipt
 from .training import AATValidationError, load_registered_protocol, load_training_projection
@@ -122,14 +122,13 @@ def plan_four_arm_training(
 
 def _live(payload: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     request = Request(
-        API_URL, data=json.dumps(payload).encode("utf-8"),
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        method="POST",
+        OPENAI.endpoint, data=json.dumps(payload).encode("utf-8"),
+        headers=OPENAI.build_headers(key), method="POST",
     )
     with urlopen(request, timeout=60) as response:  # nosec B310: fixed HTTPS endpoint
         value = json.loads(response.read().decode("utf-8"))
     if not isinstance(value, Mapping):
-        raise AATValidationError("OpenAI response is malformed")
+        raise AATValidationError(f"{OPENAI.provider} response is malformed")
     return value
 
 

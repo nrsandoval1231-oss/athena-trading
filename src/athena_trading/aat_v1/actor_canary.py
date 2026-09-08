@@ -9,9 +9,10 @@ from typing import Any
 from urllib.request import Request, urlopen
 
 from ..athena_adapter.contracts import canonical_hash
+from .providers import OPENAI, ProviderDescriptor
 from .training import AATValidationError, TrainingRow
 
-API_URL = "https://api.openai.com/v1/responses"
+API_URL = OPENAI.endpoint
 PROMPT = (
     "You are Athena's fixed research Actor. Use only the supplied opaque features "
     "and lessons. Return one allowed entry action. Never claim execution authority."
@@ -46,21 +47,28 @@ def load_local_key(path: str | Path) -> str:
     raise AATValidationError("BLOCKED_MODEL_CONFIGURATION")
 
 
-def load_pricing(path: str | Path, *, model_id: str) -> Mapping[str, Any]:
+def load_pricing(path: str | Path, *, model_id: str,
+                 provider: ProviderDescriptor = OPENAI) -> Mapping[str, Any]:
+    """Load a priced model, rejecting a quote sourced from another vendor.
+
+    The source-URL prefix is provider-scoped: a quote lifted from the wrong
+    vendor's documentation would silently misprice every ceiling downstream.
+    """
     value = json.loads(Path(path).read_text(encoding="utf-8"))
-    if (value.get("schema_version") != "openai-text-pricing-v1"
+    if (value.get("schema_version") != provider.pricing_schema
             or value.get("model_id") != model_id
             or float(value.get("input_usd_per_million_tokens", 0)) <= 0
             or float(value.get("output_usd_per_million_tokens", 0)) <= 0
-            or not str(value.get("source_url", "")).startswith("https://developers.openai.com/")):
+            or not str(value.get("source_url", "")).startswith(provider.pricing_source_prefix)):
         raise AATValidationError("pricing configuration is invalid")
     return value
 
 
-def validate_actor_identity(actor: Mapping[str, Any], *, model_id: str) -> None:
+def validate_actor_identity(actor: Mapping[str, Any], *, model_id: str,
+                           provider: ProviderDescriptor = OPENAI) -> None:
     expected = {
         "model_id": model_id,
-        "model_hash": canonical_hash({"provider": "openai", "model": model_id}),
+        "model_hash": provider.model_hash(model_id),
         "prompt_hash": canonical_hash(PROMPT),
         "inference_hash": canonical_hash(INFERENCE),
         "action_schema_hash": canonical_hash(ACTION_SCHEMA),
@@ -83,25 +91,21 @@ def build_actor_packet(
     }
 
 
-def build_actor_payload(model_id: str, packet: Mapping[str, Any]) -> Mapping[str, Any]:
-    return {
-        "model": model_id,
-        "store": False,
-        "reasoning": {"effort": "low"},
-        "max_output_tokens": INFERENCE["max_output_tokens"],
-        "input": [
-            {"role": "system", "content": [{"type": "input_text", "text": PROMPT}]},
-            {"role": "user", "content": [{"type": "input_text", "text": json.dumps(packet, sort_keys=True, separators=(",", ":"))}]},
-        ],
-        "text": {"format": {"type": "json_schema", "name": "aat_actor_decision", "strict": True, "schema": ACTION_SCHEMA}},
-    }
+def build_actor_payload(model_id: str, packet: Mapping[str, Any],
+                       provider: ProviderDescriptor = OPENAI) -> Mapping[str, Any]:
+    return provider.build_payload(
+        model_id, packet, PROMPT,
+        {"inference": INFERENCE, "action_schema": ACTION_SCHEMA},
+    )
 
 
 def price_requests(rows: Sequence[TrainingRow], *, model_id: str, actor_identity: str,
-                   pricing: Mapping[str, Any]) -> Mapping[str, Any]:
+                   pricing: Mapping[str, Any],
+                   provider: ProviderDescriptor = OPENAI) -> Mapping[str, Any]:
     requests = [
         {"arm": arm, "opportunity_id": row.opportunity_id,
-         "payload": build_actor_payload(model_id, build_actor_packet(row, actor_identity))}
+         "payload": build_actor_payload(
+             model_id, build_actor_packet(row, actor_identity), provider)}
         for row in rows for arm in ARMS
     ]
     # UTF-8 byte length is a conservative token ceiling for text tokenization.
@@ -127,15 +131,9 @@ def price_requests(rows: Sequence[TrainingRow], *, model_id: str, actor_identity
     }
 
 
-def _output_text(response: Mapping[str, Any]) -> str:
-    if isinstance(response.get("output_text"), str):
-        return response["output_text"]
-    for output in response.get("output", []):
-        if isinstance(output, Mapping):
-            for content in output.get("content", []):
-                if isinstance(content, Mapping) and content.get("type") == "output_text" and isinstance(content.get("text"), str):
-                    return content["text"]
-    raise AATValidationError("Actor response lacks output text")
+def _output_text(response: Mapping[str, Any],
+                 provider: ProviderDescriptor = OPENAI) -> str:
+    return provider.read_output_text(response)
 
 
 def _validate_decision(response: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -159,7 +157,7 @@ def execute_transport_canary(
     pricing: Mapping[str, Any], spend_ceiling_usd: float, token_ceiling: int,
     ledger_path: str | Path,
     api_key: str, transport: Callable[[Mapping[str, Any], str], Mapping[str, Any]] | None = None,
-    request_offset: int = 0,
+    request_offset: int = 0, provider: ProviderDescriptor = OPENAI,
 ) -> Mapping[str, Any]:
     ledger = Path(ledger_path)
     if ledger.exists():
@@ -172,11 +170,13 @@ def execute_transport_canary(
 
     def live(payload: Mapping[str, Any], key: str) -> Mapping[str, Any]:
         body = json.dumps(payload).encode("utf-8")
-        request = Request(API_URL, data=body, headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, method="POST")
+        request = Request(
+            provider.endpoint, data=body, headers=provider.build_headers(key), method="POST",
+        )
         with urlopen(request, timeout=60) as response:  # nosec B310: fixed HTTPS endpoint
             value = json.loads(response.read().decode("utf-8"))
         if not isinstance(value, Mapping):
-            raise AATValidationError("OpenAI response is malformed")
+            raise AATValidationError(f"{provider.provider} response is malformed")
         return value
 
     ledger.parent.mkdir(parents=True, exist_ok=True)
@@ -190,12 +190,7 @@ def execute_transport_canary(
         if total_input + total_output + request_input_ceiling + INFERENCE["max_output_tokens"] > token_ceiling:
             raise AATValidationError("next request could exceed token ceiling")
         response = (transport or live)(payload, api_key)
-        usage = response.get("usage")
-        if not isinstance(usage, Mapping):
-            raise AATValidationError("Actor response lacks usage evidence")
-        input_tokens, output_tokens = usage.get("input_tokens"), usage.get("output_tokens")
-        if not isinstance(input_tokens, int) or not isinstance(output_tokens, int):
-            raise AATValidationError("Actor usage evidence is malformed")
+        input_tokens, output_tokens = provider.read_usage(response)
         total_input += input_tokens
         total_output += output_tokens
         if total_input + total_output > token_ceiling:

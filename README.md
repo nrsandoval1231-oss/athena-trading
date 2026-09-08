@@ -53,8 +53,14 @@ See `docs/MIGRATION_COMPLETE.md`, `docs/MIGRATION_MATRIX_V1.md`,
 evidence layer, provider-portable Actor identity, and a non-consuming holdout
 sufficiency probe.
 
-Phase 1 of that plan is built: `src/athena_trading/exogenous/` enforces
-point-in-time visibility over non-price evidence and compresses it into a
-frozen, bucketed feature set. It holds no registered evidence, supports no
-claim, and imports nothing from `orb_m/` or `aat_v1/` — the strategy suite
-passes with the package deleted. AAT-V1 remains frozen and closed.
+Phases 1 and 2 of that plan are built. `src/athena_trading/exogenous/`
+enforces point-in-time visibility over non-price evidence and compresses it
+into a frozen, bucketed feature set; it imports nothing from `orb_m/` or
+`aat_v1/`, and the strategy suite passes with the package deleted.
+`aat_v1/providers.py` makes Actor identity provider-scoped without moving any
+registered V1 digest, and `probe_holdout_sufficiency` answers the
+is-the-dataset-big-enough question without consuming an authorization — the
+gap that cost the V1 holdout at 249 of 300.
+
+Neither phase holds registered evidence or supports any claim. AAT-V1 remains
+frozen and closed, and its `PROVIDER_MODEL_MUTABILITY` limitation stands.

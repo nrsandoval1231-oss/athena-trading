@@ -4,8 +4,8 @@ Companion to `docs/AAT_V2_VISION.md`. That document says what we are building
 and why. This one says in what order, in which files, and what has to be true
 before each step is allowed to start.
 
-Status: Phase 1 BUILT. Phases 2-4 proposed. Nothing here is registered
-evidence, no data has been acquired, and no vendor has been selected.
+Status: Phases 1-2 BUILT. Phases 3-4 proposed. Nothing here is registered
+evidence, no data has been acquired, and no second vendor has been selected.
 
 ## Ground rules for the whole plan
 
@@ -139,10 +139,29 @@ universe, zero changes outside `exogenous/`, `scripts/`, `tests/`, `docs/`.
 
 ---
 
-## Phase 2 — portable Actor identity
+## Phase 2 — portable Actor identity — BUILT
 
 The one phase that touches `aat_v1/`. Small, contained, and the riskiest to get
 wrong, because V1 receipts must keep verifying.
+
+Delivered: `aat_v1/providers.py`, the `OPENAI` descriptor wired through
+`actor_canary.py` and `four_arm.py` behind defaults, the non-consuming
+sufficiency probe in `holdout_gate.py`, `scripts/probe_holdout_sufficiency.py`,
+and 30 tests. The V1 identity digests are pinned as literals in
+`tests/test_aat_v1_identity_pinning.py`, written before the refactor.
+
+**One correction to this plan as originally written.** It said
+`PROVIDER_MODEL_MUTABILITY` would stop being a permanent limitation. It does
+not, and must not, for V1: that limitation is recorded in a frozen protocol
+whose holdout is consumed, and rewriting how spent evidence describes itself
+would be exactly the kind of retroactive edit the governance exists to prevent.
+`readiness.py` and `training.py` keep their literal model pin untouched. What
+Phase 2 actually delivers is that a *V2* protocol can register a
+provider-scoped identity and therefore never inherits the limitation.
+
+`four_arm.py` is pinned to `OPENAI` explicitly rather than parameterized. Its
+run is complete and frozen; making it provider-portable would be churn on
+finished evidence.
 
 ### 2.1 Provider registry — `src/athena_trading/aat_v1/providers.py`
 
