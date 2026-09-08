@@ -4,7 +4,8 @@ Companion to `docs/AAT_V2_VISION.md`. That document says what we are building
 and why. This one says in what order, in which files, and what has to be true
 before each step is allowed to start.
 
-Status: PROPOSED. No code written. Nothing here is registered evidence.
+Status: Phase 1 BUILT. Phases 2-4 proposed. Nothing here is registered
+evidence, no data has been acquired, and no vendor has been selected.
 
 ## Ground rules for the whole plan
 
@@ -25,9 +26,20 @@ Status: PROPOSED. No code written. Nothing here is registered evidence.
 
 ---
 
-## Phase 1 — exogenous evidence layer
+## Phase 1 — exogenous evidence layer — BUILT
 
 Pure infrastructure. Adds no evidence, makes no claim, calls nothing.
+
+Delivered in `src/athena_trading/exogenous/`: `contracts.py`, `buckets.py`,
+`analysts.py`, `ingest.py`, `snapshot.py`, plus
+`scripts/measure_exogenous_coverage.py` and 61 tests. Twenty-four bucketed
+feature keys across five source categories. The full suite passes with the
+package physically deleted, so the deterministic strategy carries no dependency
+on it.
+
+What is *not* built: no vendor adapter beyond the passthrough, and no data. The
+adapter surface is a pure per-row function so a source swap is a new adapter
+rather than a new pipeline.
 
 ### 1.1 Record contract — `src/athena_trading/exogenous/contracts.py`
 

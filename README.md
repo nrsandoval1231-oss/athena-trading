@@ -49,7 +49,12 @@ See `docs/MIGRATION_COMPLETE.md`, `docs/MIGRATION_MATRIX_V1.md`,
 ## Proposed next experiment
 
 `docs/AAT_V2_VISION.md`, `docs/AAT_V2_PLAN.md` and
-`docs/EXOGENOUS_SOURCES_V1.md` propose AAT-V2: an
-exogenous (non-price) evidence layer, provider-portable Actor identity, and a
-non-consuming holdout sufficiency probe. Proposal only — no code, no registered
-evidence, and AAT-V1 remains frozen and closed.
+`docs/EXOGENOUS_SOURCES_V1.md` propose AAT-V2: an exogenous (non-price)
+evidence layer, provider-portable Actor identity, and a non-consuming holdout
+sufficiency probe.
+
+Phase 1 of that plan is built: `src/athena_trading/exogenous/` enforces
+point-in-time visibility over non-price evidence and compresses it into a
+frozen, bucketed feature set. It holds no registered evidence, supports no
+claim, and imports nothing from `orb_m/` or `aat_v1/` — the strategy suite
+passes with the package deleted. AAT-V1 remains frozen and closed.
