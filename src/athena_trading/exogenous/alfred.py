@@ -216,14 +216,18 @@ def fetch_alfred_observations(
     realtime_start: str | None = None,
     realtime_end: str | None = None,
     vintage_dates: str | None = None,
+    observation_start: str | None = None,
+    observation_end: str | None = None,
     api_key: str | None = None,
     transport: Transport | None = None,
 ) -> tuple[dict[str, Any], ...]:
     """Pull ALFRED vintage observations.  Optional; not invoked by tests.
 
     A vintage constraint is mandatory: either ``vintage_dates`` or both
-    ``realtime_start`` and ``realtime_end``.  Omitting them would hit the
-    current-view default (realtime period = today) and is refused.
+    ``realtime_start`` and ``realtime_end``.  Observation bounds are optional
+    but, when supplied, must be provided as a pair.  Omitting the vintage
+    constraint would hit the current-view default (realtime period = today)
+    and is refused.
     """
     key = api_key if api_key is not None else api_key_from_env()
     _require_key(key)
@@ -233,6 +237,17 @@ def fetch_alfred_observations(
         realtime_end=realtime_end,
         vintage_dates=vintage_dates,
     )
+    has_observation_start = bool(observation_start and str(observation_start).strip())
+    has_observation_end = bool(observation_end and str(observation_end).strip())
+    if has_observation_start != has_observation_end:
+        raise AlfredError("observation_start and observation_end must be supplied together")
+    if has_observation_start:
+        start = _parse_alfred_date(observation_start, label="observation_start")
+        end = _parse_alfred_date(observation_end, label="observation_end")
+        if end < start:
+            raise AlfredError("observation_end precedes observation_start")
+        query["observation_start"] = start.isoformat()
+        query["observation_end"] = end.isoformat()
     query["series_id"] = series
     query["units"] = VINTAGE_UNITS
     query["output_type"] = VINTAGE_OUTPUT_TYPE

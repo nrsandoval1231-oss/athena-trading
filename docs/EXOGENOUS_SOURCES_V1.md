@@ -5,9 +5,12 @@ the "which exogenous sources" open decision: **all six categories TradingAgents
 uses**, tiered by what they are actually worth to an intraday ORB decision and
 graded by whether their point-in-time provenance can be defended.
 
-Status: PROPOSED. The ALFRED macro adapter exists and is fixture-tested; see
-`docs/ALFRED_MACRO_SOURCE_PROVENANCE.md`. No exogenous data has been acquired.
-Coverage has not been measured. No V2 claim is frozen.
+Status: EVIDENCE-GATED. The ALFRED macro adapter and GDELT GKG parser are
+fixture-tested; see `docs/ALFRED_MACRO_SOURCE_PROVENANCE.md` and
+`docs/GDELT_NEWS_SOURCE_PROVENANCE.md`. The 35-symbol TRAINING campaign has
+an outcome-free opportunity index and macro snapshot. GDELT passed parser
+validation but failed the bounded coverage study and is not adopted. No V2
+claim or protocol is frozen.
 
 ## The decision moment shapes everything
 
@@ -88,8 +91,11 @@ subsequently moved — the classic exogenous survivorship channel. Coverage
 density is itself emitted as a feature so its effect stays measurable rather
 than hidden.
 
-**Grade: A–.** Buildable with defensible provenance if first-seen timestamps
-are enforced at ingest.
+**Grade: rejected for this run.** The bounded 2025 study retrieved 11 of 12
+monthly slices and produced only 13 news-present opportunities out of 16,705
+(0.0778%) under the frozen overnight/premarket compressor window. The exact
+entity mapping covered only `microsoft → MSFT` and `nvidia → NVDA`; the full
+archive is not justified without a source with stable historical entity IDs.
 
 ### Macro
 
@@ -111,8 +117,9 @@ series cannot be sourced, ship the release-event flags without the surprise
 bucket rather than guessing.
 
 **Grade: A.** Use ALFRED vintages, never the current-view FRED series. The
-adapter is `alfred_adapter` in `src/athena_trading/exogenous/alfred.py`. Data
-has not been acquired; this grade is about provenance, not measured coverage.
+adapter is `alfred_adapter` in `src/athena_trading/exogenous/alfred.py`. The
+training snapshot contains 16,705 rows with measured macro coverage of 1.0;
+this remains evidence coverage, not a predictive claim.
 
 ---
 
@@ -222,7 +229,9 @@ analyst compressors map to categories rather than one per vendor, so a source
 swap inside a category does not change the feature key set.
 
 The order is: **Macro and News (Tier 1) → coverage measurement → Tier 2 if
-coverage clears the floor → Polymarket stub.**
+coverage clears the floor → Polymarket stub.** In the current run macro
+cleared the evidence gate and GDELT news did not, so news remains explicitly
+missing rather than being represented by a misleading thin panel.
 
 Two things must exist before Phase 3 registers any protocol:
 

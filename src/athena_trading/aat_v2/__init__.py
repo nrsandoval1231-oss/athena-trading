@@ -41,6 +41,7 @@ from .packet import (
     ledger_projection,
     packet_hash,
 )
+from .opportunities import OpportunityIndexError, build_opportunity_index
 
 __all__ = [
     "ACTOR_ARMS", "ARMS", "DELIBERATION_ARMS", "EXOGENOUS_ARMS", "MEMORY_ARMS",
@@ -50,5 +51,6 @@ __all__ = [
     "calls_actor", "deliberates", "draw_assignment", "filter_opportunities",
     "freeze_claim_contract", "ledger_projection", "load_contract", "load_universe",
     "packet_hash", "partition_for", "receives_exogenous", "receives_memory",
+    "OpportunityIndexError", "build_opportunity_index",
     "write_assignment", "write_contract",
 ]

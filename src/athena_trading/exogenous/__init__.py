@@ -23,6 +23,7 @@ from .analysts import (
     feature_keys,
 )
 from .buckets import ABSENT, bucket, ratio_bucket
+from .gdelt import GdeltError, parse_gkg_row
 from .contracts import (
     SOURCES,
     ExogenousContractError,
@@ -55,7 +56,7 @@ __all__ = [
     "annotate_alfred_revisions", "assert_no_lookahead", "assert_stable_availability",
     "bucket", "build_snapshot", "compress_all", "compress_opportunity",
     "compressor_identity", "coverage", "coverage_rates", "feature_keys",
-    "fetch_alfred_observations", "load_opportunity_index", "load_record_store",
-    "normalize", "parse_record", "passthrough_adapter", "ratio_bucket",
+    "fetch_alfred_observations", "GdeltError", "load_opportunity_index", "load_record_store",
+    "normalize", "parse_gkg_row", "parse_record", "passthrough_adapter", "ratio_bucket",
     "stamp_scheduled_availability", "visible_records", "write_record_store",
 ]

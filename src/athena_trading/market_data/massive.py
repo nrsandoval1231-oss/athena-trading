@@ -25,7 +25,10 @@ def _load_dotenv(path: Path) -> None:
 def download_minute_bars(*, symbol: str, start: str, end: str, output_root: Path, adjusted: bool = False,
                          api_key: str | None = None, max_retries: int = 3, retry_backoff_seconds: float = 1.0) -> tuple[Path, Path]:
     """Download raw-preserving Massive minute bars for Athena Trading."""
-    _load_dotenv(output_root.parent / ".env"); key = api_key or os.environ.get("MASSIVE_API_KEY")
+    dotenv_candidates = [Path.cwd() / ".env", output_root / ".env", *output_root.parents]
+    for candidate in dotenv_candidates:
+        _load_dotenv(candidate / ".env" if candidate.is_dir() else candidate)
+    key = api_key or os.environ.get("MASSIVE_API_KEY")
     if not key: raise RuntimeError("MASSIVE_API_KEY is not set. Add it to the local .env file.")
     if max_retries < 0 or retry_backoff_seconds < 0: raise ValueError("retry settings must be non-negative")
     snapshot_dir=output_root/"raw"/"massive"/"stocks"/"minute"; normalized_dir=output_root/"normalized"/"stocks"/"minute"; manifest_dir=output_root/"manifests"

@@ -4,10 +4,11 @@ Companion to `docs/AAT_V2_VISION.md`. That document says what we are building
 and why. This one says in what order, in which files, and what has to be true
 before each step is allowed to start.
 
-Status: Phases 1-2 BUILT. Phase 3 machinery BUILT and the assignment drawn;
-the run itself is blocked on data acquisition. Phase 4 proposed. No contract
-is frozen, no protocol registered, no data acquired. The ALFRED macro adapter
-exists; news still has no vendor. Coverage has not been measured.
+Status: Phases 1-2 BUILT. Phase 3 machinery BUILT and the assignment drawn.
+The 35-symbol TRAINING campaign, outcome-free opportunity index, and macro
+snapshot are built and receipted. GDELT was evaluated through a bounded
+multi-slice study and rejected for inadequate coverage. Phase 3 remains
+blocked on freezing a claim contract and protocol. Phase 4 is proposed.
 
 ## Ground rules for the whole plan
 
@@ -39,9 +40,12 @@ across five source categories. The full suite passes with the package
 physically deleted, so the deterministic strategy carries no dependency on it.
 
 The ALFRED macro adapter is built (`exogenous/alfred.py`, provenance in
-`docs/ALFRED_MACRO_SOURCE_PROVENANCE.md`). News still has no vendor. No
-exogenous data has been acquired. The adapter surface remains a pure per-row
-function so a source swap is a new adapter rather than a new pipeline.
+`docs/ALFRED_MACRO_SOURCE_PROVENANCE.md`) and the training macro snapshot
+measures 1.0 coverage across 16,705 opportunities. GDELT's parser is built,
+but its bounded study measured 0.0778% news coverage and it is not adopted.
+News is therefore explicitly missing for the current run. The adapter surface
+remains a pure per-row function so a future source swap is a new adapter rather
+than a new pipeline.
 
 ### 1.1 Record contract — `src/athena_trading/exogenous/contracts.py`
 
@@ -256,11 +260,12 @@ and produce a null for the wrong reason. `arms.py` holds arm E to the same
 total output budget as one arm-D call, so a win from deliberation cannot be a
 win from spending more tokens.
 
-**Steps 2, 3, 4 and 7 are blocked on data**, not on code. `freeze_claim_contract`
-requires a *measured* coverage rate and refuses to accept an intended one; that
-number cannot exist until Tier-1 ingest runs. The refusal is deliberate. The
-unblocking work is source selection and provenance documentation per
-`docs/EXOGENOUS_SOURCES_V1.md`, which needs vendor decisions and credentials.
+**Steps 2, 3, 4 and 7 are blocked on protocol decisions**, not on the basic
+data path. `freeze_claim_contract` requires a *measured* coverage rate and
+refuses to accept an intended one; macro now supplies that measured rate, while
+news is explicitly absent because GDELT failed its coverage gate. The remaining
+unblocking work is to freeze the claim contract and decide whether the
+macro-only evidence surface is the registered Phase 3 input.
 
 Original sequence, for reference:
 1. Draw the V2 dataset assignment — TRAINING and sealed holdout — **before any

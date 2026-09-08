@@ -199,6 +199,8 @@ def test_fetch_parses_a_fixture_payload_through_injected_transport():
         assert url.startswith(API_ROOT + OBSERVATIONS_PATH)
         assert "realtime_start=1776-07-04" in url
         assert "realtime_end=9999-12-31" in url
+        assert "observation_start=2024-01-01" in url
+        assert "observation_end=2025-12-31" in url
         assert "output_type=1" in url
         assert "units=lin" in url
         assert "file_type=json" in url
@@ -218,6 +220,8 @@ def test_fetch_parses_a_fixture_payload_through_injected_transport():
         envelope["series_id"],
         realtime_start="1776-07-04",
         realtime_end="9999-12-31",
+        observation_start="2024-01-01",
+        observation_end="2025-12-31",
         api_key="fixture-key",
         transport=transport,
     )
