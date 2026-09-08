@@ -105,3 +105,32 @@ Forward ownership has migrated from the historical trading Lab inside `Athena`. 
 
 See `docs/MIGRATION_COMPLETE.md`, `docs/MIGRATION_MATRIX_V1.md`,
 `docs/ORB_M_STATUS.md`, and `docs/AAT_V1_TRAINING_RUNNER.md`.
+
+## Proposed next experiment
+
+`docs/AAT_V2_VISION.md`, `docs/AAT_V2_PLAN.md` and
+`docs/EXOGENOUS_SOURCES_V1.md` propose AAT-V2: an exogenous (non-price)
+evidence layer, provider-portable Actor identity, and a non-consuming holdout
+sufficiency probe.
+
+Phases 1 and 2 of that plan are built. `src/athena_trading/exogenous/`
+enforces point-in-time visibility over non-price evidence and compresses it
+into a frozen, bucketed feature set; it imports nothing from `orb_m/` or
+`aat_v1/`, and the strategy suite passes with the package deleted.
+`aat_v1/providers.py` makes Actor identity provider-scoped without moving any
+registered V1 digest, and `probe_holdout_sufficiency` answers the
+is-the-dataset-big-enough question without consuming an authorization — the
+gap that cost the V1 holdout at 249 of 300.
+
+Phase 3's machinery is built in `src/athena_trading/aat_v2/`, and the V2
+dataset assignment is drawn and frozen at
+`configs/aat_v2_dataset_assignment_v1.json` — 35 TRAINING and 15 holdout
+symbols, split by symbol, drawn before any exogenous feature existed. The
+comparison itself is blocked on data acquisition: the claim contract requires a
+measured exogenous coverage rate and refuses to freeze against an intended one.
+
+A full progress, status and handoff report is at `docs/AAT_V2_HANDOFF.md`.
+
+No phase holds registered evidence or supports any claim. No contract is
+frozen and no protocol registered. AAT-V1 remains frozen and closed, and its
+`PROVIDER_MODEL_MUTABILITY` limitation stands.

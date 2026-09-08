@@ -111,6 +111,108 @@ def audit_holdout_preflight(
     return result
 
 
+def probe_holdout_sufficiency(
+    contract_path: str | Path, opportunity_receipt_path: str | Path,
+    *, assignment_hash: str, probe_log_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Ask whether a candidate dataset is large enough, without spending anything.
+
+    ``audit_holdout_preflight`` answers the same question but hardcodes
+    ``sealed_holdout_consumed: True``, so merely asking burns the
+    authorization.  That is what cost the V1 holdout: the frozen compiler found
+    249 of a required 300, the gate correctly returned ``INVALID_EVIDENCE``, and
+    a single-use authorization was spent on a question that should have been
+    settled before it was issued.
+
+    This probe takes **no authorization argument at all**.  It cannot consume
+    one because it is never given one, which is a stronger guarantee than
+    remembering not to.  Run it at dataset-construction time; if it says
+    insufficient, redraw the assignment and probe again.  Only once it clears
+    does an authorization get issued.
+
+    To keep the probe from becoming a tuning channel it returns a count and a
+    verdict and nothing else -- no per-symbol breakdown, no distribution, no
+    sample.  Every probe is stamped with the assignment hash, and
+    ``probe_log_path`` appends to a durable log, so repeated probing against one
+    assignment is visible in the record rather than invisible in someone's
+    shell history.
+    """
+    try:
+        contract = json.loads(Path(contract_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise AATValidationError("claim contract is unreadable") from exc
+    minimum = contract.get("minimum_opportunity_count")
+    if not isinstance(minimum, int) or minimum < 1:
+        raise AATValidationError("claim contract minimum is invalid")
+    if not isinstance(assignment_hash, str) or not assignment_hash.strip():
+        raise AATValidationError("probe requires a dataset assignment hash")
+
+    receipt_path = Path(opportunity_receipt_path)
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise AATValidationError("candidate opportunity receipt is unreadable") from exc
+    payload = dict(receipt)
+    claimed = payload.pop("projection_hash", None)
+    rows_path = receipt_path.parent / receipt.get("rows_path", "")
+    if (
+        claimed != canonical_hash(payload)
+        or receipt.get("partition") not in {"SEALED_HOLDOUT", "CANDIDATE_HOLDOUT"}
+        or receipt.get("contains_outcomes") is not False
+        or receipt.get("execution_authority") != "ABSENT"
+        or not rows_path.is_file()
+        or hashlib.sha256(rows_path.read_bytes()).hexdigest() != receipt.get("rows_sha256")
+    ):
+        raise AATValidationError("candidate opportunity evidence drift")
+    count = receipt.get("row_count")
+    if not isinstance(count, int):
+        raise AATValidationError("candidate opportunity count is invalid")
+
+    result = {
+        "schema_version": "aat-sealed-holdout-sufficiency-probe-v1",
+        "status": "SUFFICIENT" if count >= minimum else "INSUFFICIENT",
+        "contract_hash": canonical_hash(contract),
+        "assignment_hash": assignment_hash,
+        "opportunity_projection_hash": receipt["projection_hash"],
+        "qualified_opportunity_count": count,
+        "minimum_opportunity_count": minimum,
+        "actor_called": False,
+        "claim_authorized": False,
+        "authorization_consulted": False,
+        "sealed_holdout_consumed": False,
+        "execution_authority": "ABSENT",
+    }
+    result["result_hash"] = canonical_hash(result)
+    if probe_log_path is not None:
+        log = Path(probe_log_path)
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("a", encoding="utf-8", newline="\n") as stream:
+            stream.write(json.dumps(result, sort_keys=True, separators=(",", ":")) + "\n")
+    return result
+
+
+def count_prior_probes(probe_log_path: str | Path, *, assignment_hash: str) -> int:
+    """How many times this assignment has already been probed.
+
+    A single probe is hygiene.  Twenty probes against redrawn assignments until
+    one clears is tuning the split against the count, and the number belongs in
+    front of whoever authorizes the run.
+    """
+    log = Path(probe_log_path)
+    if not log.is_file():
+        return 0
+    total = 0
+    for line in log.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise AATValidationError("sufficiency probe log is malformed") from exc
+        total += row.get("assignment_hash") == assignment_hash
+    return total
+
+
 def validate_holdout_authorization(
     authorization: Mapping[str, Any], *, contract_hash: str, prior_receipts: Sequence[Mapping[str, Any]],
 ) -> None:
