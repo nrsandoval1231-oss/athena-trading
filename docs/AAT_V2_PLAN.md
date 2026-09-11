@@ -5,7 +5,8 @@ and why. This one says in what order, in which files, and what has to be true
 before each step is allowed to start.
 
 Status: Phases 1-2 BUILT. Phase 3 machinery BUILT, the assignment drawn, a
-macro-only claim contract frozen, and a non-authorizing V2 protocol registered.
+macro-only claim contract frozen, a non-authorizing V2 protocol registered,
+and a TRAINING dry-run plan prepared.
 The 35-symbol TRAINING campaign, outcome-free opportunity index, and macro
 snapshot are built and receipted. GDELT was evaluated through a bounded
 multi-slice study and rejected for inadequate coverage. The TRAINING run
@@ -265,8 +266,9 @@ win from spending more tokens.
 a 0.90 macro coverage floor, binds the measured 1.0 macro coverage, and keeps
 news explicitly absent because GDELT failed its coverage gate. `claim_authorized`
 remains false. The registered protocol is `REGISTERED_NOT_AUTHORIZED`. The
-remaining work is an explicitly authorized TRAINING run; no model calls or
-holdout access are implied by contract or registration.
+dry-run plan requires 66,820 model calls with a worst-case cost ceiling of
+$376.029464. The remaining work is an explicitly authorized TRAINING run; no
+model calls or holdout access are implied by contract, registration, or plan.
 
 Original sequence, for reference:
 1. Draw the V2 dataset assignment — TRAINING and sealed holdout — **before any
