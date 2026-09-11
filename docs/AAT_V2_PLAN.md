@@ -266,9 +266,12 @@ win from spending more tokens.
 a 0.90 macro coverage floor, binds the measured 1.0 macro coverage, and keeps
 news explicitly absent because GDELT failed its coverage gate. `claim_authorized`
 remains false. The registered protocol is `REGISTERED_NOT_AUTHORIZED`. The
-dry-run plan requires 66,820 model calls with a worst-case cost ceiling of
-$376.029464. The remaining work is an explicitly authorized TRAINING run; no
-model calls or holdout access are implied by contract, registration, or plan.
+corrected dry-run plan requires 116,935 model calls because arm E has four
+deliberation turns per opportunity. The earlier 66,820-call and $376.029464
+estimate is superseded; the conservative Terra ceiling is approximately
+$504.10. See `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. The remaining work is
+an explicitly authorized TRAINING run; no model calls or holdout access are
+implied by contract, registration, or plan.
 
 Original sequence, for reference:
 1. Draw the V2 dataset assignment — TRAINING and sealed holdout — **before any
