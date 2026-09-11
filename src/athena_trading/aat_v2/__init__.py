@@ -1,9 +1,10 @@
 """AAT-V2: the exogenous-evidence adaptation experiment.
 
 Proposed in ``docs/AAT_V2_VISION.md``, sequenced in ``docs/AAT_V2_PLAN.md``.
-This package holds the experiment's machinery only. It contains no registered
-protocol, no drawn assignment, no frozen contract and no evidence, and
-``execution_authority`` is ``ABSENT`` throughout.
+This package holds the experiment's machinery and non-authorizing registration
+artifacts. The V2 protocol may be registered, but claims remain unauthorized,
+holdout access remains separately gated, and ``execution_authority`` is
+``ABSENT`` throughout.
 
 AAT-V1 is untouched. V2 is a separate experiment with its own dataset
 assignment and its own, separately authorized holdout.
@@ -42,6 +43,7 @@ from .packet import (
     packet_hash,
 )
 from .opportunities import OpportunityIndexError, build_opportunity_index
+from .protocol import ProtocolError, register_protocol
 
 __all__ = [
     "ACTOR_ARMS", "ARMS", "DELIBERATION_ARMS", "EXOGENOUS_ARMS", "MEMORY_ARMS",
@@ -52,5 +54,6 @@ __all__ = [
     "freeze_claim_contract", "ledger_projection", "load_contract", "load_universe",
     "packet_hash", "partition_for", "receives_exogenous", "receives_memory",
     "OpportunityIndexError", "build_opportunity_index",
+    "ProtocolError", "register_protocol",
     "write_assignment", "write_contract",
 ]
