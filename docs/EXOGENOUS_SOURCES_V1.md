@@ -10,7 +10,8 @@ fixture-tested; see `docs/ALFRED_MACRO_SOURCE_PROVENANCE.md` and
 `docs/GDELT_NEWS_SOURCE_PROVENANCE.md`. The 35-symbol TRAINING campaign has
 an outcome-free opportunity index and macro snapshot. GDELT passed parser
 validation but failed the bounded coverage study and is not adopted. No V2
-claim or protocol is frozen.
+claim contract is frozen for a macro-only surface; no protocol is registered
+and no V2 claim is authorized.
 
 ## The decision moment shapes everything
 

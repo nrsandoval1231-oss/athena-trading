@@ -4,11 +4,12 @@ Companion to `docs/AAT_V2_VISION.md`. That document says what we are building
 and why. This one says in what order, in which files, and what has to be true
 before each step is allowed to start.
 
-Status: Phases 1-2 BUILT. Phase 3 machinery BUILT and the assignment drawn.
-The 35-symbol TRAINING campaign, outcome-free opportunity index, and macro
-snapshot are built and receipted. GDELT was evaluated through a bounded
-multi-slice study and rejected for inadequate coverage. Phase 3 remains
-blocked on freezing a claim contract and protocol. Phase 4 is proposed.
+Status: Phases 1-2 BUILT. Phase 3 machinery BUILT, the assignment drawn, and a
+macro-only claim contract frozen. The 35-symbol TRAINING campaign,
+outcome-free opportunity index, and macro snapshot are built and receipted.
+GDELT was evaluated through a bounded multi-slice study and rejected for
+inadequate coverage. Protocol registration and the TRAINING run remain gated;
+Phase 4 is proposed.
 
 ## Ground rules for the whole plan
 
@@ -260,12 +261,12 @@ and produce a null for the wrong reason. `arms.py` holds arm E to the same
 total output budget as one arm-D call, so a win from deliberation cannot be a
 win from spending more tokens.
 
-**Steps 2, 3, 4 and 7 are blocked on protocol decisions**, not on the basic
-data path. `freeze_claim_contract` requires a *measured* coverage rate and
-refuses to accept an intended one; macro now supplies that measured rate, while
-news is explicitly absent because GDELT failed its coverage gate. The remaining
-unblocking work is to freeze the claim contract and decide whether the
-macro-only evidence surface is the registered Phase 3 input.
+**The macro-only claim contract is now frozen.** It requires 300 minimum pairs,
+a 0.90 macro coverage floor, binds the measured 1.0 macro coverage, and keeps
+news explicitly absent because GDELT failed its coverage gate. `claim_authorized`
+remains false. The remaining work is protocol registration and an explicitly
+authorized TRAINING run; no model calls or holdout access are implied by the
+contract freeze.
 
 Original sequence, for reference:
 1. Draw the V2 dataset assignment — TRAINING and sealed holdout — **before any
