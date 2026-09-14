@@ -240,6 +240,11 @@ def _ollama_usage(response: Mapping[str, Any]) -> tuple[int, int]:
     return prompt_tokens, completion_tokens
 
 
+# RunPod HTTPS proxies 403 urllib's default ``Python-urllib/3.x``. A
+# deliberate non-urllib UA is required for remote TRAINING; loopback gets
+# the same header so live requests never fall back to urllib's default.
+OLLAMA_USER_AGENT = "athena-trading/0.1 ollama-training"
+
 OLLAMA = ProviderDescriptor(
     provider="ollama",
     endpoint="http://127.0.0.1:11434/api/chat",
@@ -248,7 +253,10 @@ OLLAMA = ProviderDescriptor(
     build_payload=_ollama_payload,
     read_output_text=_ollama_output_text,
     read_usage=_ollama_usage,
-    build_headers=lambda _key: {"Content-Type": "application/json"},
+    build_headers=lambda _key: {
+        "Content-Type": "application/json",
+        "User-Agent": OLLAMA_USER_AGENT,
+    },
 )
 
 #: V1 registry stays a singleton. DeepSeek and Ollama are declared, not registered.

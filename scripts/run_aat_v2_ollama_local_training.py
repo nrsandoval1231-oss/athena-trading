@@ -14,7 +14,9 @@ RunPod / remote-Ollama smoke (offline mocked ``qwen2.5:14b``)::
       --authorization configs/aat_v2_ollama_runpod_training_authorization_v1.json \\
       --base-url http://127.0.0.1:11434
 
-Live RunPod warmup (14 calls). Point ``--base-url`` at the pod or an SSH tunnel::
+Live RunPod warmup (14 calls). Direct pod Ollama is ``http://<pod>:11434``.
+A RunPod HTTPS proxy is ``https://<id>-11434.proxy.runpod.net`` (do not
+append ``:11434``; TLS is 443). An SSH tunnel to loopback also works::
 
     python scripts/run_aat_v2_ollama_local_training.py \\
       --identity configs/aat_v2_ollama_qwen_14b_runpod_actor_identity_v1.json \\
@@ -134,7 +136,8 @@ def main(argv: list[str] | None = None) -> int:
         "--base-url",
         default="http://127.0.0.1:11434",
         help="Ollama native /api/chat origin. Loopback is the desktop/SSH-tunnel "
-        "default. Pass http://<pod>:11434 for a reachable RunPod GPU.",
+        "default. Direct pod Ollama is http://<pod>:11434. A RunPod HTTPS proxy "
+        "is https://<id>-11434.proxy.runpod.net (do not append :11434).",
     )
     parser.add_argument(
         "--max-concurrent-calls",

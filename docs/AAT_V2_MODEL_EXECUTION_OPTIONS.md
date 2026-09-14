@@ -367,8 +367,19 @@ authorize Terra and does **not** authorize desktop `qwen3.5:9b`.
 Transport: native Ollama `/api/chat` (the same payload the desktop runner
 already uses). OpenAI-compat `/v1/chat/completions` is refused so a toy
 Instructor schema cannot sneak in. Live still needs `--allow-live-ollama`.
-`--base-url http://<pod>:11434` (or `https://…`) is the remote opt-in. An
-SSH tunnel to loopback is also legal for this identity.
+`--base-url` is the remote opt-in. Direct Ollama on the pod is
+`http://<pod>:11434`. A RunPod HTTPS proxy
+(`https://<id>-11434.proxy.runpod.net`) should be passed as that HTTPS
+origin **without** appending `:11434` — the proxy terminates TLS on 443,
+and the transport must not rewrite a port-less HTTPS URL onto Ollama's
+native 11434. Explicit `:443` also works. An SSH tunnel to loopback is
+also legal for this identity.
+
+The live transport always sends a deliberate `User-Agent`
+(`athena-trading/0.1 ollama-training`). RunPod's HTTPS proxy returns HTTP
+403 for urllib's default `Python-urllib/3.x` (curl, `python-requests`,
+Mozilla, and PowerShell `Invoke-WebRequest` succeed on the same origin).
+Do not drop the custom UA or live warmup fail-closes with HTTP 403.
 
 **Concurrency.** Default `--max-concurrent-calls 1`. Optional 2–4 is
 opportunity-level only; arm E turns stay sequential inside each row. Ollama
@@ -383,10 +394,13 @@ dump. `--resume` replays the ledger. Download `ledger.jsonl`,
 1. Start a Community RTX 4090 (or similar 24 GB) pod.
 2. Install Ollama on the pod and pull the committed tag: `ollama pull qwen2.5:14b`.
 3. Expose native Ollama on port 11434, **or** SSH-tunnel it to
-   `http://127.0.0.1:11434` on the machine that runs the harness.
+   `http://127.0.0.1:11434` on the machine that runs the harness, **or**
+   use the RunPod HTTPS proxy (`https://<id>-11434.proxy.runpod.net`)
+   without appending `:11434`.
 4. Confirm `qwen2.5:14b` is the serving tag. A different tag is a different Actor.
-5. Point the existing runner at `--base-url http://<pod>:11434` (or the tunnel)
-   with the 14b identity. Do not reuse the desktop 9b identity file.
+5. Point the existing runner at `--base-url http://<pod>:11434`, the HTTPS
+   proxy origin, or the tunnel, with the 14b identity. Do not reuse the
+   desktop 9b identity file.
 6. Offline smoke (mocked transport; safe in this repo):
 
 ```
@@ -416,6 +430,15 @@ python scripts/run_aat_v2_ollama_local_training.py \
   --snapshot <macro snapshot JSONL> \
   --output-dir artifacts/aat_v2_ollama_runpod_training_warmup
 ```
+
+HTTPS RunPod proxy form (recommended; do **not** append `:11434`):
+
+```
+  --base-url https://<id>-11434.proxy.runpod.net
+```
+
+`--base-url https://<id>-11434.proxy.runpod.net:443` is equivalent. Direct
+pod Ollama without the HTTPS proxy remains `--base-url http://<pod>:11434`.
 
 Optional 100-opportunity live sample (700 calls) after the 2-row warmup:
 
