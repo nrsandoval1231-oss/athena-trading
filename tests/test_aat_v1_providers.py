@@ -13,6 +13,7 @@ from athena_trading.aat_v1.actor_canary import (
 )
 from athena_trading.aat_v1.providers import (
     DEEPSEEK,
+    OLLAMA,
     OPENAI,
     ProviderDescriptor,
     get_provider,
@@ -114,6 +115,26 @@ def test_a_different_provider_builds_a_different_payload():
 def test_unregistered_provider_fails_closed():
     with pytest.raises(AATValidationError):
         get_provider("nope")
+
+
+def test_ollama_descriptor_is_declared_not_v1_registered():
+    assert OLLAMA.provider == "ollama"
+    assert OLLAMA.endpoint == "http://127.0.0.1:11434/api/chat"
+    assert OLLAMA.pricing_schema == "ollama-local-unpriced-v1"
+    assert "ollama" not in registered_providers()
+    with pytest.raises(AATValidationError, match="unregistered"):
+        get_provider("ollama")
+    payload = OLLAMA.build_payload(
+        "qwen3.5:9b",
+        {"candidate_hash": "abc"},
+        "local-training",
+        {"inference": {"max_output_tokens": 256}},
+    )
+    assert payload["model"] == "qwen3.5:9b"
+    assert payload["think"] is False
+    assert payload["format"] == "json"
+    assert payload["options"]["num_predict"] == 256
+    assert "input" not in payload
 
 
 def test_openai_is_the_only_registered_provider():

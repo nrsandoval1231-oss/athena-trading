@@ -1,9 +1,13 @@
 # AAT-V2 Model Execution Options
 
-Status: planning evidence only. No full TRAINING execution has been authorized.
-The registered protocol remains `REGISTERED_NOT_AUTHORIZED` and
-`execution_authority` remains `ABSENT`. DeepSeek Flash is a `CANDIDATE_PILOT`
-identity with a bounded fixture pilot; that path is not TRAINING.
+Status: local Ollama TRAINING plumbing is in-tree. No full 116,935-call run
+has been started in this repository. The registered protocol remains
+`REGISTERED_NOT_AUTHORIZED` and `execution_authority` remains `ABSENT`.
+DeepSeek Flash is a `CANDIDATE_PILOT` whose API is currently overloaded
+(503). Nick authorized a bigger live Flash sample at $50 / 500 calls / 71
+opportunities; that is still not TRAINING. He then authorized a pivot to
+**local Ollama `qwen3.5:9b`** for tonight's in-sample TRAINING start. Astra Desk stays
+isolated. V1/V2 holdout stays unused.
 
 ## Workload
 
@@ -47,8 +51,16 @@ The local model was stopped after the pilot. Its ledger remains in disposable
 ignored temp storage. That E configuration required unbounded
 `horizon` / `invalidation` / `rationale` strings on every 64-token turn. A
 non-authorizing compact-schema amendment now binds closed-enum E-arm turns
-that fit the same 64-token budget. TRAINING remains unauthorized; the
-registered protocol is not rewritten.
+that fit the same 64-token budget. The registered protocol is not rewritten.
+Tonight's local TRAINING runner uses that compact E schema on **`qwen3.5:9b`**,
+a different hashed Actor from the 30b pilot tag. Re-benchmark accept rate
+and wall-clock before treating the ~93h figure as current.
+
+**Wall-clock warning.** The ~93 hour estimate is from `qwen3-coder:30b` at
+0.348 calls/s. Nick bound `qwen3.5:9b` for tonight; that tag should be
+faster on the same 8 GB GPU, but it is unmeasured. "Tonight" means *start*
+tonight. A 2-opportunity live warmup (`14` calls) should precede the
+overnight start so compact-E JSON and 9b throughput can be confirmed.
 
 ## DeepSeek V4.1 Flash API
 
@@ -233,18 +245,101 @@ truncation is treated as extra-key verbosity hitting the cap. This harden
 adds per-turn example json, keeps the parser fail-closed, and stores a raw
 snippet on rejected records. It is not TRAINING authorization.
 
+## Local Ollama TRAINING (tonight's path)
+
+Nick authorized a pivot after DeepSeek 503s blocked the bigger Flash sample.
+This is **local in-sample TRAINING plumbing** on his desktop, not a Terra
+protocol rewrite, not broker authority, and not holdout consumption.
+
+Identity: `configs/aat_v2_ollama_qwen_actor_identity_v1.json`
+(`LOCAL_TRAINING_CANDIDATE`). Provider `ollama`, default model
+`qwen3.5:9b` (Nick bound this tag; the earlier local-pilot tag
+`qwen3-coder:30b` is a different Actor). Configurable only by minting a new
+hashed identity file; `--model-id` must match. The Terra protocol is
+consulted and not reused. DeepSeek Flash is a different Actor.
+
+Authorization: `configs/aat_v2_ollama_local_training_authorization_v1.json`.
+It records Nick's direction and still requires `--authorize-local-training`.
+`execution_authorized` on that artifact stays `false` so CI and agents cannot
+silently start 116k calls. `execution_authority` stays `ABSENT`.
+
+Transport: `http://127.0.0.1:11434/api/chat` only (loopback HTTP). Thinking
+disabled (`think: false`). `format: json`. B/C/D use the five-field Actor
+schema at the registered **256** tokens. E uses the compact closed-enum
+parser at **64** tokens with per-turn example json. Timeouts default to 180s
+with three retries on local GPU hitch (408/429/5xx/connection). Non-loopback
+hosts are refused.
+
+**Token accounting.** Local GPU time is unpriced
+(`configs/ollama_local_unpriced_v1.json`). When Ollama returns
+`prompt_eval_count` / `eval_count`, rows are `OLLAMA_REPORTED`. When those
+fields are missing, the runner records utf-8 bytes/4 as
+`BYTE_PROXY_ESTIMATE` and says so on the receipt. Estimates are not vendor
+billing.
+
+Runner: `scripts/run_aat_v2_ollama_local_training.py`. Library:
+`run_ollama_local_training` in `src/athena_trading/aat_v2/ollama_training.py`.
+It reads `configs/aat_v2_training_plan_v2.json` and a TRAINING-only
+opportunity index / macro snapshot (not the DeepSeek synthetic chat fixture).
+Holdout paths and holdout symbols fail closed. Durable ledger / checkpoint /
+receipt land under `--output-dir` (gitignored `artifacts/`). `--resume`
+replays the JSONL ledger and continues. Status is
+`LOCAL_TRAINING_SMOKE` (default) or `LOCAL_TRAINING_IN_SAMPLE` (Nick's flag).
+
+V2 has no promoted lesson inventory yet. C/D/E packets carry empty memory.
+The treatment remains the exogenous macro vector.
+
+### Exact commands
+
+Offline smoke (default; mocked Ollama; 1 opportunity / 7 calls):
+
+```
+python scripts/run_aat_v2_ollama_local_training.py
+```
+
+Live warmup on Nick's desktop (compact E re-benchmark; 2 opportunities / 14
+calls). Point at the frozen TRAINING JSONL, not holdout:
+
+```
+python scripts/run_aat_v2_ollama_local_training.py \
+  --allow-live-ollama \
+  --limit-opportunities 2 \
+  --opportunity-index <TRAINING opportunity JSONL> \
+  --snapshot <macro snapshot JSONL> \
+  --output-dir artifacts/aat_v2_ollama_local_training_warmup
+```
+
+Overnight full in-sample start (16,705 opportunities / 116,935 calls).
+Prior local estimate ~93h — start tonight; do not assume a finish tonight:
+
+```
+python scripts/run_aat_v2_ollama_local_training.py \
+  --authorize-local-training \
+  --allow-live-ollama \
+  --opportunity-index <TRAINING opportunity JSONL> \
+  --snapshot <macro snapshot JSONL> \
+  --opportunity-receipt <receipt whose index_hash is 179e6f21…> \
+  --snapshot-receipt <receipt whose snapshot_hash is 3240a4fa…> \
+  --output-dir artifacts/aat_v2_ollama_local_training
+```
+
+Resume after a hitch, same flags plus `--resume` and the same `--output-dir`.
+
+Do not pass holdout paths. Do not omit `--authorize-local-training` for the
+full plan. Do not run this in CI with `--allow-live-ollama`.
+
 ## Decision boundary
 
-The DeepSeek candidate identity and fixture pilot are in-tree. A first live
-Flash sample already ran under the $5 / 50-call knobs and showed E schema
-mismatch, not compact overflow. The next authorized step is Nick's
-**bigger live pilot** (not TRAINING):
+The local Ollama TRAINING path is in-tree and is the authorized *plumbing*
+for Nick's tonight start. It does not flip the registered Terra protocol to
+authorized, does not grant broker `execution_authority`, and does not
+consume V1 or V2 holdout. DeepSeek Flash remains a bounded candidate whose
+API is overloaded; the bigger live command (not TRAINING) is still:
 
 ```
 python scripts/run_aat_v2_deepseek_flash_pilot.py --allow-live --opportunities 71 --call-ceiling 500 --spend-ceiling-usd 50.00
 ```
 
-That command is still not the full 116,935-call TRAINING run. Arm E stays
-at the registered 4 x 64 budget without raising TRAINING spend. No
-provider switch into the registered protocol, RunPod account charge,
-TRAINING execution, or holdout operation is authorized by this document.
+Do not treat a 503 as a reason to rewrite Terra. Arm E stays at the
+registered 4 x 64 compact budget. No RunPod charge, Astra Desk coupling, or
+holdout operation is authorized by this document.
