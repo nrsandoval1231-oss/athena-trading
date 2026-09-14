@@ -324,7 +324,7 @@ deleted and redrawn under the fix.
 | Phase 3 coverage / claim contract | **Frozen, macro-only.** Required source is `macro` at floor 0.90; frozen measured coverage is macro 1.0, news 0.0. `claim_authorized` is false. Do not freeze a new contract. |
 | Phase 3 protocol registration | **Registered as `REGISTERED_NOT_AUTHORIZED`.** `configs/aat_v2_registered_protocol_v1.json`. Actor identity remains OpenAI / `gpt-5.6-terra`. |
 | Phase 3 TRAINING dry-run plans | Present. `configs/aat_v2_training_plan_v2.json` supersedes v1: 16,705 opportunities, **116,935** planned calls, `dry_run: true`, `execution_authorized: false`. |
-| Model execution options | Documented in `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. DeepSeek Flash dry-run / fixture preflight planner exists; it does not authorize TRAINING. |
+| Model execution options | Documented in `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. DeepSeek Flash dry-run / fixture preflight planner exists; thinking is disabled and Actor JSON is required on the preflight path. Hard PREFLIGHT spend ceiling is $1.00. It does not authorize TRAINING. |
 | Phase 3 TRAINING run | **Blocked — needs authorized TRAINING execution, Actor credentials, and spend.** Not blocked on missing adapters. |
 | Phase 4 sealed holdout | Not started; needs a completed Phase 3 TRAINING run and separate authorization. The consumed AAT-V1 holdout must not be reused. |
 | AAT-V1 | Frozen and closed. Holdout consumed (`INVALID_EVIDENCE`). Limitation stands. |
@@ -376,9 +376,15 @@ consumed AAT-V1 holdout.
    the frozen prices in `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md` (~$32.68
    off-peak / ~$65.35 peak cache-miss worst case). Plan-only needs no key.
    `--preflight` fails closed without `DEEPSEEK_API_KEY` and dry-runs a tiny
-   N-call against `configs/fixtures/deepseek_flash_preflight_v1.json`. It does
-   not authorize TRAINING, does not register DeepSeek as the V2 Actor, and
-   does not consume a holdout. `execution_authority` stays `ABSENT`.
+   N-call against `configs/fixtures/deepseek_flash_preflight_v1.json`. Live
+   Flash preflight must disable thinking and require the Actor JSON schema
+   (`action`, `confidence`, `horizon`, `invalidation`, `rationale`); otherwise
+   reasoning tokens empty `content` or the model returns non-Actor keys.
+   The hard PREFLIGHT spend ceiling is $1.00 and is not TRAINING
+   authorization. CLI `--preflight` stays fixture/dry; live still needs
+   `allow_live=True` plus the env key. It does not authorize TRAINING, does
+   not register DeepSeek as the V2 Actor, and does not consume a holdout.
+   `execution_authority` stays `ABSENT`.
 4. **Treat DeepSeek Flash and hosted Qwen as candidate runtimes, not as the
    registered Actor.** Changing off Terra changes identity. It needs a
    provider adapter, a new provider-scoped identity, and a separately verified
