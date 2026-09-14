@@ -206,6 +206,26 @@ def test_remote_chat_url_requires_opt_in_and_stays_on_native_api():
     assert transport_host_scope("http://127.0.0.1:11434") == "loopback"
 
 
+def test_https_runpod_proxy_without_port_does_not_force_11434():
+    proxy = "https://svy1eeqveu3tnp-11434.proxy.runpod.net"
+    with pytest.raises(OllamaTransportError, match="non-loopback"):
+        ollama_chat_url(proxy, allow_remote=False)
+    chat = ollama_chat_url(proxy, allow_remote=True)
+    assert chat == f"{proxy}/api/chat"
+    assert chat != f"{proxy}:11434/api/chat"
+    assert ollama_chat_url(f"{proxy}:443", allow_remote=True) == f"{proxy}:443/api/chat"
+    assert ollama_chat_url("https://pod.example", allow_remote=True) == (
+        "https://pod.example/api/chat"
+    )
+    assert ollama_chat_url("http://10.8.0.14", allow_remote=True) == (
+        "http://10.8.0.14:11434/api/chat"
+    )
+    assert loopback_chat_url() == "http://127.0.0.1:11434/api/chat"
+    assert loopback_chat_url("http://127.0.0.1") == "http://127.0.0.1:11434/api/chat"
+    with pytest.raises(OllamaTransportError, match="HTTP only"):
+        loopback_chat_url("https://127.0.0.1")
+
+
 def test_runpod_payload_keeps_real_actor_schema_not_a_toy_instructor_shape():
     packet = build_packet(
         arm="D_ATHENA",

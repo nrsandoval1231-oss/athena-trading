@@ -84,7 +84,6 @@ def ollama_chat_url(base_url: str = DEFAULT_BASE_URL, *, allow_remote: bool = Fa
         raise OllamaTransportError("Ollama base URL is missing a host")
     if parsed.path not in ("", "/", CHAT_PATH):
         raise OllamaTransportError("Ollama TRAINING transport only uses /api/chat")
-    port = parsed.port or 11434
     hostname = parsed.hostname
     if hostname is None:
         raise OllamaTransportError("Ollama base URL is missing a host")
@@ -92,6 +91,7 @@ def ollama_chat_url(base_url: str = DEFAULT_BASE_URL, *, allow_remote: bool = Fa
     if loopback:
         if parsed.scheme != "http":
             raise OllamaTransportError("Ollama TRAINING transport is loopback HTTP only")
+        port = parsed.port or 11434
         if hostname == "::1":
             return f"http://[::1]:{port}{CHAT_PATH}"
         return f"http://{hostname}:{port}{CHAT_PATH}"
@@ -99,11 +99,16 @@ def ollama_chat_url(base_url: str = DEFAULT_BASE_URL, *, allow_remote: bool = Fa
         raise OllamaTransportError("Ollama TRAINING transport refuses non-loopback hosts")
     if parsed.scheme not in {"http", "https"}:
         raise OllamaTransportError("remote Ollama TRAINING transport is HTTP or HTTPS only")
-    if ":" in hostname and "." not in hostname:
-        netloc = f"[{hostname}]:{port}"
+    # Explicit ports are preserved. HTTPS remotes without a port keep the
+    # scheme default (443) so RunPod HTTPS proxies are not rewritten to
+    # :11434. Bare HTTP remotes still default to Ollama's 11434.
+    if parsed.port is not None:
+        port: int | None = parsed.port
+    elif parsed.scheme == "http":
+        port = 11434
     else:
-        netloc = f"{hostname}:{port}"
-    return f"{parsed.scheme}://{netloc}{CHAT_PATH}"
+        port = None
+    return f"{parsed.scheme}://{_format_hostport(hostname, port)}{CHAT_PATH}"
 
 
 def build_ollama_payload(
@@ -308,6 +313,16 @@ def request_hash(payload: Mapping[str, Any]) -> str:
 
 def reject_snippet(response: Mapping[str, Any]) -> str | None:
     return raw_content_snippet(assistant_content(response))
+
+
+def _format_hostport(hostname: str, port: int | None) -> str:
+    if ":" in hostname and "." not in hostname:
+        host = f"[{hostname}]"
+    else:
+        host = hostname
+    if port is None:
+        return host
+    return f"{host}:{port}"
 
 
 def _model_matches(returned: Any, expected: str) -> bool:
