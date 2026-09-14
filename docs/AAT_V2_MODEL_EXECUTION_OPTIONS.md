@@ -92,8 +92,36 @@ These figures exclude storage and setup time. A faster GPU does not fix the
 current E-arm JSON truncation; the protocol still needs an E redesign or a
 B/C/D-only amendment.
 
+## DeepSeek Flash dry-run / preflight planner
+
+`scripts/plan_aat_v2_deepseek_flash.py` turns the workload and prices in this
+document into a fail-closed planning artifact. It is not TRAINING
+authorization and it is not a provider switch.
+
+- **Plan-only (default).** Reads `configs/aat_v2_training_plan_v2.json`, the
+  frozen DeepSeek quote in `configs/deepseek_flash_pricing_2026-09-14.json`,
+  and the registered V2 protocol. Emits off-peak / peak cache-miss estimates
+  from the conservative input-byte proxy (~$32.68 / ~$65.35). No API key, no
+  model call, no spend.
+- **Fixture preflight (`--preflight`).** Requires `DEEPSEEK_API_KEY` and fails
+  closed without it. Dry-runs at most seven calls (default three: arms B/C/D)
+  against `configs/fixtures/deepseek_flash_preflight_v1.json`. Live HTTP is
+  not implied; the CLI injects the fixture transport. Spend ceiling is capped
+  at $0.10.
+- **Hard refusals.** `execution_authority` stays `ABSENT`. The Terra protocol
+  is consulted and not rewritten; DeepSeek remains an `UNREGISTERED_CANDIDATE`
+  and must not reuse the Terra identity. Holdout paths and the consumed AAT-V1
+  registry are forbidden. The superseded 66,820-call v1 plan is refused.
+
+Library entry points: `plan_deepseek_flash_dry_run` and
+`run_deepseek_flash_preflight` in `src/athena_trading/aat_v2/deepseek_preflight.py`.
+`allow_live=True` exists only as an explicit library opt-in on top of the same
+tiny ceilings and still cannot flip authority or consume a holdout.
+
 ## Decision boundary
 
-The recommended next step is a bounded hosted-Qwen compatibility benchmark or
-DeepSeek API pilot, not the full run. No provider switch, RunPod account charge,
-model call, or holdout operation is authorized by this document.
+The recommended next step remains a bounded hosted-Qwen compatibility
+benchmark or DeepSeek API pilot, not the full run. The dry-run planner above
+is cost and credential evidence for that decision. No provider switch, RunPod
+account charge, TRAINING execution, or holdout operation is authorized by this
+document.

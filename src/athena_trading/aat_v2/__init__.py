@@ -44,16 +44,27 @@ from .packet import (
 )
 from .opportunities import OpportunityIndexError, build_opportunity_index
 from .protocol import ProtocolError, register_protocol
+from .deepseek_preflight import (
+    DeepSeekPreflightError,
+    MissingDeepSeekCredentialsError,
+    api_key_from_env,
+    plan_deepseek_flash_dry_run,
+    run_deepseek_flash_preflight,
+)
 
 __all__ = [
     "ACTOR_ARMS", "ARMS", "DELIBERATION_ARMS", "EXOGENOUS_ARMS", "MEMORY_ARMS",
-    "ArmError", "AssignmentError", "ContractError", "arm_definitions",
+    "ArmError", "AssignmentError", "ContractError", "DeepSeekPreflightError",
+    "MissingDeepSeekCredentialsError", "arm_definitions",
+    "api_key_from_env",
     "assert_control_arm_never_saw_treatment", "assert_equal_token_budget",
-    "assert_linked_symbols_share_a_partition", "assert_partitions_disjoint", "assert_treatment_asymmetry", "build_packet",
+    "assert_linked_symbols_share_a_partition", "assert_partitions_disjoint",
+    "assert_treatment_asymmetry", "build_packet",
     "calls_actor", "deliberates", "draw_assignment", "filter_opportunities",
     "freeze_claim_contract", "ledger_projection", "load_contract", "load_universe",
-    "packet_hash", "partition_for", "receives_exogenous", "receives_memory",
+    "packet_hash", "partition_for", "plan_deepseek_flash_dry_run",
+    "receives_exogenous", "receives_memory",
     "OpportunityIndexError", "build_opportunity_index",
-    "ProtocolError", "register_protocol",
+    "ProtocolError", "register_protocol", "run_deepseek_flash_preflight",
     "write_assignment", "write_contract",
 ]

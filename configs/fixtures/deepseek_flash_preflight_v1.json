@@ -1,0 +1,30 @@
+{
+  "execution_authority": "ABSENT",
+  "features": {
+    "opaque": 1
+  },
+  "model_id": "deepseek-flash",
+  "note": "Synthetic DeepSeek chat-completions response. Not a vendor dump, not TRAINING evidence, and not a holdout record.",
+  "opportunity_id": "preflight-fixture-1",
+  "response": {
+    "choices": [
+      {
+        "finish_reason": "stop",
+        "index": 0,
+        "message": {
+          "content": "{\"action\":\"PASS\",\"confidence\":0.5,\"horizon\":\"SESSION\",\"invalidation\":\"RANGE\",\"rationale\":\"Fixture preflight only.\"}",
+          "role": "assistant"
+        }
+      }
+    ],
+    "id": "chatcmpl-fixture-not-live",
+    "model": "deepseek-flash",
+    "object": "chat.completion",
+    "usage": {
+      "completion_tokens": 40,
+      "prompt_tokens": 80,
+      "total_tokens": 120
+    }
+  },
+  "schema_version": "athena-deepseek-flash-preflight-fixture-v1"
+}
