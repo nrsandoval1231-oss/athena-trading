@@ -45,6 +45,7 @@ SINGLE_CALL_OUTPUT_TOKENS = 256
 DELIBERATION_OUTPUT_TOKENS = 64
 DELIBERATION_TURNS = 4
 DEFAULT_PREFLIGHT_ARMS = (B_MEMORYLESS, C_NAIVE_MEMORY, D_ATHENA)
+LEGAL_ACTIONS = ("PASS", "ENTER_REDUCED", "ENTER_STANDARD", "ENTER_HIGH_CONVICTION")
 
 PREFLIGHT_PROMPT = (
     "You are a fail-closed AAT-V2 preflight Actor. Use only the supplied opaque "
@@ -111,6 +112,7 @@ def load_macro_only_training_plan(path: str | Path) -> dict[str, Any]:
             "DeepSeek dry-run requires the corrected v2 TRAINING plan; "
             "the 66,820-call v1 estimate is superseded"
         )
+    _require_bound_hash(payload, "plan_hash")
     _assert_absent_authority(payload)
     if (
         payload.get("dry_run") is not True
@@ -134,6 +136,7 @@ def load_registered_v2_protocol(path: str | Path) -> dict[str, Any]:
         or protocol.get("claim_authorized") is not False
     ):
         raise DeepSeekPreflightError("V2 protocol is not REGISTERED_NOT_AUTHORIZED")
+    _require_bound_hash(payload, "protocol_hash")
     _assert_absent_authority(payload)
     _assert_absent_authority(protocol)
     actor = protocol.get("actor_identity")
@@ -294,7 +297,7 @@ def run_deepseek_flash_preflight(
 
     records = []
     total_input = total_output = 0
-    live_calls = transport is None and allow_live
+    live_calls = sender is _live_transport
     for index, item in enumerate(requests, start=1):
         response = sender(item["payload"], key)
         prompt_tokens, completion_tokens = _read_usage(response)
@@ -354,13 +357,13 @@ def run_deepseek_flash_preflight(
 
 
 def _resolve_transport(*, transport: Transport | None, allow_live: bool) -> Transport:
-    if transport is not None:
-        return transport
-    if not allow_live:
-        raise DeepSeekPreflightError(
-            "live DeepSeek calls are not authorized by this planner"
-        )
-    return _live_transport
+    if transport is _live_transport or transport is None:
+        if not allow_live:
+            raise DeepSeekPreflightError(
+                "live DeepSeek calls are not authorized by this planner"
+            )
+        return _live_transport
+    return transport
 
 
 def _live_transport(payload: Mapping[str, Any], api_key: str) -> dict[str, Any]:
@@ -466,6 +469,18 @@ def _read_decision(response: Mapping[str, Any]) -> tuple[dict[str, Any] | None, 
     required = {"action", "confidence", "horizon", "invalidation", "rationale"}
     if not isinstance(decision, Mapping) or set(decision) != required:
         return None, "Actor output schema mismatch"
+    if decision["action"] not in LEGAL_ACTIONS:
+        return None, "Actor action is not allowed"
+    if (
+        not isinstance(decision["confidence"], (int, float))
+        or not 0 <= decision["confidence"] <= 1
+    ):
+        return None, "Actor confidence is invalid"
+    if not all(
+        isinstance(decision[key], str) and decision[key]
+        for key in ("horizon", "invalidation", "rationale")
+    ):
+        return None, "Actor text fields are invalid"
     return dict(decision), None
 
 
@@ -481,6 +496,13 @@ def _require_key(key: str) -> None:
         raise MissingDeepSeekCredentialsError(
             "DEEPSEEK_API_KEY is required for a DeepSeek Flash preflight"
         )
+
+
+def _require_bound_hash(payload: Mapping[str, Any], field: str) -> None:
+    body = dict(payload)
+    claimed = body.pop(field, None)
+    if not isinstance(claimed, str) or claimed != canonical_hash(body):
+        raise DeepSeekPreflightError(f"{field} does not match its contents")
 
 
 def _assert_absent_authority(payload: Mapping[str, Any]) -> None:

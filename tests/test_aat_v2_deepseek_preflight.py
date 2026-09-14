@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from athena_trading.athena_adapter.contracts import canonical_hash
 from athena_trading.aat_v1.providers import registered_providers
 from athena_trading.aat_v2.deepseek_preflight import (
     MODEL_ID,
@@ -16,6 +17,7 @@ from athena_trading.aat_v2.deepseek_preflight import (
     plan_deepseek_flash_dry_run,
     run_deepseek_flash_preflight,
 )
+from athena_trading.aat_v2 import deepseek_preflight as deepseek_mod
 
 
 ROOT = Path(__file__).parents[1]
@@ -79,9 +81,22 @@ def test_superseded_v1_plan_is_refused():
         load_macro_only_training_plan(ROOT / "configs/aat_v2_training_plan_v1.json")
 
 
+def test_tampered_training_plan_hash_is_refused(tmp_path):
+    payload = json.loads(PLAN.read_text(encoding="utf-8"))
+    payload["output_token_ceiling"] = 1
+    path = tmp_path / "plan.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(DeepSeekPreflightError, match="plan_hash"):
+        plan_deepseek_flash_dry_run(
+            training_plan_path=path, pricing_path=PRICING, protocol_path=PROTOCOL,
+        )
+
+
 def test_non_absent_authority_is_refused(tmp_path):
     payload = json.loads(PLAN.read_text(encoding="utf-8"))
     payload["execution_authority"] = "PAPER"
+    payload.pop("plan_hash")
+    payload["plan_hash"] = canonical_hash(payload)
     path = tmp_path / "plan.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(DeepSeekPreflightError, match="ABSENT"):
@@ -94,6 +109,9 @@ def test_deepseek_cannot_reuse_the_terra_protocol_identity(tmp_path):
     payload = json.loads(PROTOCOL.read_text(encoding="utf-8"))
     payload["protocol"]["actor_identity"]["provider"] = "deepseek"
     payload["protocol"]["actor_identity"]["model_id"] = MODEL_ID
+    body = dict(payload)
+    body.pop("protocol_hash")
+    payload["protocol_hash"] = canonical_hash(body)
     path = tmp_path / "protocol.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(DeepSeekPreflightError, match="Terra"):
@@ -169,6 +187,15 @@ def test_preflight_without_allow_live_never_opens_a_network_transport():
         )
 
 
+def test_injected_live_transport_still_requires_allow_live():
+    with pytest.raises(DeepSeekPreflightError, match="not authorized"):
+        run_deepseek_flash_preflight(
+            fixture_path=FIXTURE, pricing_path=PRICING, protocol_path=PROTOCOL,
+            call_ceiling=3, spend_ceiling_usd=0.05, api_key=FIXTURE_KEY,
+            transport=deepseek_mod._live_transport,
+        )
+
+
 def test_allow_live_without_a_key_fails_closed(monkeypatch):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     with pytest.raises(MissingDeepSeekCredentialsError, match="DEEPSEEK_API_KEY"):
@@ -198,7 +225,39 @@ def test_output_cannot_overwrite_the_consumed_holdout_registry(tmp_path):
         forbid_output_path(existing)
 
 
+def test_invalid_decisions_are_rejected_not_accepted():
+    envelope = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    cases = (
+        ({"action": "NOPE", "confidence": 0.5, "horizon": "H", "invalidation": "I",
+          "rationale": "R"}, "Actor action is not allowed"),
+        ({"action": "PASS", "confidence": "high", "horizon": "H", "invalidation": "I",
+          "rationale": "R"}, "Actor confidence is invalid"),
+        ({"action": "PASS", "confidence": 1.5, "horizon": "H", "invalidation": "I",
+          "rationale": "R"}, "Actor confidence is invalid"),
+        ({"action": "PASS", "confidence": 0.5, "horizon": "", "invalidation": "I",
+          "rationale": "R"}, "Actor text fields are invalid"),
+    )
+
+    for decision, reason in cases:
+        response = json.loads(json.dumps(envelope["response"]))
+        response["choices"][0]["message"]["content"] = json.dumps(decision)
+
+        def transport(payload, key, *, _response=response):
+            return _response
+
+        result = run_deepseek_flash_preflight(
+            fixture_path=FIXTURE, pricing_path=PRICING, protocol_path=PROTOCOL,
+            call_ceiling=3, spend_ceiling_usd=0.05, api_key=FIXTURE_KEY,
+            transport=transport,
+        )
+        assert result["accepted_count"] == 0
+        assert result["rejected_count"] == 3
+        assert result["records"][0]["rejection_reason"] == reason
+
+
 def test_deepseek_is_not_registered_as_a_v1_provider():
+    assert registered_providers() == ("openai",)
+    assert PREFLIGHT_CALL_CEILING == 7
     assert registered_providers() == ("openai",)
     assert PREFLIGHT_CALL_CEILING == 7
 
