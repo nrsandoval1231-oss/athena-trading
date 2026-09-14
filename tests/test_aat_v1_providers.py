@@ -12,6 +12,7 @@ from athena_trading.aat_v1.actor_canary import (
     validate_actor_identity,
 )
 from athena_trading.aat_v1.providers import (
+    DEEPSEEK,
     OPENAI,
     ProviderDescriptor,
     get_provider,
@@ -52,6 +53,28 @@ def test_openai_descriptor_reproduces_the_registered_identity():
 def test_identity_is_scoped_by_provider_not_by_model_name():
     """The same model string under a different vendor is a different Actor."""
     assert _other_provider().model_hash(MODEL) != OPENAI.model_hash(MODEL)
+    assert DEEPSEEK.model_hash(MODEL) != OPENAI.model_hash(MODEL)
+
+
+def test_deepseek_descriptor_is_declared_not_v1_registered():
+    assert DEEPSEEK.provider == "deepseek"
+    assert DEEPSEEK.endpoint == "https://api.deepseek.com/chat/completions"
+    assert DEEPSEEK.pricing_schema == "deepseek-text-pricing-v1"
+    assert "deepseek" not in registered_providers()
+    with pytest.raises(AATValidationError, match="unregistered"):
+        get_provider("deepseek")
+    payload = DEEPSEEK.build_payload(
+        "deepseek-flash",
+        {"candidate_hash": "abc"},
+        "pilot",
+        {"inference": {"max_output_tokens": 512, "thinking": {"type": "disabled"},
+                       "response_format": {"type": "json_object"}}},
+    )
+    assert payload["model"] == "deepseek-flash"
+    assert payload["thinking"] == {"type": "disabled"}
+    assert payload["response_format"] == {"type": "json_object"}
+    assert payload["max_tokens"] == 512
+    assert "input" not in payload
 
 
 def test_v1_identity_validation_still_passes_under_the_descriptor():
@@ -94,7 +117,7 @@ def test_unregistered_provider_fails_closed():
 
 
 def test_openai_is_the_only_registered_provider():
-    """A second vendor is a descriptor plus a documented pricing source, not a default."""
+    """A second vendor is a V2 candidate identity, not a V1 registry default."""
     assert registered_providers() == ("openai",)
 
 

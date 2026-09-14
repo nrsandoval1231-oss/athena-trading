@@ -7,11 +7,13 @@ preflight against a synthetic fixture.
 
 This module does not authorize TRAINING, freeze a claim contract, register or
 rewrite a protocol, consume a holdout, or bind DeepSeek as a substitute for the
-registered Terra Actor identity. ``execution_authority`` is always ``ABSENT``.
-Live transport fails closed without ``DEEPSEEK_API_KEY`` and is never implied
-by a plan. Structured preflight payloads disable thinking. B/C/D require the
-Actor JSON schema; arm E uses the compact closed-enum turn schema so 64-token
-turns can complete. The PREFLIGHT spend ceiling is not a TRAINING authorization.
+registered Terra Actor identity. DeepSeek Flash is a declared ``CANDIDATE_PILOT``
+identity, separately hashed from Terra. ``execution_authority`` is always
+``ABSENT``. Live transport fails closed without ``DEEPSEEK_API_KEY`` and is
+never implied by a plan. Structured preflight payloads disable thinking. B/C/D
+require the Actor JSON schema; arm E uses the compact closed-enum turn schema so
+64-token turns can complete. The PREFLIGHT spend ceiling is not a TRAINING
+authorization.
 """
 from __future__ import annotations
 
@@ -35,6 +37,12 @@ from .deliberation import (
     compact_user_payload,
     load_e_arm_amendment,
     parse_deliberation_turn,
+)
+from .identity import (
+    COMMITTED_IDENTITY_PATH,
+    IDENTITY_STATUS,
+    IdentityError,
+    load_deepseek_flash_identity,
 )
 from .packet import build_packet
 
@@ -85,6 +93,8 @@ _PROTECTED_ARTIFACTS = (
     "aat_v2_claim_contract_v1.json",
     "aat_consumed_holdouts_v1.json",
     "aat_v2_e_arm_compact_schema_amendment_v1.json",
+    "aat_v2_deepseek_flash_actor_identity_v1.json",
+    "aat_v2_actor_identity_v1.json",
 )
 
 
@@ -179,11 +189,13 @@ def plan_deepseek_flash_dry_run(
     training_plan_path: str | Path,
     pricing_path: str | Path,
     protocol_path: str | Path,
+    identity_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Estimate full-run DeepSeek cost. Makes no model call and spends nothing."""
     plan = load_macro_only_training_plan(training_plan_path)
     pricing = load_deepseek_pricing(pricing_path)
     protocol = load_registered_v2_protocol(protocol_path)
+    identity = _load_declared_identity(identity_path, protocol_path=protocol_path)
     input_proxy = plan["input_byte_ceiling_proxy"]
     output_tokens = plan["output_token_ceiling"]
     if not isinstance(input_proxy, int) or not isinstance(output_tokens, int):
@@ -205,7 +217,9 @@ def plan_deepseek_flash_dry_run(
         "terra_protocol_not_reused": True,
         "candidate_provider": PROVIDER,
         "candidate_model_id": MODEL_ID,
-        "actor_identity_status": "UNREGISTERED_CANDIDATE",
+        "actor_identity_status": IDENTITY_STATUS,
+        "declared_identity_hash": identity["identity_hash"],
+        "pilot_is_not_training": True,
         "protocol_hash": protocol["protocol_hash"],
         "training_plan_hash": plan["plan_hash"],
         "pricing_source_url": pricing["source_url"],
@@ -231,6 +245,8 @@ def build_deepseek_payload(
     max_output_tokens: int,
     arm: str | None = None,
     turn: str | None = None,
+    system_prompt: str | None = None,
+    prior_turns: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Chat-completions body for a structured DeepSeek Flash preflight call.
 
@@ -246,13 +262,13 @@ def build_deepseek_payload(
             raise DeepSeekPreflightError("E-arm preflight requires a deliberation turn")
         system = DELIBERATION_PROMPT
         try:
-            user = compact_user_payload(packet, turn=turn)
+            user = compact_user_payload(packet, turn=turn, prior_turns=prior_turns)
         except DeliberationError as exc:
             raise DeepSeekPreflightError(str(exc)) from exc
         if max_output_tokens != DELIBERATION_OUTPUT_TOKENS:
             raise DeepSeekPreflightError("E-arm turns must keep the 64-token budget")
     else:
-        system = PREFLIGHT_PROMPT
+        system = PREFLIGHT_PROMPT if system_prompt is None else system_prompt
         user = packet
     return {
         "model": MODEL_ID,
@@ -304,6 +320,7 @@ def run_deepseek_flash_preflight(
     allow_live: bool = False,
     include_deliberation: bool = False,
     amendment_path: str | Path | None = None,
+    identity_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Tiny N-call preflight. Fixture-safe by default; live spend is not implied.
 
@@ -324,6 +341,7 @@ def run_deepseek_flash_preflight(
     _require_key(key)
     pricing = load_deepseek_pricing(pricing_path)
     protocol = load_registered_v2_protocol(protocol_path)
+    identity = _load_declared_identity(identity_path, protocol_path=protocol_path)
     if include_deliberation:
         if amendment_path is None:
             raise DeepSeekPreflightError(
@@ -405,7 +423,9 @@ def run_deepseek_flash_preflight(
         "terra_protocol_not_reused": True,
         "candidate_provider": PROVIDER,
         "candidate_model_id": MODEL_ID,
-        "actor_identity_status": "UNREGISTERED_CANDIDATE",
+        "actor_identity_status": IDENTITY_STATUS,
+        "declared_identity_hash": identity["identity_hash"],
+        "pilot_is_not_training": True,
         "protocol_hash": protocol["protocol_hash"],
         "source_document": "docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md",
         "request_count": len(records),
@@ -425,6 +445,16 @@ def run_deepseek_flash_preflight(
     )
     _assert_no_secret(result, key)
     return result
+
+
+def _load_declared_identity(
+    identity_path: str | Path | None, *, protocol_path: str | Path,
+) -> dict[str, Any]:
+    path = COMMITTED_IDENTITY_PATH if identity_path is None else identity_path
+    try:
+        return load_deepseek_flash_identity(path, protocol_path=protocol_path)
+    except IdentityError as exc:
+        raise DeepSeekPreflightError(str(exc)) from exc
 
 
 def _resolve_transport(*, transport: Transport | None, allow_live: bool) -> Transport:

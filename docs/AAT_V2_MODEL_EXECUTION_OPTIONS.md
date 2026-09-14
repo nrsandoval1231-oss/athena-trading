@@ -2,7 +2,8 @@
 
 Status: planning evidence only. No full TRAINING execution has been authorized.
 The registered protocol remains `REGISTERED_NOT_AUTHORIZED` and
-`execution_authority` remains `ABSENT`.
+`execution_authority` remains `ABSENT`. DeepSeek Flash is a `CANDIDATE_PILOT`
+identity with a bounded fixture pilot; that path is not TRAINING.
 
 ## Workload
 
@@ -66,9 +67,12 @@ and provider pricing changes.
 
 DeepSeek source: <https://api-docs.deepseek.com/quick_start/pricing>
 
-Changing from Terra to DeepSeek changes the Actor identity. It requires a
-provider adapter, a new provider-scoped identity, and a separately verified
-pilot. The Terra protocol must not be silently reused.
+Changing from Terra to DeepSeek changes the Actor identity. DeepSeek Flash is
+declared as its own provider-scoped candidate identity
+(`configs/aat_v2_deepseek_flash_actor_identity_v1.json`, status
+`CANDIDATE_PILOT`). It is not bound to the registered Terra protocol. A
+bounded fixture pilot exists; that pilot is not TRAINING. Live spend for an
+actual API run is separately unauthorized.
 
 ## RunPod-hosted Qwen
 
@@ -136,8 +140,9 @@ authorization and it is not a provider switch.
   `configs/aat_v2_e_arm_compact_schema_amendment_v1.json`. `execution_authority`
   stays `ABSENT`.
 - **Hard refusals.** `execution_authority` stays `ABSENT`. The Terra protocol
-  is consulted and not rewritten; DeepSeek remains an `UNREGISTERED_CANDIDATE`
-  and must not reuse the Terra identity. Holdout paths and the consumed AAT-V1
+  is consulted and not rewritten. DeepSeek Flash is a `CANDIDATE_PILOT`
+  identity (`configs/aat_v2_deepseek_flash_actor_identity_v1.json`) and must
+  not reuse the Terra identity. Holdout paths and the consumed AAT-V1
   registry are forbidden. The superseded 66,820-call v1 plan is refused.
 
 Library entry points: `plan_deepseek_flash_dry_run` and
@@ -145,12 +150,60 @@ Library entry points: `plan_deepseek_flash_dry_run` and
 `allow_live=True` exists only as an explicit library opt-in on top of the same
 tiny ceilings and still cannot flip authority or consume a holdout.
 
+## DeepSeek Flash candidate identity and bounded pilot
+
+Nick authorized a **bounded DeepSeek Flash pilot with a new provider-scoped
+identity**. That is not TRAINING authorization and it does not freeze a new
+claim contract.
+
+The identity is declared in
+`configs/aat_v2_deepseek_flash_actor_identity_v1.json`. Provider, model,
+prompt, and inference are hashed separately from Terra. The five-field Actor
+decision schema is shared (same `action_schema_hash`) because it is the arm
+decision contract, not a vendor. Compact E turns bind `deliberation_hash`
+from the non-authorizing amendment. V1 `registered_providers()` remains
+`("openai",)`. The registered V2 protocol remains OpenAI / `gpt-5.6-terra`.
+
+`scripts/run_aat_v2_deepseek_flash_pilot.py` is the fail-closed entrypoint.
+The library function is `run_deepseek_flash_pilot` in
+`src/athena_trading/aat_v2/deepseek_pilot.py`. Receipts carry
+`PILOT_NOT_TRAINING` and `execution_authority: ABSENT`.
+
+- **CLI default.** Fixture / dry. One synthetic opportunity, B/C/D Actor JSON
+  plus four compact E turns (7 calls), `$1.00` invocation cap. Requires
+  `DEEPSEEK_API_KEY` even for the fixture so a missing credential fails
+  closed. Does not open a network transport.
+- **Live.** Requires `--allow-live`, `DEEPSEEK_API_KEY`, and explicit
+  `--call-ceiling` plus `--spend-ceiling-usd`. Hard caps fail closed above
+  20 opportunities, 50 calls, or `$5.00`. CI must not pass `--allow-live`.
+- **Payload rules.** Thinking disabled. B/C/D use the Actor JSON schema at
+  512 output tokens. E uses compact closed-enum turns at 64 tokens. Do not
+  reintroduce five-field Actor JSON on E.
+
+### Nick-authorized live knobs (not TRAINING)
+
+Nick set the live pilot bounds at **about 50 calls** and **$5.00 USD**.
+Those are the documented example knobs and the fail-closed live limits.
+They are not TRAINING, not a holdout sample, and not a protocol switch.
+Dry CLI defaults stay below them. A later live run still needs the
+explicit flags and `DEEPSEEK_API_KEY`.
+
+| Knob | Dry default | Nick-authorized live | Hard ceiling |
+| --- | ---: | ---: | ---: |
+| Opportunity sample | 1 | 7 (7 × 7 = 49 with E) | 20 |
+| Call ceiling | 7 | 50 | 50 |
+| Spend ceiling (USD) | 1.00 | 5.00 | 5.00 |
+
+Peak cache-miss worst case for the 7-opportunity / 49-call shape is well
+under $5 given Flash prices and the conservative byte/4 input proxy. A
+TRAINING-sized ceiling is refused.
+
 ## Decision boundary
 
-The recommended next step remains a bounded hosted-Qwen compatibility
-benchmark or DeepSeek API pilot, not the full run. Arm E's JSON truncation is
-addressed at schema level (compact closed-enum turns at the registered 4 x 64
-budget) without raising TRAINING spend. The dry-run planner above is cost and
-credential evidence for a later authorization decision. No provider switch,
-RunPod account charge, TRAINING execution, or holdout operation is authorized
-by this document.
+The DeepSeek candidate identity and fixture pilot are in-tree. The next
+authorized step is a live DeepSeek API pilot under the knobs above, or a
+hosted-Qwen compatibility benchmark — not the full 116,935-call run. Arm E's
+JSON truncation is addressed at schema level (compact closed-enum turns at
+the registered 4 x 64 budget) without raising TRAINING spend. No provider
+switch into the registered protocol, RunPod account charge, TRAINING
+execution, or holdout operation is authorized by this document.

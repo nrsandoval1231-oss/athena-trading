@@ -21,9 +21,11 @@ What this buys is a V2 protocol that can bind a provider-scoped identity and so
 does not inherit it.
 
 Adding a vendor is a descriptor plus a pricing config whose ``source_url``
-prefix is documented in that vendor's provenance record.  No second vendor is
-registered here: shipping an unverified integration would trade a named
-limitation for an unnamed one.
+prefix is documented in that vendor's provenance record.  ``OPENAI`` stays the
+only *V1-registered* provider: a consumed holdout cannot grow a second vendor.
+``DEEPSEEK`` is a named descriptor for a V2 candidate / pilot identity.  It is
+not inserted into ``_REGISTRY``, so ``registered_providers()`` remains
+``("openai",)`` and V1 receipts keep their meaning.
 """
 from __future__ import annotations
 
@@ -121,6 +123,69 @@ OPENAI = ProviderDescriptor(
     },
 )
 
+
+def _deepseek_payload(
+    model_id: str, packet: Mapping[str, Any], prompt: Any, spec: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    """Chat-completions body for the V2 DeepSeek Flash candidate Actor.
+
+    Thinking is disabled and ``response_format`` asks for a JSON object. This is
+    the B/C/D Actor path. Arm E compact turns are assembled by V2 deliberation
+    code, not by silently reusing the Terra Responses payload.
+    """
+    inference = spec["inference"]
+    return {
+        "model": model_id,
+        "messages": [
+            {"role": "system", "content": prompt},
+            {
+                "role": "user",
+                "content": json.dumps(packet, sort_keys=True, separators=(",", ":")),
+            },
+        ],
+        "max_tokens": inference["max_output_tokens"],
+        "response_format": inference.get("response_format", {"type": "json_object"}),
+        "thinking": inference.get("thinking", {"type": "disabled"}),
+        "stream": False,
+    }
+
+
+def _deepseek_output_text(response: Mapping[str, Any]) -> str:
+    if isinstance(response.get("output_text"), str):
+        return response["output_text"]
+    choices = response.get("choices")
+    if isinstance(choices, list) and choices and isinstance(choices[0], Mapping):
+        message = choices[0].get("message")
+        if isinstance(message, Mapping) and isinstance(message.get("content"), str):
+            return message["content"]
+    raise AATValidationError("Actor response lacks output text")
+
+
+def _deepseek_usage(response: Mapping[str, Any]) -> tuple[int, int]:
+    usage = response.get("usage")
+    if not isinstance(usage, Mapping):
+        raise AATValidationError("Actor response lacks usage evidence")
+    prompt_tokens = usage.get("prompt_tokens")
+    completion_tokens = usage.get("completion_tokens")
+    if not isinstance(prompt_tokens, int) or not isinstance(completion_tokens, int):
+        raise AATValidationError("Actor usage evidence is malformed")
+    return prompt_tokens, completion_tokens
+
+
+DEEPSEEK = ProviderDescriptor(
+    provider="deepseek",
+    endpoint="https://api.deepseek.com/chat/completions",
+    pricing_schema="deepseek-text-pricing-v1",
+    pricing_source_prefix="https://api-docs.deepseek.com/",
+    build_payload=_deepseek_payload,
+    read_output_text=_deepseek_output_text,
+    read_usage=_deepseek_usage,
+    build_headers=lambda key: {
+        "Authorization": f"Bearer {key}", "Content-Type": "application/json",
+    },
+)
+
+#: V1 registry stays a singleton. DeepSeek is declared, not registered here.
 _REGISTRY: dict[str, ProviderDescriptor] = {OPENAI.provider: OPENAI}
 
 

@@ -2,8 +2,10 @@
 
 Written 8 September 2026. Status refreshed 14 September 2026 against current
 `main` (macro-only claim contract, `REGISTERED_NOT_AUTHORIZED` protocol,
-GDELT rejection, TRAINING dry-run plans, model-execution options, and the
-non-authorizing E-arm compact-schema amendment).
+GDELT rejection, TRAINING dry-run plans, model-execution options, the
+non-authorizing E-arm compact-schema amendment, and a DeepSeek Flash
+**candidate / pilot** identity). The Terra protocol is unchanged. The DeepSeek
+path is not TRAINING authorization.
 
 **One-line status.** The V2 experiment is built through a frozen macro-only
 claim contract and a `REGISTERED_NOT_AUTHORIZED` protocol.
@@ -11,8 +13,10 @@ claim contract and a `REGISTERED_NOT_AUTHORIZED` protocol.
 amendment so 64-token deliberation turns can emit complete JSON without
 raising TRAINING spend. Adapters are not the blocker: the ALFRED macro adapter
 is built, GDELT was rejected for this run after a bounded coverage study, and
-news stays explicitly missing. TRAINING cannot run until a separate
-authorization supplies Actor credentials and spend.
+news stays explicitly missing. DeepSeek Flash now has a provider-scoped
+**candidate / pilot** identity and a bounded fixture pilot; that is not
+TRAINING. TRAINING cannot run until a separate authorization supplies Actor
+credentials and spend.
 
 ---
 
@@ -214,7 +218,9 @@ model_hash         9c4aaaa136ed098624bee45f5f75d0654f4d56ea526fc4cc51a1f3f3bf1ae
 All four unchanged after the refactor.
 
 - `providers.py` — descriptor carrying endpoint, payload builder, response
-  readers, pricing guard. `model_hash` is provider-scoped.
+  readers, pricing guard. `model_hash` is provider-scoped. `OPENAI` is the only
+  V1-registered provider. `DEEPSEEK` is a named descriptor for a V2 candidate
+  identity and is **not** inserted into `registered_providers()`.
 - `actor_canary.py` / `four_arm.py` — take the `OPENAI` descriptor by default,
   so no V1 behaviour or hash changes. `four_arm.py` is pinned explicitly rather
   than parameterized; its run is complete and frozen, and making finished
@@ -229,9 +235,11 @@ precisely the retroactive edit this governance exists to prevent.
 Phase 2 delivers is that a *V2* protocol can register a provider-scoped
 identity and therefore never inherits the limitation.
 
-**No second vendor is registered.** `registered_providers()` returns
-`("openai",)` and a test asserts it. Shipping an integration that cannot be
-verified against a live API would trade a named limitation for an unnamed one.
+**No second vendor is registered in V1.** `registered_providers()` returns
+`("openai",)` and a test asserts it. DeepSeek Flash is declared as a V2
+candidate / pilot identity (`configs/aat_v2_deepseek_flash_actor_identity_v1.json`)
+using the same hashed `provider` axis. It is not a V1 provider and it is not
+bound to the registered Terra protocol.
 
 #### The non-consuming sufficiency probe
 
@@ -330,9 +338,9 @@ deleted and redrawn under the fix.
 | Macro ALFRED adapter | Built and fixture-tested (`exogenous/alfred.py`). Provenance in `docs/ALFRED_MACRO_SOURCE_PROVENANCE.md`. No dump is committed. |
 | GDELT news parser | Built and fixture-tested. Bounded coverage study complete. **Rejected for this run** (0.0778% `news_present` on the 16,705-opportunity TRAINING index). News stays explicitly missing. See `docs/GDELT_NEWS_SOURCE_PROVENANCE.md`. |
 | Phase 3 coverage / claim contract | **Frozen, macro-only.** Required source is `macro` at floor 0.90; frozen measured coverage is macro 1.0, news 0.0. `claim_authorized` is false. Do not freeze a new contract. |
-| Phase 3 protocol registration | **Registered as `REGISTERED_NOT_AUTHORIZED`.** `configs/aat_v2_registered_protocol_v1.json`. Actor identity remains OpenAI / `gpt-5.6-terra`. |
+| Phase 3 protocol registration | **Registered as `REGISTERED_NOT_AUTHORIZED`.** `configs/aat_v2_registered_protocol_v1.json`. Actor identity remains OpenAI / `gpt-5.6-terra`. DeepSeek Flash is a separate `CANDIDATE_PILOT` identity and does not rewrite this protocol. |
 | Phase 3 TRAINING dry-run plans | Present. `configs/aat_v2_training_plan_v2.json` supersedes v1: 16,705 opportunities, **116,935** planned calls, `dry_run: true`, `execution_authorized: false`. |
-| Model execution options | Documented in `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. DeepSeek Flash dry-run / fixture preflight planner exists; thinking is disabled and Actor JSON is required on the B/C/D preflight path. Arm E uses the compact closed-enum schema in `configs/aat_v2_e_arm_compact_schema_amendment_v1.json`. Hard PREFLIGHT spend ceiling is $1.00. It does not authorize TRAINING. |
+| Model execution options | Documented in `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. DeepSeek Flash dry-run / fixture preflight planner exists; thinking is disabled and Actor JSON is required on the B/C/D path. Arm E uses the compact closed-enum schema. A bounded pilot entrypoint exists (`scripts/run_aat_v2_deepseek_flash_pilot.py`) and defaults to fixture/dry. Nick-authorized live pilot limits are **50 calls** and **$5.00** (not TRAINING). Hard PREFLIGHT spend ceiling remains $1.00. |
 | Phase 3 TRAINING run | **Blocked — needs authorized TRAINING execution, Actor credentials, and spend.** Not blocked on missing adapters. |
 | Phase 4 sealed holdout | Not started; needs a completed Phase 3 TRAINING run and separate authorization. The consumed AAT-V1 holdout must not be reused. |
 | AAT-V1 | Frozen and closed. Holdout consumed (`INVALID_EVIDENCE`). Limitation stands. |
@@ -393,14 +401,23 @@ consumed AAT-V1 holdout.
    `allow_live=True` plus the env key. It does not authorize TRAINING, does
    not register DeepSeek as the V2 Actor, and does not consume a holdout.
    `execution_authority` stays `ABSENT`.
-4. **Treat DeepSeek Flash and hosted Qwen as candidate runtimes, not as the
-   registered Actor.** Changing off Terra changes identity. It needs a
-   provider adapter, a new provider-scoped identity, and a separately verified
-   pilot. The Terra protocol must not be silently reused.
+4. **DeepSeek Flash has a provider-scoped candidate identity and a bounded
+   pilot. That is not TRAINING.** Changing off Terra changes Actor identity.
+   The hashed identity is `configs/aat_v2_deepseek_flash_actor_identity_v1.json`
+   (`CANDIDATE_PILOT`). The Terra protocol is consulted and not reused.
+   `scripts/run_aat_v2_deepseek_flash_pilot.py` defaults to fixture/dry.
+   Live still requires explicit `--allow-live`, `DEEPSEEK_API_KEY`,
+   `--call-ceiling`, and `--spend-ceiling-usd`. Nick-authorized live pilot
+   limits (not TRAINING): about 50 calls and $5.00, typically 7 synthetic
+   opportunities with B/C/D plus four compact E turns (49 calls). Dry
+   default stays 1 / 7 / $1.00. Fail-closed above 20 opportunities, 50
+   calls, or $5.00. Hosted Qwen remains a separate candidate. Do not
+   silently reuse the Terra protocol.
 
 ### Then, in order
 
-Item 5 below is done. Items 6-8 still wait on explicit TRAINING authorization.
+Item 5 below is done. The DeepSeek identity + bounded pilot in item 4 is
+machinery only. Items 6-8 still wait on explicit TRAINING authorization.
 
 5. **E-arm JSON truncation is addressed without TRAINING spend.** The local
    Qwen 100-opportunity pilot accepted 0/400 E responses because 64-token
@@ -420,9 +437,10 @@ Item 5 below is done. Items 6-8 still wait on explicit TRAINING authorization.
 ### Open decisions still outstanding
 
 - **Which hosted runtime to authorize, if any.** DeepSeek Flash API vs
-  RunPod-hosted Qwen vs staying on Terra. Cost and E-arm compatibility are in
-  `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. None of those options is authorized
-  by the dry-run planner.
+  RunPod-hosted Qwen vs staying on Terra. Cost, E-arm compatibility, and the
+  DeepSeek candidate identity / pilot knobs are in
+  `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. Declaring the identity and shipping
+  the fixture pilot does not authorize live spend or TRAINING.
 - **Whether arm E earns its cost.** It is the most interesting thing
   TradingAgents does and the least likely to survive an equal-budget
   comparison. The 64-token turn no longer requires unbounded Actor JSON; the
@@ -448,8 +466,9 @@ at 1.0. Do not reopen it after looking at a result.
 - `session_windows` calendar-day fallback is wrong across weekends; always
   pass `prior_close`.
 - Compressor scoring semantics are frozen but unvalidated.
-- Only one Actor provider is registered (`openai`). DeepSeek Flash is an
-  unregistered candidate probed by the dry-run planner.
+- Only one Actor provider is registered in V1 (`openai`). DeepSeek Flash is a
+  V2 `CANDIDATE_PILOT` identity with a bounded fixture pilot. It is not the
+  registered Terra Actor, and the pilot is not TRAINING.
 - `four_arm.py` is pinned to OpenAI by design.
 - Exogenous coverage is denser for large caps and for names that later moved.
   Coverage density is emitted as a feature so the effect stays measurable, but
@@ -474,9 +493,10 @@ produce a defensible answer either way — including "it did not help" — once
 TRAINING is separately authorized.
 
 The next real risk is not a missing adapter, and it is no longer "E cannot
-emit JSON at 64 tokens." It is authorizing spend, or swapping Terra for
-DeepSeek/Qwen, without a new provider-scoped identity; and the temptation,
-once a full run is expensive, to lower a frozen floor or reuse the consumed
-V1 holdout. The contract, the protocol status, the compact-schema amendment,
-and the consumed-holdout registry are written to make those moves visible.
-Keep them that way.
+emit JSON at 64 tokens." It is authorizing spend, or promoting the DeepSeek
+pilot identity into the registered protocol, without a separately verified
+live pilot and a new TRAINING authorization; and the temptation, once a full
+run is expensive, to lower a frozen floor or reuse the consumed V1 holdout.
+The contract, the protocol status, the candidate identity, the compact-schema
+amendment, and the consumed-holdout registry are written to make those moves
+visible. Keep them that way.
