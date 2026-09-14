@@ -2,14 +2,17 @@
 
 Written 8 September 2026. Status refreshed 14 September 2026 against current
 `main` (macro-only claim contract, `REGISTERED_NOT_AUTHORIZED` protocol,
-GDELT rejection, TRAINING dry-run plans, and model-execution options).
+GDELT rejection, TRAINING dry-run plans, model-execution options, and the
+non-authorizing E-arm compact-schema amendment).
 
 **One-line status.** The V2 experiment is built through a frozen macro-only
 claim contract and a `REGISTERED_NOT_AUTHORIZED` protocol.
-`execution_authority` is `ABSENT`. Adapters are not the blocker: the ALFRED
-macro adapter is built, GDELT was rejected for this run after a bounded
-coverage study, and news stays explicitly missing. TRAINING cannot run until
-a separate authorization supplies Actor credentials and spend.
+`execution_authority` is `ABSENT`. Arm E has a non-authorizing compact-schema
+amendment so 64-token deliberation turns can emit complete JSON without
+raising TRAINING spend. Adapters are not the blocker: the ALFRED macro adapter
+is built, GDELT was rejected for this run after a bounded coverage study, and
+news stays explicitly missing. TRAINING cannot run until a separate
+authorization supplies Actor credentials and spend.
 
 ---
 
@@ -278,7 +281,12 @@ recoverable from a ledger afterwards, so a finished run is audited again.
 
 **Arm E is capped at one arm-D call's output budget** (4 turns × 64 tokens ≤
 256). Without that, a win for deliberation is unattributable — it could simply
-be more thinking tokens.
+be more thinking tokens. The five-field Actor schema does not fit those
+64-token turns (local Qwen accepted 0/400 E responses to unbounded JSON).
+The compact closed-enum schema is bound by
+`configs/aat_v2_e_arm_compact_schema_amendment_v1.json`, a
+`NON_AUTHORIZING_PROTOCOL_NOTE`. It does not rewrite the registered protocol
+and does not authorize TRAINING.
 
 #### The dataset assignment is drawn
 
@@ -324,7 +332,7 @@ deleted and redrawn under the fix.
 | Phase 3 coverage / claim contract | **Frozen, macro-only.** Required source is `macro` at floor 0.90; frozen measured coverage is macro 1.0, news 0.0. `claim_authorized` is false. Do not freeze a new contract. |
 | Phase 3 protocol registration | **Registered as `REGISTERED_NOT_AUTHORIZED`.** `configs/aat_v2_registered_protocol_v1.json`. Actor identity remains OpenAI / `gpt-5.6-terra`. |
 | Phase 3 TRAINING dry-run plans | Present. `configs/aat_v2_training_plan_v2.json` supersedes v1: 16,705 opportunities, **116,935** planned calls, `dry_run: true`, `execution_authorized: false`. |
-| Model execution options | Documented in `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. DeepSeek Flash dry-run / fixture preflight planner exists; thinking is disabled and Actor JSON is required on the preflight path. Hard PREFLIGHT spend ceiling is $1.00. It does not authorize TRAINING. |
+| Model execution options | Documented in `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. DeepSeek Flash dry-run / fixture preflight planner exists; thinking is disabled and Actor JSON is required on the B/C/D preflight path. Arm E uses the compact closed-enum schema in `configs/aat_v2_e_arm_compact_schema_amendment_v1.json`. Hard PREFLIGHT spend ceiling is $1.00. It does not authorize TRAINING. |
 | Phase 3 TRAINING run | **Blocked — needs authorized TRAINING execution, Actor credentials, and spend.** Not blocked on missing adapters. |
 | Phase 4 sealed holdout | Not started; needs a completed Phase 3 TRAINING run and separate authorization. The consumed AAT-V1 holdout must not be reused. |
 | AAT-V1 | Frozen and closed. Holdout consumed (`INVALID_EVIDENCE`). Limitation stands. |
@@ -392,10 +400,15 @@ consumed AAT-V1 holdout.
 
 ### Then, in order
 
-5. Resolve the E-arm JSON truncation (redesign E, or a B/C/D-only protocol
-   amendment) before any full run. The local Qwen 100-opportunity pilot
-   accepted 0/400 E responses at 64 tokens. That is in the execution-options
-   note; it is not TRAINING evidence.
+Item 5 below is done. Items 6-8 still wait on explicit TRAINING authorization.
+
+5. **E-arm JSON truncation is addressed without TRAINING spend.** The local
+   Qwen 100-opportunity pilot accepted 0/400 E responses because 64-token
+   turns required the five-field Actor schema. Compact closed-enum turns are
+   bound by `configs/aat_v2_e_arm_compact_schema_amendment_v1.json`. That
+   artifact is a `NON_AUTHORIZING_PROTOCOL_NOTE`: it does not rewrite the
+   registered protocol, does not freeze a new coverage contract, and does not
+   authorize TRAINING. The 4 x 64 = 256 equal-budget cap is unchanged.
 6. Only after **explicit TRAINING authorization**: run the comparison. Audit
    it. Label it in-sample evidence, because that is what it is.
 7. Compile holdout opportunities only under a future V2 authorization. If a
@@ -412,8 +425,10 @@ consumed AAT-V1 holdout.
   by the dry-run planner.
 - **Whether arm E earns its cost.** It is the most interesting thing
   TradingAgents does and the least likely to survive an equal-budget
-  comparison. The current 64-token turn truncates required JSON. It stays
-  optional until a protocol amendment says otherwise.
+  comparison. The 64-token turn no longer requires unbounded Actor JSON; the
+  compact schema is bound but TRAINING is still unauthorized. E stays in the
+  registered arm set. A later authorization still has to decide whether to
+  spend on it.
 - **Which Tier-2 sources to adopt at all.** Social has sound timestamps but
   awkward retrieval — Pushshift has no public API since losing privileged
   ingestion after Reddit's 2023 changes; historical access now runs through
@@ -458,9 +473,10 @@ cannot spend. Whether adaptation helps is still unknown. The machinery can
 produce a defensible answer either way — including "it did not help" — once
 TRAINING is separately authorized.
 
-The next real risk is not a missing adapter. It is authorizing spend, or
-swapping Terra for DeepSeek/Qwen, without a new provider-scoped identity; and
-the temptation, once a full run is expensive or E truncates, to lower a frozen
-floor or reuse the consumed V1 holdout. The contract, the protocol status, and
-the consumed-holdout registry are written to make those moves visible. Keep
-them that way.
+The next real risk is not a missing adapter, and it is no longer "E cannot
+emit JSON at 64 tokens." It is authorizing spend, or swapping Terra for
+DeepSeek/Qwen, without a new provider-scoped identity; and the temptation,
+once a full run is expensive, to lower a frozen floor or reuse the consumed
+V1 holdout. The contract, the protocol status, the compact-schema amendment,
+and the consumed-holdout registry are written to make those moves visible.
+Keep them that way.

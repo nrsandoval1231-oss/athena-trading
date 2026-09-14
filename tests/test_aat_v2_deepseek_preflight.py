@@ -32,6 +32,7 @@ ROOT = Path(__file__).parents[1]
 PLAN = ROOT / "configs/aat_v2_training_plan_v2.json"
 PRICING = ROOT / "configs/deepseek_flash_pricing_2026-09-14.json"
 PROTOCOL = ROOT / "configs/aat_v2_registered_protocol_v1.json"
+AMENDMENT = ROOT / "configs/aat_v2_e_arm_compact_schema_amendment_v1.json"
 FIXTURE = ROOT / "configs/fixtures/deepseek_flash_preflight_v1.json"
 SCRIPT = ROOT / "scripts/plan_aat_v2_deepseek_flash.py"
 FIXTURE_KEY = "fixture-key-not-serialized"
@@ -57,8 +58,7 @@ def _fixture_transport(payload, key):
     assert payload["stream"] is False
     assert payload["thinking"] == THINKING
     assert payload["response_format"] == RESPONSE_FORMAT
-    envelope = json.loads(FIXTURE.read_text(encoding="utf-8"))
-    return envelope["response"]
+    return deepseek_mod.fixture_transport(FIXTURE)(payload, key)
 
 
 def test_dry_run_matches_the_documented_deepseek_estimate():
@@ -240,6 +240,8 @@ def test_output_cannot_overwrite_the_consumed_holdout_registry(tmp_path):
         forbid_output_path(ROOT / "configs/aat_consumed_holdouts_v1.json")
     with pytest.raises(DeepSeekPreflightError, match="registered or consumed"):
         forbid_output_path(ROOT / "configs/aat_v2_registered_protocol_v1.json")
+    with pytest.raises(DeepSeekPreflightError, match="registered or consumed"):
+        forbid_output_path(AMENDMENT)
     existing = tmp_path / "out.json"
     existing.write_text("{}\n", encoding="utf-8")
     with pytest.raises(DeepSeekPreflightError, match="overwrite"):
@@ -315,7 +317,7 @@ def test_preflight_payload_disables_thinking_and_pins_actor_schema():
     assert "TRAINING" in system
 
 
-def test_deliberation_preflight_keeps_e_arm_budget_and_disables_thinking():
+def test_deliberation_preflight_keeps_e_arm_budget_and_accepts_compact_json():
     seen = []
 
     def transport(payload, key):
@@ -325,14 +327,88 @@ def test_deliberation_preflight_keeps_e_arm_budget_and_disables_thinking():
     result = run_deepseek_flash_preflight(
         fixture_path=FIXTURE, pricing_path=PRICING, protocol_path=PROTOCOL,
         call_ceiling=7, spend_ceiling_usd=1.00, api_key=FIXTURE_KEY,
-        transport=transport, include_deliberation=True,
+        transport=transport, include_deliberation=True, amendment_path=AMENDMENT,
     )
     assert result["request_count"] == 7
+    assert result["accepted_count"] == 7
+    assert result["rejected_count"] == 0
     assert result["execution_authority"] == "ABSENT"
     assert result["sealed_holdout_consumed"] is False
+    assert result["execution_authorized"] is False
     assert [payload["max_tokens"] for payload in seen] == [512, 512, 512, 64, 64, 64, 64]
     assert all(payload["thinking"] == THINKING for payload in seen)
     assert all(payload["response_format"] == RESPONSE_FORMAT for payload in seen)
+    e_rows = [row for row in result["records"] if row["arm"] == "E_DELIBERATION"]
+    assert [row["turn"] for row in e_rows] == ["BULL", "BEAR", "TRADER", "RISK"]
+    assert all(row["accepted"] for row in e_rows)
+    assert e_rows[-1]["decision"]["action"] == "PASS"
+    e_payloads = seen[3:]
+    assert all(payload["messages"][0]["content"] == deepseek_mod.DELIBERATION_PROMPT for payload in e_payloads)
+    assert all('"turn":"' in payload["messages"][1]["content"] for payload in e_payloads)
+
+
+def test_e_arm_preflight_requires_the_non_authorizing_amendment():
+    with pytest.raises(DeepSeekPreflightError, match="compact-schema amendment"):
+        run_deepseek_flash_preflight(
+            fixture_path=FIXTURE, pricing_path=PRICING, protocol_path=PROTOCOL,
+            call_ceiling=7, spend_ceiling_usd=1.00, api_key=FIXTURE_KEY,
+            transport=_fixture_transport, include_deliberation=True,
+        )
+
+
+def test_truncated_actor_json_is_rejected_on_e_turns_compact_json_is_not():
+    envelope = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    verbose = json.dumps({
+        "action": "ENTER_STANDARD",
+        "confidence": 0.62,
+        "horizon": "hold through the session close at 15:45 ET",
+        "invalidation": "a break of the opening-range low on a closing basis",
+        "rationale": (
+            "Overnight macro surprise supports continuation into the range "
+            "and the packet does not justify high conviction sizing."
+        ),
+    }, separators=(",", ":"))
+    truncated = verbose[:256]
+    cut = json.loads(json.dumps(envelope["deliberation_responses"]["BULL"]))
+    cut["choices"][0]["finish_reason"] = "length"
+    cut["choices"][0]["message"]["content"] = truncated
+    cut["usage"]["completion_tokens"] = 64
+
+    def transport(payload, key):
+        user = json.loads(payload["messages"][1]["content"])
+        if isinstance(user, dict) and user.get("turn"):
+            return cut
+        return _fixture_transport(payload, key)
+
+    result = run_deepseek_flash_preflight(
+        fixture_path=FIXTURE, pricing_path=PRICING, protocol_path=PROTOCOL,
+        call_ceiling=7, spend_ceiling_usd=1.00, api_key=FIXTURE_KEY,
+        transport=transport, include_deliberation=True, amendment_path=AMENDMENT,
+    )
+    e_rows = [row for row in result["records"] if row["arm"] == "E_DELIBERATION"]
+    actor_rows = [row for row in result["records"] if row["arm"] != "E_DELIBERATION"]
+    assert all(row["accepted"] for row in actor_rows)
+    assert all(row["rejection_reason"] == "OUTPUT_TRUNCATED" for row in e_rows)
+    assert all(row["accepted"] is False for row in e_rows)
+
+
+def test_full_actor_schema_on_an_e_turn_is_a_schema_mismatch():
+    envelope = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    actor = envelope["response"]
+
+    def transport(payload, key):
+        user = json.loads(payload["messages"][1]["content"])
+        if isinstance(user, dict) and user.get("turn"):
+            return actor
+        return _fixture_transport(payload, key)
+
+    result = run_deepseek_flash_preflight(
+        fixture_path=FIXTURE, pricing_path=PRICING, protocol_path=PROTOCOL,
+        call_ceiling=7, spend_ceiling_usd=1.00, api_key=FIXTURE_KEY,
+        transport=transport, include_deliberation=True, amendment_path=AMENDMENT,
+    )
+    e_rows = [row for row in result["records"] if row["arm"] == "E_DELIBERATION"]
+    assert all(row["rejection_reason"] == "deliberation output schema mismatch" for row in e_rows)
 
 
 def test_deepseek_is_not_registered_as_a_v1_provider():
