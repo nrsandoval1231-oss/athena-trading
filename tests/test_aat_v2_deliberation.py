@@ -13,6 +13,7 @@ from athena_trading.aat_v2.deliberation import (
     SINGLE_CALL_OUTPUT_TOKENS,
     DeliberationError,
     assert_compact_payloads_fit_budget,
+    compact_user_payload,
     conservative_token_count,
     deliberation_plan,
     load_e_arm_amendment,
@@ -79,6 +80,21 @@ def test_complete_compact_json_is_accepted_at_64_tokens():
     scored = scored_action_from_turns(accepted)
     assert scored["action"] == "ENTER_HIGH_CONVICTION"
     assert scored["execution_authority"] == "ABSENT"
+
+
+def test_later_e_turns_receive_prior_compact_outputs():
+    packet = {"schema_version": "athena-aat-v2-actor-packet-v1", "features": {"opaque": 1}}
+    bull = compact_user_payload(packet, turn="BULL")
+    assert "prior_turns" not in bull
+    with pytest.raises(DeliberationError, match="first deliberation turn"):
+        compact_user_payload(packet, turn="BULL", prior_turns=({"turn": "BULL"},))
+    priors = (
+        {"turn": "BULL", "stance": "IN", "confidence": 0.7, "claim": "MACRO"},
+        {"turn": "BEAR", "stance": "OUT", "confidence": 0.6, "claim": "PRICE"},
+        {"turn": "TRADER", "stance": "IN", "confidence": 0.55, "claim": "MACRO"},
+    )
+    risk = compact_user_payload(packet, turn="RISK", prior_turns=priors)
+    assert [item["turn"] for item in risk["prior_turns"]] == ["BULL", "BEAR", "TRADER"]
 
 
 def test_ollama_done_reason_length_is_treated_as_truncation():

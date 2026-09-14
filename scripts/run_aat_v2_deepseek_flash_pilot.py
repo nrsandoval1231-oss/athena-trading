@@ -120,30 +120,32 @@ def main(argv: list[str] | None = None) -> int:
                 json.dumps(result, sort_keys=True, indent=2) + "\n", encoding="utf-8",
             )
     except MissingDeepSeekCredentialsError as exc:
-        print(json.dumps({
-            "ok": False,
-            "error": str(exc),
-            "execution_authority": "ABSENT",
-            "sealed_holdout_consumed": False,
-            "live_calls": False,
-            "status": "PILOT_NOT_TRAINING",
-        }, indent=2, sort_keys=True))
+        print(json.dumps(_error_payload(exc, live_calls=False), indent=2, sort_keys=True))
         return 2
     except (DeepSeekPilotError, IdentityError) as exc:
-        print(json.dumps({
-            "ok": False,
-            "error": str(exc),
-            "execution_authority": "ABSENT",
-            "sealed_holdout_consumed": False,
-            "live_calls": False,
-            "status": "PILOT_NOT_TRAINING",
-        }, indent=2, sort_keys=True))
+        print(json.dumps(_error_payload(exc), indent=2, sort_keys=True))
         return 1
 
     payload = dict(result)
     payload["ok"] = True
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
+
+
+def _error_payload(exc: BaseException, *, live_calls: bool | None = None) -> dict[str, object]:
+    """Fail-closed CLI receipt. Preserve live-attempt evidence from the exception."""
+    payload: dict[str, object] = {
+        "ok": False,
+        "error": str(exc),
+        "execution_authority": "ABSENT",
+        "sealed_holdout_consumed": False,
+        "live_calls": getattr(exc, "live_calls", False) if live_calls is None else live_calls,
+        "allow_live": getattr(exc, "allow_live", False),
+        "completed_calls": getattr(exc, "completed_calls", 0),
+        "attempted_calls": getattr(exc, "attempted_calls", 0),
+        "status": "PILOT_NOT_TRAINING",
+    }
+    return payload
 
 
 if __name__ == "__main__":

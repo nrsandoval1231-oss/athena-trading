@@ -11,7 +11,8 @@ pilot limits (about 50 calls, ``$5.00``). That is not TRAINING.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+import math
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,7 @@ from .deliberation import (
     DELIBERATION_TURNS,
     DeliberationError,
     load_e_arm_amendment,
+    worst_case_compact_payloads,
 )
 from .identity import (
     COMMITTED_IDENTITY_PATH,
@@ -77,7 +79,27 @@ CALLS_PER_OPPORTUNITY_WITH_E = CALLS_PER_OPPORTUNITY_ACTOR + DELIBERATION_TURNS
 
 
 class DeepSeekPilotError(DeepSeekPreflightError):
-    """The DeepSeek Flash pilot cannot proceed safely."""
+    """The DeepSeek Flash pilot cannot proceed safely.
+
+    ``live_calls`` / ``completed_calls`` / ``attempted_calls`` record whether a
+    live transport was selected and how far a failed run got, so a paid miss
+    is not reported as ``live_calls: false``.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        live_calls: bool = False,
+        allow_live: bool = False,
+        completed_calls: int = 0,
+        attempted_calls: int = 0,
+    ) -> None:
+        super().__init__(message)
+        self.live_calls = live_calls
+        self.allow_live = allow_live
+        self.completed_calls = completed_calls
+        self.attempted_calls = attempted_calls
 
 
 def run_deepseek_flash_pilot(
@@ -108,9 +130,14 @@ def run_deepseek_flash_pilot(
         raise DeepSeekPilotError(
             f"pilot call ceiling must be in 1..{PILOT_CALL_CEILING}"
         )
-    if spend_ceiling_usd < 0 or spend_ceiling_usd > PILOT_SPEND_CEILING_USD:
+    if (
+        not isinstance(spend_ceiling_usd, (int, float))
+        or not math.isfinite(spend_ceiling_usd)
+        or spend_ceiling_usd < 0
+        or spend_ceiling_usd > PILOT_SPEND_CEILING_USD
+    ):
         raise DeepSeekPilotError(
-            f"pilot spend ceiling must be in 0..{PILOT_SPEND_CEILING_USD}"
+            f"pilot spend ceiling must be a finite number in 0..{PILOT_SPEND_CEILING_USD}"
         )
     key = api_key if api_key is not None else api_key_from_env()
     _require_key(key)
@@ -142,48 +169,107 @@ def run_deepseek_flash_pilot(
     try:
         sender = _resolve_transport(transport=transport, allow_live=allow_live)
     except DeepSeekPreflightError as exc:
-        raise DeepSeekPilotError(str(exc)) from exc
+        raise DeepSeekPilotError(str(exc), allow_live=allow_live) from exc
+    live_calls = sender is _live_transport
     envelope = _pilot_fixture_envelope(fixture_path)
-    requests = _build_pilot_requests(
+    estimate = _build_pilot_requests(
         envelope,
         opportunity_count=opportunity_count,
         arms=arms,
         actor_identity=actor_id,
+        prior_source="worst_case",
     )
-    worst_cost = _preflight_worst_case_usd(requests, pricing["peak"])
+    worst_cost = _preflight_worst_case_usd(estimate, pricing["peak"])
     if worst_cost > spend_ceiling_usd:
-        raise DeepSeekPilotError("worst-case pilot cost exceeds spend ceiling")
+        raise DeepSeekPilotError(
+            "worst-case pilot cost exceeds spend ceiling",
+            allow_live=allow_live,
+        )
 
-    records = []
+    records: list[dict[str, Any]] = []
     total_input = total_output = 0
-    live_calls = sender is _live_transport
-    for index, item in enumerate(requests, start=1):
-        response = sender(item["payload"], key)
-        prompt_tokens, completion_tokens = _read_usage(response)
-        total_input += prompt_tokens
-        total_output += completion_tokens
-        actual_cost = _cost_usd(total_input, total_output, pricing["peak"])
-        if actual_cost > spend_ceiling_usd:
-            raise DeepSeekPilotError("reported usage exceeds spend ceiling")
-        decision, rejection = _read_decision(response, turn=item["turn"])
-        records.append({
-            "sequence": index,
-            "arm": item["arm"],
-            "turn": item["turn"],
-            "opportunity_id": item["opportunity_id"],
-            "opportunity_index": item["opportunity_index"],
-            "request_hash": canonical_hash(item["payload"]),
-            "packet_hash": item["packet_hash"],
-            "accepted": rejection is None,
-            "rejection_reason": rejection,
-            "decision": decision,
-            "input_tokens": prompt_tokens,
-            "output_tokens": completion_tokens,
-            "cumulative_cost_usd": actual_cost,
-            "status": PILOT_STATUS,
-            "execution_authority": "ABSENT",
-            "actor_identity_hash": actor_id,
-        })
+    attempted_calls = 0
+    try:
+        for index in range(opportunity_count):
+            opportunity_id, packet, packet_hash = _opportunity_packet(
+                envelope, opportunity_count=opportunity_count, index=index,
+                actor_identity=actor_id,
+            )
+            prior_turns: list[dict[str, Any]] = []
+            for item in arms:
+                turn = item["turn"]
+                priors = tuple(prior_turns) if item["arm"] == E_DELIBERATION else ()
+                request = _arm_request(
+                    packet=packet,
+                    packet_hash=packet_hash,
+                    arm=item["arm"],
+                    turn=turn,
+                    opportunity_id=opportunity_id,
+                    opportunity_index=index,
+                    prior_turns=priors,
+                )
+                attempted_calls += 1
+                try:
+                    response = sender(request["payload"], key)
+                except DeepSeekPreflightError as exc:
+                    raise DeepSeekPilotError(
+                        str(exc),
+                        live_calls=live_calls,
+                        allow_live=allow_live,
+                        completed_calls=len(records),
+                        attempted_calls=attempted_calls,
+                    ) from exc
+                prompt_tokens, completion_tokens = _read_usage(response)
+                total_input += prompt_tokens
+                total_output += completion_tokens
+                actual_cost = _cost_usd(total_input, total_output, pricing["peak"])
+                decision, rejection = _read_decision(response, turn=turn)
+                if actual_cost > spend_ceiling_usd and rejection is None:
+                    rejection = "SPEND_CEILING_EXCEEDED"
+                records.append({
+                    "sequence": attempted_calls,
+                    "arm": item["arm"],
+                    "turn": turn,
+                    "opportunity_id": opportunity_id,
+                    "opportunity_index": index,
+                    "request_hash": canonical_hash(request["payload"]),
+                    "packet_hash": packet_hash,
+                    "accepted": rejection is None,
+                    "rejection_reason": rejection,
+                    "decision": decision,
+                    "input_tokens": prompt_tokens,
+                    "output_tokens": completion_tokens,
+                    "cumulative_cost_usd": actual_cost,
+                    "status": PILOT_STATUS,
+                    "execution_authority": "ABSENT",
+                    "actor_identity_hash": actor_id,
+                    "prior_turn_count": len(priors),
+                })
+                if actual_cost > spend_ceiling_usd:
+                    raise DeepSeekPilotError(
+                        "reported usage exceeds spend ceiling",
+                        live_calls=live_calls,
+                        allow_live=allow_live,
+                        completed_calls=len(records),
+                        attempted_calls=attempted_calls,
+                    )
+                if item["arm"] == E_DELIBERATION and rejection is None and decision:
+                    prior_turns.append(decision)
+    except DeepSeekPilotError as exc:
+        if attempted_calls and not exc.attempted_calls:
+            exc.live_calls = live_calls
+            exc.allow_live = allow_live
+            exc.completed_calls = len(records)
+            exc.attempted_calls = attempted_calls
+        raise
+    except DeepSeekPreflightError as exc:
+        raise DeepSeekPilotError(
+            str(exc),
+            live_calls=live_calls,
+            allow_live=allow_live,
+            completed_calls=len(records),
+            attempted_calls=attempted_calls,
+        ) from exc
 
     result = {
         "schema_version": PILOT_SCHEMA,
@@ -266,40 +352,85 @@ def _build_pilot_requests(
     opportunity_count: int,
     arms: tuple[dict[str, Any], ...],
     actor_identity: str,
+    prior_source: str = "none",
 ) -> list[dict[str, Any]]:
-    exogenous = {key: 0 for key in feature_keys()}
-    base_id = str(fixture["opportunity_id"])
     requests: list[dict[str, Any]] = []
     for index in range(opportunity_count):
-        opportunity_id = base_id if opportunity_count == 1 else f"{base_id}-{index + 1}"
-        packet = build_packet(
-            arm=D_ATHENA,
-            opportunity_id=opportunity_id,
-            features=dict(fixture["features"]),
+        opportunity_id, packet, packet_hash = _opportunity_packet(
+            fixture, opportunity_count=opportunity_count, index=index,
             actor_identity=actor_identity,
-            exogenous_features=exogenous,
         )
-        packet_hash = canonical_hash(packet)
         for item in arms:
-            arm = item["arm"]
-            turn = item["turn"]
-            max_output_tokens = (
-                DELIBERATION_OUTPUT_TOKENS if arm == E_DELIBERATION
-                else SINGLE_CALL_OUTPUT_TOKENS
-            )
-            requests.append({
-                "arm": arm,
-                "turn": turn,
-                "opportunity_id": opportunity_id,
-                "opportunity_index": index,
-                "max_output_tokens": max_output_tokens,
-                "packet_hash": packet_hash,
-                "payload": build_deepseek_payload(
-                    packet,
-                    max_output_tokens=max_output_tokens,
-                    arm=arm,
-                    turn=turn,
-                    system_prompt=PILOT_PROMPT,
-                ),
-            })
+            prior_turns: Sequence[Mapping[str, Any]] = ()
+            if item["arm"] == E_DELIBERATION and prior_source == "worst_case":
+                prior_turns = _worst_case_priors(item["turn"])
+            requests.append(_arm_request(
+                packet=packet,
+                packet_hash=packet_hash,
+                arm=item["arm"],
+                turn=item["turn"],
+                opportunity_id=opportunity_id,
+                opportunity_index=index,
+                prior_turns=prior_turns,
+            ))
     return requests
+
+
+def _opportunity_packet(
+    fixture: Mapping[str, Any],
+    *,
+    opportunity_count: int,
+    index: int,
+    actor_identity: str,
+) -> tuple[str, dict[str, Any], str]:
+    exogenous = {key: 0 for key in feature_keys()}
+    base_id = str(fixture["opportunity_id"])
+    opportunity_id = base_id if opportunity_count == 1 else f"{base_id}-{index + 1}"
+    packet = build_packet(
+        arm=D_ATHENA,
+        opportunity_id=opportunity_id,
+        features=dict(fixture["features"]),
+        actor_identity=actor_identity,
+        exogenous_features=exogenous,
+    )
+    return opportunity_id, packet, canonical_hash(packet)
+
+
+def _arm_request(
+    *,
+    packet: Mapping[str, Any],
+    packet_hash: str,
+    arm: str,
+    turn: str | None,
+    opportunity_id: str,
+    opportunity_index: int,
+    prior_turns: Sequence[Mapping[str, Any]] = (),
+) -> dict[str, Any]:
+    max_output_tokens = (
+        DELIBERATION_OUTPUT_TOKENS if arm == E_DELIBERATION
+        else SINGLE_CALL_OUTPUT_TOKENS
+    )
+    return {
+        "arm": arm,
+        "turn": turn,
+        "opportunity_id": opportunity_id,
+        "opportunity_index": opportunity_index,
+        "max_output_tokens": max_output_tokens,
+        "packet_hash": packet_hash,
+        "payload": build_deepseek_payload(
+            packet,
+            max_output_tokens=max_output_tokens,
+            arm=arm,
+            turn=turn,
+            system_prompt=PILOT_PROMPT,
+            prior_turns=prior_turns,
+        ),
+    }
+
+
+def _worst_case_priors(turn: str | None) -> tuple[dict[str, Any], ...]:
+    if turn not in DELIBERATION_TURN_ROLES or turn == DELIBERATION_TURN_ROLES[0]:
+        return ()
+    worst = worst_case_compact_payloads()
+    prior_roles = DELIBERATION_TURN_ROLES[:DELIBERATION_TURN_ROLES.index(turn)]
+    return tuple(worst[role] for role in prior_roles)

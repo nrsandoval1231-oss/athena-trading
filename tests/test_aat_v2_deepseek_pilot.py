@@ -102,6 +102,11 @@ def test_fixture_pilot_accepts_compact_e_and_actor_json():
         "action", "confidence", "horizon", "invalidation", "rationale",
     } for row in actor_rows)
     assert e_rows[-1]["decision"]["action"] == "PASS"
+    assert [row["prior_turn_count"] for row in e_rows] == [0, 1, 2, 3]
+    risk_user = json.loads(e_payloads[-1]["messages"][1]["content"])
+    assert [item["turn"] for item in risk_user["prior_turns"]] == ["BULL", "BEAR", "TRADER"]
+    bull_user = json.loads(e_payloads[0]["messages"][1]["content"])
+    assert "prior_turns" not in bull_user
     assert all(row["actor_identity_hash"] == IDENTITY_HASH for row in result["records"])
     assert FIXTURE_KEY not in json.dumps(result)
     assert SINGLE_CALL_OUTPUT_TOKENS == 512
@@ -300,3 +305,72 @@ def test_cli_allow_live_without_key_fails_closed(monkeypatch, capsys):
     assert payload["ok"] is False
     assert "DEEPSEEK_API_KEY" in payload["error"]
     assert payload["live_calls"] is False
+
+
+def test_non_finite_spend_ceiling_fails_closed_before_transport():
+    called = False
+
+    def transport(payload, key):
+        nonlocal called
+        called = True
+        return _fixture_transport(payload, key)
+
+    for value in (float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(DeepSeekPilotError, match="finite"):
+            run_deepseek_flash_pilot(
+                fixture_path=FIXTURE, pricing_path=PRICING, protocol_path=PROTOCOL,
+                identity_path=IDENTITY, amendment_path=AMENDMENT,
+                opportunity_count=1, call_ceiling=7, spend_ceiling_usd=value,
+                api_key=FIXTURE_KEY, transport=transport,
+            )
+    assert called is False
+
+
+def test_mid_run_failure_preserves_completed_and_attempted_calls():
+    from athena_trading.aat_v2.deepseek_preflight import DeepSeekPreflightError
+
+    seen = {"n": 0}
+
+    def transport(payload, key):
+        seen["n"] += 1
+        if seen["n"] > 2:
+            raise DeepSeekPreflightError("DeepSeek preflight failed closed with HTTP 500")
+        return _fixture_transport(payload, key)
+
+    with pytest.raises(DeepSeekPilotError, match="HTTP 500") as err:
+        run_deepseek_flash_pilot(
+            fixture_path=FIXTURE, pricing_path=PRICING, protocol_path=PROTOCOL,
+            identity_path=IDENTITY, amendment_path=AMENDMENT,
+            opportunity_count=1, call_ceiling=7, spend_ceiling_usd=1.00,
+            api_key=FIXTURE_KEY, transport=transport,
+        )
+    assert err.value.completed_calls == 2
+    assert err.value.attempted_calls == 3
+    assert err.value.live_calls is False
+    assert err.value.allow_live is False
+
+
+def test_cli_reports_live_attempt_evidence_on_failure(monkeypatch, capsys):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", FIXTURE_KEY)
+    mod = _script()
+
+    def boom(**kwargs):
+        raise DeepSeekPilotError(
+            "DeepSeek preflight failed closed with HTTP 500",
+            live_calls=True,
+            allow_live=True,
+            completed_calls=2,
+            attempted_calls=3,
+        )
+
+    monkeypatch.setattr(mod, "run_deepseek_flash_pilot", boom)
+    code = mod.main(["--allow-live", "--call-ceiling", "7", "--spend-ceiling-usd", "1"])
+    assert code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["live_calls"] is True
+    assert payload["allow_live"] is True
+    assert payload["completed_calls"] == 2
+    assert payload["attempted_calls"] == 3
+    assert payload["execution_authority"] == "ABSENT"
+    assert payload["sealed_holdout_consumed"] is False

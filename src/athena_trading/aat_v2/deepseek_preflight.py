@@ -246,6 +246,7 @@ def build_deepseek_payload(
     arm: str | None = None,
     turn: str | None = None,
     system_prompt: str | None = None,
+    prior_turns: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Chat-completions body for a structured DeepSeek Flash preflight call.
 
@@ -261,7 +262,7 @@ def build_deepseek_payload(
             raise DeepSeekPreflightError("E-arm preflight requires a deliberation turn")
         system = DELIBERATION_PROMPT
         try:
-            user = compact_user_payload(packet, turn=turn)
+            user = compact_user_payload(packet, turn=turn, prior_turns=prior_turns)
         except DeliberationError as exc:
             raise DeepSeekPreflightError(str(exc)) from exc
         if max_output_tokens != DELIBERATION_OUTPUT_TOKENS:

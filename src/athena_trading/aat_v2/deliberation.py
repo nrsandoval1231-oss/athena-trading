@@ -137,13 +137,28 @@ def turn_instruction(turn: str) -> dict[str, Any]:
     }
 
 
-def compact_user_payload(packet: Mapping[str, Any], *, turn: str) -> dict[str, Any]:
-    """User-message body for one E turn: packet plus the closed emit contract."""
-    return {
+def compact_user_payload(
+    packet: Mapping[str, Any],
+    *,
+    turn: str,
+    prior_turns: Sequence[Mapping[str, Any]] = (),
+) -> dict[str, Any]:
+    """User-message body for one E turn: packet, emit contract, and prior turns.
+
+    Later turns must see earlier compact outputs so RISK can adjudicate the
+    debate rather than emit an isolated schema object.
+    """
+    role = _validate_turn(turn)
+    payload: dict[str, Any] = {
         "packet": dict(packet),
-        "turn": _validate_turn(turn),
+        "turn": role,
         "emit": turn_instruction(turn),
     }
+    if prior_turns:
+        if role == DELIBERATION_TURN_ROLES[0]:
+            raise DeliberationError("the first deliberation turn cannot carry prior turns")
+        payload["prior_turns"] = [dict(item) for item in prior_turns]
+    return payload
 
 
 def worst_case_compact_payloads() -> dict[str, dict[str, Any]]:
