@@ -1,9 +1,13 @@
-"""Local Ollama HTTP transport for AAT-V2 TRAINING.
+"""Ollama HTTP transport for AAT-V2 TRAINING.
 
-Talks only to loopback ``http://127.0.0.1:11434`` by default. Thinking is
-disabled when the runtime honors ``think: false``. Arm B/C/D use the five-field
-Actor JSON schema at the registered 256-token budget. Arm E reuses the compact
-closed-enum parser.
+Talks to loopback ``http://127.0.0.1:11434`` by default. A non-loopback
+``--base-url`` (RunPod GPU or similar) is allowed only when the caller opts
+into remote hosts. Live HTTP still requires ``--allow-live-ollama``. Native
+Ollama ``/api/chat`` is the TRAINING API; OpenAI-compat ``/v1`` is not used.
+
+Thinking is disabled when the runtime honors ``think: false``. Arm B/C/D use
+the five-field Actor JSON schema at the registered 256-token budget. Arm E
+reuses the compact closed-enum parser.
 
 Ollama does not always return OpenAI-style ``usage``. When ``prompt_eval_count``
 and ``eval_count`` are present they are recorded as ``OLLAMA_REPORTED``. When
@@ -50,23 +54,56 @@ class OllamaTransportError(ValueError):
     """The local Ollama transport cannot proceed safely."""
 
 
+def is_loopback_base_url(base_url: str) -> bool:
+    """True when ``base_url`` targets loopback (including an SSH tunnel)."""
+    if not isinstance(base_url, str) or not base_url.strip():
+        return False
+    host = (urlparse(base_url.strip()).hostname or "").lower()
+    return host in LOOPBACK_HOSTS
+
+
+def transport_host_scope(base_url: str) -> str:
+    """Return ``loopback`` or ``remote`` for receipts. Does not authorize live HTTP."""
+    return "loopback" if is_loopback_base_url(base_url) else "remote"
+
+
 def loopback_chat_url(base_url: str = DEFAULT_BASE_URL) -> str:
     """Return the chat endpoint, refusing anything that is not loopback HTTP."""
+    return ollama_chat_url(base_url, allow_remote=False)
+
+
+def ollama_chat_url(base_url: str = DEFAULT_BASE_URL, *, allow_remote: bool = False) -> str:
+    """Return native ``/api/chat``. Remote hosts require ``allow_remote=True``."""
     if not isinstance(base_url, str) or not base_url.strip():
         raise OllamaTransportError("Ollama base URL is unusable")
     parsed = urlparse(base_url.strip())
-    if parsed.scheme != "http":
-        raise OllamaTransportError("Ollama TRAINING transport is loopback HTTP only")
+    if parsed.username or parsed.password:
+        raise OllamaTransportError("Ollama TRAINING transport refuses URLs with credentials")
     host = (parsed.hostname or "").lower()
-    if host not in LOOPBACK_HOSTS:
-        raise OllamaTransportError("Ollama TRAINING transport refuses non-loopback hosts")
+    if not host:
+        raise OllamaTransportError("Ollama base URL is missing a host")
     if parsed.path not in ("", "/", CHAT_PATH):
         raise OllamaTransportError("Ollama TRAINING transport only uses /api/chat")
     port = parsed.port or 11434
     hostname = parsed.hostname
-    if hostname == "::1":
-        return f"http://[::1]:{port}{CHAT_PATH}"
-    return f"http://{hostname}:{port}{CHAT_PATH}"
+    if hostname is None:
+        raise OllamaTransportError("Ollama base URL is missing a host")
+    loopback = host in LOOPBACK_HOSTS
+    if loopback:
+        if parsed.scheme != "http":
+            raise OllamaTransportError("Ollama TRAINING transport is loopback HTTP only")
+        if hostname == "::1":
+            return f"http://[::1]:{port}{CHAT_PATH}"
+        return f"http://{hostname}:{port}{CHAT_PATH}"
+    if not allow_remote:
+        raise OllamaTransportError("Ollama TRAINING transport refuses non-loopback hosts")
+    if parsed.scheme not in {"http", "https"}:
+        raise OllamaTransportError("remote Ollama TRAINING transport is HTTP or HTTPS only")
+    if ":" in hostname and "." not in hostname:
+        netloc = f"[{hostname}]:{port}"
+    else:
+        netloc = f"{hostname}:{port}"
+    return f"{parsed.scheme}://{netloc}{CHAT_PATH}"
 
 
 def build_ollama_payload(
@@ -115,9 +152,10 @@ def live_ollama_transport(
     base_url: str = DEFAULT_BASE_URL,
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     retries: int = DEFAULT_RETRIES,
+    allow_remote: bool = False,
 ) -> Transport:
-    """POST chat completions to local Ollama. Timeouts/retries are GPU-oriented."""
-    endpoint = loopback_chat_url(base_url)
+    """POST chat completions to Ollama. Timeouts/retries are GPU-oriented."""
+    endpoint = ollama_chat_url(base_url, allow_remote=allow_remote)
     if timeout_seconds < 1 or retries < 1:
         raise OllamaTransportError("Ollama timeout and retries must be positive")
 
@@ -134,7 +172,8 @@ def live_ollama_transport(
                 method="POST",
             )
             try:
-                with urlopen(request, timeout=timeout_seconds) as response:  # nosec B310: loopback only
+                # URL is validated by ollama_chat_url (http/https, no credentials).
+                with urlopen(request, timeout=timeout_seconds) as response:  # nosec B310
                     parsed = json.loads(response.read().decode("utf-8"))
             except HTTPError as exc:
                 last_error = exc
