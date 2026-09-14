@@ -14,6 +14,7 @@ from athena_trading.aat_v1.actor_canary import (
 from athena_trading.aat_v1.providers import (
     DEEPSEEK,
     OLLAMA,
+    OLLAMA_USER_AGENT,
     OPENAI,
     ProviderDescriptor,
     get_provider,
@@ -135,6 +136,10 @@ def test_ollama_descriptor_is_declared_not_v1_registered():
     assert payload["format"] == "json"
     assert payload["options"]["num_predict"] == 256
     assert "input" not in payload
+    headers = OLLAMA.build_headers("")
+    assert headers["Content-Type"] == "application/json"
+    assert headers["User-Agent"] == OLLAMA_USER_AGENT
+    assert "urllib" not in headers["User-Agent"].lower()
 
 
 def test_openai_is_the_only_registered_provider():

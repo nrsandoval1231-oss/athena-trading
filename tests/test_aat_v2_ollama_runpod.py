@@ -17,13 +17,16 @@ from athena_trading.aat_v2.ollama_training import (
     run_ollama_local_training,
 )
 from athena_trading.aat_v2.ollama_transport import (
+    OLLAMA_USER_AGENT,
     OllamaTransportError,
+    build_ollama_payload,
+    live_ollama_transport,
     loopback_chat_url,
     ollama_chat_url,
+    ollama_http_headers,
     transport_host_scope,
 )
 from athena_trading.aat_v2.packet import build_packet
-from athena_trading.aat_v2.ollama_transport import build_ollama_payload
 from athena_trading.exogenous import feature_keys
 
 
@@ -224,6 +227,71 @@ def test_https_runpod_proxy_without_port_does_not_force_11434():
     assert loopback_chat_url("http://127.0.0.1") == "http://127.0.0.1:11434/api/chat"
     with pytest.raises(OllamaTransportError, match="HTTP only"):
         loopback_chat_url("https://127.0.0.1")
+
+
+def _request_headers(request) -> dict[str, str]:
+    return {key.lower(): value for key, value in request.header_items()}
+
+
+def test_live_https_runpod_request_omits_11434_and_sets_safe_user_agent(monkeypatch):
+    captured: dict = {}
+
+    class FakeResponse:
+        def read(self):
+            return b'{"done":true,"message":{"content":"{}"}}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_urlopen(request, timeout=None):
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr("athena_trading.aat_v2.ollama_transport.urlopen", fake_urlopen)
+    proxy = "https://svy1eeqveu3tnp-11434.proxy.runpod.net"
+    send = live_ollama_transport(
+        base_url=proxy,
+        allow_remote=True,
+        retries=1,
+        timeout_seconds=5,
+    )
+    send({"think": False, "stream": False, "model": "qwen2.5:14b"})
+    request = captured["request"]
+    assert request.full_url == f"{proxy}/api/chat"
+    assert request.get_method() == "POST"
+    headers = _request_headers(request)
+    assert headers["user-agent"] == OLLAMA_USER_AGENT
+    assert "urllib" not in headers["user-agent"].lower()
+    assert headers["content-type"] == "application/json"
+    built = ollama_http_headers()
+    assert built["User-Agent"] == OLLAMA_USER_AGENT
+    assert "urllib" not in built["User-Agent"].lower()
+
+    send_443 = live_ollama_transport(
+        base_url=f"{proxy}:443",
+        allow_remote=True,
+        retries=1,
+        timeout_seconds=5,
+    )
+    send_443({"think": False, "stream": False, "model": "qwen2.5:14b"})
+    assert captured["request"].full_url == f"{proxy}:443/api/chat"
+    assert _request_headers(captured["request"])["user-agent"] == OLLAMA_USER_AGENT
+
+
+def test_live_https_without_remote_opt_in_never_opens(monkeypatch):
+    def boom(*args, **kwargs):
+        raise AssertionError("urlopen must not run without allow_remote")
+
+    monkeypatch.setattr("athena_trading.aat_v2.ollama_transport.urlopen", boom)
+    with pytest.raises(OllamaTransportError, match="non-loopback"):
+        live_ollama_transport(
+            base_url="https://svy1eeqveu3tnp-11434.proxy.runpod.net",
+            allow_remote=False,
+        )
 
 
 def test_runpod_payload_keeps_real_actor_schema_not_a_toy_instructor_shape():

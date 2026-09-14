@@ -24,7 +24,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from ..aat_v1.providers import OLLAMA
+from ..aat_v1.providers import OLLAMA, OLLAMA_USER_AGENT
 from ..athena_adapter.contracts import canonical_hash
 from .arms import E_DELIBERATION
 from .deliberation import (
@@ -152,6 +152,17 @@ def build_ollama_payload(
     }
 
 
+def ollama_http_headers() -> dict[str, str]:
+    """JSON chat headers with a deliberate User-Agent.
+
+    urllib adds ``Python-urllib/3.x`` when User-Agent is omitted. RunPod HTTPS
+    proxies 403 that default, so TRAINING always sets ``OLLAMA_USER_AGENT``.
+    """
+    headers = dict(OLLAMA.build_headers(""))
+    headers["User-Agent"] = OLLAMA_USER_AGENT
+    return headers
+
+
 def live_ollama_transport(
     *,
     base_url: str = DEFAULT_BASE_URL,
@@ -163,6 +174,7 @@ def live_ollama_transport(
     endpoint = ollama_chat_url(base_url, allow_remote=allow_remote)
     if timeout_seconds < 1 or retries < 1:
         raise OllamaTransportError("Ollama timeout and retries must be positive")
+    headers = ollama_http_headers()
 
     def _send(payload: Mapping[str, Any]) -> dict[str, Any]:
         if payload.get("think") is not False or payload.get("stream") is not False:
@@ -173,7 +185,7 @@ def live_ollama_transport(
             request = Request(
                 endpoint,
                 data=body,
-                headers=OLLAMA.build_headers(""),
+                headers=headers,
                 method="POST",
             )
             try:

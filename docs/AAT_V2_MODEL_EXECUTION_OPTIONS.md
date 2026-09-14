@@ -375,6 +375,12 @@ and the transport must not rewrite a port-less HTTPS URL onto Ollama's
 native 11434. Explicit `:443` also works. An SSH tunnel to loopback is
 also legal for this identity.
 
+The live transport always sends a deliberate `User-Agent`
+(`athena-trading/0.1 ollama-training`). RunPod's HTTPS proxy returns HTTP
+403 for urllib's default `Python-urllib/3.x` (curl, `python-requests`,
+Mozilla, and PowerShell `Invoke-WebRequest` succeed on the same origin).
+Do not drop the custom UA or live warmup fail-closes with HTTP 403.
+
 **Concurrency.** Default `--max-concurrent-calls 1`. Optional 2–4 is
 opportunity-level only; arm E turns stay sequential inside each row. Ollama
 on one GPU serializes inference. Semaphore-64-style blasts are refused.
