@@ -176,7 +176,7 @@ The library function is `run_deepseek_flash_pilot` in
   closed. Does not open a network transport.
 - **Live.** Requires `--allow-live`, `DEEPSEEK_API_KEY`, and explicit
   `--call-ceiling` plus `--spend-ceiling-usd`. Hard caps fail closed above
-  20 opportunities, 50 calls, or `$5.00`. CI must not pass `--allow-live`.
+  80 opportunities, 500 calls, or `$50.00`. CI must not pass `--allow-live`.
 - **Payload rules.** Thinking disabled. B/C/D use the Actor JSON schema at
   512 output tokens. E uses compact closed-enum turns at 64 tokens with a
   per-turn `EXAMPLE json OUTPUT` in the system prompt. Chat Completions
@@ -185,23 +185,30 @@ The library function is `run_deepseek_flash_pilot` in
   records persist `raw_content_snippet` (512 characters) so a live miss is
   diagnosable offline.
 
-### Nick-authorized live knobs (not TRAINING)
+### Nick-authorized bigger live knobs (not TRAINING)
 
-Nick set the live pilot bounds at **about 50 calls** and **$5.00 USD**.
-Those are the documented example knobs and the fail-closed live limits.
-They are not TRAINING, not a holdout sample, and not a protocol switch.
-Dry CLI defaults stay below them. A later live run still needs the
-explicit flags and `DEEPSEEK_API_KEY`.
+Nick authorized a **bigger live pilot** at **about 500 calls** and
+**$50.00 USD**. That is still not TRAINING, not a holdout sample, and not
+a protocol switch. Dry CLI defaults stay small (1 opportunity / 7 calls /
+`$1.00`). A live run still needs `--allow-live`, `DEEPSEEK_API_KEY`, and
+explicit ceilings.
 
-| Knob | Dry default | Nick-authorized live | Hard ceiling |
+Math: B/C/D Actor JSON plus four compact E turns is **7 calls per
+opportunity**. `71 × 7 = 497` calls, under the 500-call hard cap. The
+opportunity hard cap is **80** so 71 is legal and TRAINING-sized N
+(16,705) is still refused.
+
+| Knob | Dry default | Nick-authorized bigger live | Hard ceiling |
 | --- | ---: | ---: | ---: |
-| Opportunity sample | 1 | 7 (7 × 7 = 49 with E) | 20 |
-| Call ceiling | 7 | 50 | 50 |
-| Spend ceiling (USD) | 1.00 | 5.00 | 5.00 |
+| Opportunity sample | 1 | 71 (71 × 7 = 497 with E) | 80 |
+| Call ceiling | 7 | 500 | 500 |
+| Spend ceiling (USD) | 1.00 | 50.00 | 50.00 |
 
-Peak cache-miss worst case for the 7-opportunity / 49-call shape is well
-under $5 given Flash prices and the conservative byte/4 input proxy. A
-TRAINING-sized ceiling is refused.
+Peak cache-miss worst case for the 71-opportunity / 497-call shape is
+expected well under $50 given Flash prices and the conservative byte/4
+input proxy. A TRAINING-sized ceiling is refused. The earlier first live
+sample (7 opportunities / 49 calls / $5) remains historical, not the
+current recommended live defaults.
 
 ### Live Flash pilot result (2026-09-14, not TRAINING)
 
@@ -210,6 +217,9 @@ Nick ran:
 ```
 python scripts/run_aat_v2_deepseek_flash_pilot.py --allow-live --opportunities 7 --call-ceiling 50 --spend-ceiling-usd 5.00
 ```
+
+That first sample used the old $5 / 50-call caps. Current Nick-authorized
+bigger-pilot command is in Decision boundary below.
 
 Receipt: `PILOT_NOT_TRAINING`, `execution_authority` `ABSENT`, holdout
 untouched, cost about `$0.010`. B/C/D accepted **21/21**. E accepted
@@ -226,10 +236,15 @@ snippet on rejected records. It is not TRAINING authorization.
 ## Decision boundary
 
 The DeepSeek candidate identity and fixture pilot are in-tree. A first live
-Flash sample already ran under the knobs above and showed E schema mismatch,
-not compact overflow. The next authorized step is a **re-run of that same
-bounded live command** after the E-prompt harden, or a hosted-Qwen
-compatibility benchmark — not the full 116,935-call run. Arm E stays at the
-registered 4 x 64 budget without raising TRAINING spend. No provider switch
-into the registered protocol, RunPod account charge, TRAINING execution, or
-holdout operation is authorized by this document.
+Flash sample already ran under the $5 / 50-call knobs and showed E schema
+mismatch, not compact overflow. The next authorized step is Nick's
+**bigger live pilot** (not TRAINING):
+
+```
+python scripts/run_aat_v2_deepseek_flash_pilot.py --allow-live --opportunities 71 --call-ceiling 500 --spend-ceiling-usd 50.00
+```
+
+That command is still not the full 116,935-call TRAINING run. Arm E stays
+at the registered 4 x 64 budget without raising TRAINING spend. No
+provider switch into the registered protocol, RunPod account charge,
+TRAINING execution, or holdout operation is authorized by this document.

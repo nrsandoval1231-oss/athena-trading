@@ -5,7 +5,8 @@ Written 8 September 2026. Status refreshed 14 September 2026 against current
 GDELT rejection, TRAINING dry-run plans, model-execution options, the
 non-authorizing E-arm compact-schema amendment, and a DeepSeek Flash
 **candidate / pilot** identity). The Terra protocol is unchanged. The DeepSeek
-path is not TRAINING authorization.
+path is not TRAINING authorization. Nick authorized a **bigger live Flash
+pilot** at $50 / ~500 calls / ~71 opportunities; that is still not TRAINING.
 
 **One-line status.** The V2 experiment is built through a frozen macro-only
 claim contract and a `REGISTERED_NOT_AUTHORIZED` protocol.
@@ -14,7 +15,9 @@ amendment so 64-token deliberation turns can emit complete JSON without
 raising TRAINING spend. A live DeepSeek Flash pilot (not TRAINING) accepted
 B/C/D 21/21 and E only 3/28, mostly schema mismatch rather than truncation;
 E prompts now carry per-turn example json and rejected receipts store a raw
-snippet. Adapters are not the blocker: the ALFRED macro adapter is built,
+snippet. Nick authorized a bigger live Flash sample at $50 / ~500 calls
+(~71 opportunities × 7 = 497 with deliberation); that is still not
+TRAINING. Adapters are not the blocker: the ALFRED macro adapter is built,
 GDELT was rejected for this run after a bounded coverage study, and news
 stays explicitly missing. DeepSeek Flash remains a provider-scoped
 **candidate / pilot** identity. TRAINING cannot run until a separate
@@ -347,7 +350,7 @@ deleted and redrawn under the fix.
 | Phase 3 coverage / claim contract | **Frozen, macro-only.** Required source is `macro` at floor 0.90; frozen measured coverage is macro 1.0, news 0.0. `claim_authorized` is false. Do not freeze a new contract. |
 | Phase 3 protocol registration | **Registered as `REGISTERED_NOT_AUTHORIZED`.** `configs/aat_v2_registered_protocol_v1.json`. Actor identity remains OpenAI / `gpt-5.6-terra`. DeepSeek Flash is a separate `CANDIDATE_PILOT` identity and does not rewrite this protocol. |
 | Phase 3 TRAINING dry-run plans | Present. `configs/aat_v2_training_plan_v2.json` supersedes v1: 16,705 opportunities, **116,935** planned calls, `dry_run: true`, `execution_authorized: false`. |
-| Model execution options | Documented in `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. DeepSeek Flash dry-run / fixture preflight planner exists; thinking is disabled and Actor JSON is required on the B/C/D path. Arm E uses the compact closed-enum schema with per-turn example json after the live Flash E mismatch. A bounded pilot entrypoint exists (`scripts/run_aat_v2_deepseek_flash_pilot.py`) and defaults to fixture/dry. Nick-authorized live pilot limits are **50 calls** and **$5.00** (not TRAINING). Hard PREFLIGHT spend ceiling remains $1.00. |
+| Model execution options | Documented in `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. DeepSeek Flash dry-run / fixture preflight planner exists; thinking is disabled and Actor JSON is required on the B/C/D path. Arm E uses the compact closed-enum schema with per-turn example json after the live Flash E mismatch. A bounded pilot entrypoint exists (`scripts/run_aat_v2_deepseek_flash_pilot.py`) and defaults to fixture/dry. Nick-authorized **bigger live pilot** (not TRAINING): **500 calls**, **$50.00**, **71 opportunities** (71 × 7 = 497 with E). Hard fail-closed caps are 80 opportunities / 500 calls / $50.00. Dry default stays 1 / 7 / $1.00. Hard PREFLIGHT spend ceiling remains $1.00. |
 | Phase 3 TRAINING run | **Blocked — needs authorized TRAINING execution, Actor credentials, and spend.** Not blocked on missing adapters. |
 | Phase 4 sealed holdout | Not started; needs a completed Phase 3 TRAINING run and separate authorization. The consumed AAT-V1 holdout must not be reused. |
 | AAT-V1 | Frozen and closed. Holdout consumed (`INVALID_EVIDENCE`). Limitation stands. |
@@ -414,16 +417,23 @@ consumed AAT-V1 holdout.
    (`CANDIDATE_PILOT`). The Terra protocol is consulted and not reused.
    `scripts/run_aat_v2_deepseek_flash_pilot.py` defaults to fixture/dry.
    Live still requires explicit `--allow-live`, `DEEPSEEK_API_KEY`,
-   `--call-ceiling`, and `--spend-ceiling-usd`. Nick-authorized live pilot
-   limits (not TRAINING): about 50 calls and $5.00, typically 7 synthetic
-   opportunities with B/C/D plus four compact E turns (49 calls). Dry
-   default stays 1 / 7 / $1.00. Fail-closed above 20 opportunities, 50
-   calls, or $5.00. Nick already ran that live sample: status
+   `--call-ceiling`, and `--spend-ceiling-usd`. Nick-authorized **bigger
+   live pilot** (not TRAINING): about 500 calls and $50.00, typically 71
+   synthetic opportunities with B/C/D plus four compact E turns
+   (`71 × 7 = 497` calls). Dry default stays 1 / 7 / $1.00. Fail-closed
+   above 80 opportunities, 500 calls, or $50.00. Nick already ran a first
+   live sample under the earlier $5 / 50-call caps: status
    `PILOT_NOT_TRAINING`, `execution_authority` `ABSENT`, holdout untouched,
-   cost about `$0.010`. B/C/D accepted 21/21; E accepted 3/28 (24 schema
-   mismatch, 1 `OUTPUT_TRUNCATED`). Re-run the same command only after this
-   E-prompt harden merges. Hosted Qwen remains a separate candidate. Do not
-   silently reuse the Terra protocol.
+   cost about `$0.012`. B/C/D accepted 21/21; E accepted 3/28 (24 schema
+   mismatch, 1 `OUTPUT_TRUNCATED`) before the E-prompt harden. Re-run the
+   bigger live command only after this ceiling raise merges:
+
+   ```
+   python scripts/run_aat_v2_deepseek_flash_pilot.py --allow-live --opportunities 71 --call-ceiling 500 --spend-ceiling-usd 50.00
+   ```
+
+   Hosted Qwen remains a separate candidate. Do not silently reuse the
+   Terra protocol. Do not treat this as TRAINING authorization.
 
 ### Then, in order
 

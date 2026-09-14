@@ -9,9 +9,9 @@ Default is fixture / dry:
 
 Live spend is fail-closed. It requires ``--allow-live``, ``DEEPSEEK_API_KEY``,
 and explicit ``--call-ceiling`` plus ``--spend-ceiling-usd``. Nick-authorized
-live pilot limits (not TRAINING): about 50 calls and $5.00, typically 7
-synthetic opportunities with B/C/D plus four compact E turns (49 calls).
-Dry default stays 1 opportunity / 7 calls / $1.00. See
+bigger live pilot (not TRAINING): about 500 calls and $50.00, typically 71
+synthetic opportunities with B/C/D plus four compact E turns (71 × 7 = 497
+calls). Dry default stays 1 opportunity / 7 calls / $1.00. See
 ``docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md``.
 """
 from __future__ import annotations
@@ -54,19 +54,19 @@ def main(argv: list[str] | None = None) -> int:
         "--opportunities",
         type=int,
         default=DEFAULT_PILOT_OPPORTUNITIES,
-        help="synthetic fixture opportunities (dry default 1; Nick-authorized live sample 7; hard cap 20)",
+        help="synthetic fixture opportunities (dry default 1; Nick-authorized bigger live sample 71; hard cap 80)",
     )
     parser.add_argument(
         "--call-ceiling",
         type=int,
         default=None,
-        help="required with --allow-live; dry default is 7; Nick-authorized live limit is 50",
+        help="required with --allow-live; dry default is 7; Nick-authorized bigger live limit is 500",
     )
     parser.add_argument(
         "--spend-ceiling-usd",
         type=float,
         default=None,
-        help="required with --allow-live; dry default is 1.00; Nick-authorized live limit is 5.00",
+        help="required with --allow-live; dry default is 1.00; Nick-authorized bigger live limit is 50.00",
     )
     parser.add_argument(
         "--include-deliberation",

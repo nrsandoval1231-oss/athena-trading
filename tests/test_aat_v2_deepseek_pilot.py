@@ -6,6 +6,7 @@ import pytest
 
 from athena_trading.aat_v1.providers import registered_providers
 from athena_trading.aat_v2.deepseek_pilot import (
+    CALLS_PER_OPPORTUNITY_WITH_E,
     DEFAULT_PILOT_CALL_CEILING,
     DEFAULT_PILOT_OPPORTUNITIES,
     DEFAULT_PILOT_SPEND_CEILING_USD,
@@ -207,14 +208,21 @@ def test_pilot_refuses_training_sized_ceilings():
         run_deepseek_flash_pilot(
             fixture_path=FIXTURE, pricing_path=PRICING, protocol_path=PROTOCOL,
             identity_path=IDENTITY, amendment_path=AMENDMENT,
-            opportunity_count=1, call_ceiling=51, spend_ceiling_usd=5.00,
+            opportunity_count=1, call_ceiling=501, spend_ceiling_usd=50.00,
             api_key=FIXTURE_KEY, transport=_fixture_transport,
         )
     with pytest.raises(DeepSeekPilotError, match="spend ceiling"):
         run_deepseek_flash_pilot(
             fixture_path=FIXTURE, pricing_path=PRICING, protocol_path=PROTOCOL,
             identity_path=IDENTITY, amendment_path=AMENDMENT,
-            opportunity_count=1, call_ceiling=7, spend_ceiling_usd=5.01,
+            opportunity_count=1, call_ceiling=7, spend_ceiling_usd=50.01,
+            api_key=FIXTURE_KEY, transport=_fixture_transport,
+        )
+    with pytest.raises(DeepSeekPilotError, match="opportunity count"):
+        run_deepseek_flash_pilot(
+            fixture_path=FIXTURE, pricing_path=PRICING, protocol_path=PROTOCOL,
+            identity_path=IDENTITY, amendment_path=AMENDMENT,
+            opportunity_count=81, call_ceiling=7, spend_ceiling_usd=1.00,
             api_key=FIXTURE_KEY, transport=_fixture_transport,
         )
     with pytest.raises(DeepSeekPilotError, match="opportunity count"):
@@ -263,13 +271,39 @@ def test_recommended_knobs_stay_inside_hard_caps():
     assert DEFAULT_PILOT_OPPORTUNITIES == 1
     assert DEFAULT_PILOT_CALL_CEILING == 7
     assert DEFAULT_PILOT_SPEND_CEILING_USD == 1.00
-    assert RECOMMENDED_LIVE_OPPORTUNITIES == 7
-    assert RECOMMENDED_LIVE_CALL_CEILING == 50
-    assert RECOMMENDED_LIVE_SPEND_CEILING_USD == 5.00
-    assert RECOMMENDED_LIVE_OPPORTUNITIES <= PILOT_OPPORTUNITY_CEILING == 20
-    assert RECOMMENDED_LIVE_CALL_CEILING <= PILOT_CALL_CEILING == 50
-    assert RECOMMENDED_LIVE_SPEND_CEILING_USD <= PILOT_SPEND_CEILING_USD == 5.00
+    assert CALLS_PER_OPPORTUNITY_WITH_E == 7
+    assert RECOMMENDED_LIVE_OPPORTUNITIES == 71
+    assert RECOMMENDED_LIVE_CALL_CEILING == 500
+    assert RECOMMENDED_LIVE_SPEND_CEILING_USD == 50.00
+    # Bigger live pilot: 71 opportunities × (B/C/D + four E) = 497 calls.
+    assert RECOMMENDED_LIVE_OPPORTUNITIES * CALLS_PER_OPPORTUNITY_WITH_E == 497
+    assert 497 <= RECOMMENDED_LIVE_CALL_CEILING
+    assert RECOMMENDED_LIVE_OPPORTUNITIES <= PILOT_OPPORTUNITY_CEILING == 80
+    assert RECOMMENDED_LIVE_CALL_CEILING <= PILOT_CALL_CEILING == 500
+    assert RECOMMENDED_LIVE_SPEND_CEILING_USD <= PILOT_SPEND_CEILING_USD == 50.00
     assert registered_providers() == ("openai",)
+
+
+def test_bigger_pilot_opportunity_cap_still_binds_before_call_count():
+    """80 opportunities × 7 calls = 560, above the 500-call hard cap."""
+    with pytest.raises(DeepSeekPilotError, match="call ceiling"):
+        run_deepseek_flash_pilot(
+            fixture_path=FIXTURE, pricing_path=PRICING, protocol_path=PROTOCOL,
+            identity_path=IDENTITY, amendment_path=AMENDMENT,
+            opportunity_count=80, call_ceiling=500, spend_ceiling_usd=50.00,
+            api_key=FIXTURE_KEY, transport=_fixture_transport,
+        )
+
+
+def test_recommended_71_opportunities_are_legal_at_the_hard_caps():
+    """71 is inside the opportunity cap; 71 × 7 = 497 needs the 500-call ceiling."""
+    with pytest.raises(DeepSeekPilotError, match="pilot arm sequence exceeds call ceiling"):
+        run_deepseek_flash_pilot(
+            fixture_path=FIXTURE, pricing_path=PRICING, protocol_path=PROTOCOL,
+            identity_path=IDENTITY, amendment_path=AMENDMENT,
+            opportunity_count=71, call_ceiling=496, spend_ceiling_usd=50.00,
+            api_key=FIXTURE_KEY, transport=_fixture_transport,
+        )
 
 
 def test_cli_default_is_fixture_dry(monkeypatch, capsys):
