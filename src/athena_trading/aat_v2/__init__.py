@@ -63,7 +63,9 @@ from .deliberation import (
     deliberation_plan,
     load_e_arm_amendment,
     parse_deliberation_turn,
+    raw_content_snippet,
     scored_action_from_turns,
+    turn_system_prompt,
 )
 
 __all__ = [
@@ -85,10 +87,12 @@ __all__ = [
     "load_e_arm_amendment", "load_universe",
     "packet_hash", "parse_deliberation_turn", "partition_for",
     "plan_deepseek_flash_dry_run",
+    "raw_content_snippet",
     "receives_exogenous", "receives_memory",
     "OpportunityIndexError", "build_opportunity_index",
     "ProtocolError", "register_protocol", "run_deepseek_flash_pilot",
     "run_deepseek_flash_preflight",
     "scored_action_from_turns",
+    "turn_system_prompt",
     "write_assignment", "write_contract",
 ]

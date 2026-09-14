@@ -25,6 +25,7 @@ from athena_trading.aat_v2.deepseek_preflight import (
     plan_deepseek_flash_dry_run,
     run_deepseek_flash_preflight,
 )
+from athena_trading.aat_v2.deliberation import DELIBERATION_TURN_ROLES, turn_system_prompt
 from athena_trading.aat_v2 import deepseek_preflight as deepseek_mod
 
 
@@ -75,7 +76,7 @@ def test_dry_run_matches_the_documented_deepseek_estimate():
     assert plan["actor_identity_status"] == "CANDIDATE_PILOT"
     assert plan["pilot_is_not_training"] is True
     assert plan["declared_identity_hash"] == (
-        "9f74f170888e09300cf99ccb1f0742c6bcbecc7e264f48ed6a91cbe62cf87e44"
+        "ee1133be82fd4a1bc20a03adb00685187a5a44aa10957312eaa6991eb42b33cd"
     )
     assert plan["planned_calls"] == 116935
     assert round(plan["off_peak_cost_usd"], 2) == 32.68
@@ -351,8 +352,13 @@ def test_deliberation_preflight_keeps_e_arm_budget_and_accepts_compact_json():
     assert all(row["accepted"] for row in e_rows)
     assert e_rows[-1]["decision"]["action"] == "PASS"
     e_payloads = seen[3:]
-    assert all(payload["messages"][0]["content"] == deepseek_mod.DELIBERATION_PROMPT for payload in e_payloads)
+    assert all(
+        payload["messages"][0]["content"] == turn_system_prompt(role)
+        for payload, role in zip(e_payloads, DELIBERATION_TURN_ROLES, strict=True)
+    )
+    assert all("EXAMPLE json OUTPUT" in payload["messages"][0]["content"] for payload in e_payloads)
     assert all('"turn":"' in payload["messages"][1]["content"] for payload in e_payloads)
+    assert all(row["raw_content_snippet"] is None for row in result["records"])
 
 
 def test_e_arm_preflight_requires_the_non_authorizing_amendment():
@@ -398,6 +404,8 @@ def test_truncated_actor_json_is_rejected_on_e_turns_compact_json_is_not():
     assert all(row["accepted"] for row in actor_rows)
     assert all(row["rejection_reason"] == "OUTPUT_TRUNCATED" for row in e_rows)
     assert all(row["accepted"] is False for row in e_rows)
+    assert all(row["raw_content_snippet"] for row in e_rows)
+    assert all("horizon" in row["raw_content_snippet"] for row in e_rows)
 
 
 def test_full_actor_schema_on_an_e_turn_is_a_schema_mismatch():
@@ -417,6 +425,8 @@ def test_full_actor_schema_on_an_e_turn_is_a_schema_mismatch():
     )
     e_rows = [row for row in result["records"] if row["arm"] == "E_DELIBERATION"]
     assert all(row["rejection_reason"] == "deliberation output schema mismatch" for row in e_rows)
+    assert all(row["raw_content_snippet"] for row in e_rows)
+    assert all("rationale" in row["raw_content_snippet"] for row in e_rows)
 
 
 def test_deepseek_is_not_registered_as_a_v1_provider():

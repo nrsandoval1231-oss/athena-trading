@@ -7,19 +7,24 @@ from athena_trading.athena_adapter.contracts import canonical_hash
 from athena_trading.aat_v2.arms import assert_equal_token_budget
 from athena_trading.aat_v2.deliberation import (
     DELIBERATION_OUTPUT_TOKENS,
+    DELIBERATION_PROMPT,
     DELIBERATION_TURN_ROLES,
     DELIBERATION_TURNS,
     OUTPUT_TRUNCATED,
+    RAW_CONTENT_SNIPPET_CHARS,
     SINGLE_CALL_OUTPUT_TOKENS,
     DeliberationError,
     assert_compact_payloads_fit_budget,
     compact_user_payload,
     conservative_token_count,
     deliberation_plan,
+    example_compact_payload,
     load_e_arm_amendment,
     parse_deliberation_turn,
+    raw_content_snippet,
     scored_action_from_turns,
     truncate_to_token_budget,
+    turn_system_prompt,
     worst_case_compact_payloads,
 )
 
@@ -29,6 +34,7 @@ PROTOCOL = ROOT / "configs/aat_v2_registered_protocol_v1.json"
 AMENDMENT = ROOT / "configs/aat_v2_e_arm_compact_schema_amendment_v1.json"
 PLAN = ROOT / "configs/aat_v2_training_plan_v2.json"
 CONTRACT = ROOT / "configs/aat_v2_claim_contract_v1.json"
+MISMATCH = ROOT / "configs/fixtures/deepseek_flash_e_arm_mismatch_v1.json"
 
 VERBOSE_ACTOR_JSON = json.dumps({
     "action": "ENTER_STANDARD",
@@ -86,6 +92,10 @@ def test_later_e_turns_receive_prior_compact_outputs():
     packet = {"schema_version": "athena-aat-v2-actor-packet-v1", "features": {"opaque": 1}}
     bull = compact_user_payload(packet, turn="BULL")
     assert "prior_turns" not in bull
+    assert bull["example_json"] == example_compact_payload("BULL")
+    assert bull["emit"]["example_json"] == bull["example_json"]
+    assert bull["emit"]["stance_one_of"] == "IN|OUT"
+    assert "action" not in bull["emit"]
     with pytest.raises(DeliberationError, match="first deliberation turn"):
         compact_user_payload(packet, turn="BULL", prior_turns=({"turn": "BULL"},))
     priors = (
@@ -95,6 +105,8 @@ def test_later_e_turns_receive_prior_compact_outputs():
     )
     risk = compact_user_payload(packet, turn="RISK", prior_turns=priors)
     assert [item["turn"] for item in risk["prior_turns"]] == ["BULL", "BEAR", "TRADER"]
+    assert risk["emit"]["action_one_of"].startswith("PASS|")
+    assert "stance" not in risk["emit"]
 
 
 def test_ollama_done_reason_length_is_treated_as_truncation():
@@ -161,3 +173,78 @@ def test_authorizing_amendment_is_refused(tmp_path):
     path.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(DeliberationError, match="must not authorize"):
         load_e_arm_amendment(path, protocol_path=PROTOCOL)
+
+
+def test_per_turn_prompt_pins_example_json_and_keeps_json_object():
+    plan = deliberation_plan()
+    assert plan["per_turn_output_tokens"] == 64
+    assert plan["response_format"] == {"type": "json_object"}
+    assert plan["json_schema_not_available_on_chat_completions"] is True
+    for role in DELIBERATION_TURN_ROLES:
+        prompt = turn_system_prompt(role)
+        assert prompt.startswith(DELIBERATION_PROMPT)
+        assert "EXAMPLE json OUTPUT" in prompt
+        assert role in prompt
+        assert "json_schema" not in prompt
+        example = json.dumps(example_compact_payload(role), separators=(",", ":"), sort_keys=True)
+        assert example in prompt
+        assert plan["turn_prompts"][role] == prompt
+
+
+def test_live_flash_mismatch_fixtures_fail_closed():
+    envelope = json.loads(MISMATCH.read_text(encoding="utf-8"))
+    assert envelope["execution_authority"] == "ABSENT"
+    cases = envelope["cases"]
+    assert set(cases) >= {
+        "extra_keys", "missing_claim", "wrong_turn_string",
+        "actor_shaped_payload", "copied_emit_contract", "truncated_json",
+    }
+    for name, case in cases.items():
+        parsed, reason = parse_deliberation_turn(
+            case["content"],
+            turn=case["turn"],
+            finish_reason=case.get("finish_reason", "stop"),
+        )
+        assert parsed is None, name
+        assert reason == case["rejection_reason"], name
+        preview = raw_content_snippet(case["content"])
+        assert preview
+        assert preview in case["content"] or preview == case["content"][:RAW_CONTENT_SNIPPET_CHARS]
+
+
+def test_lowercase_enums_and_numeric_strings_are_accepted():
+    parsed, reason = parse_deliberation_turn(
+        '{"turn":"trader","stance":"out","confidence":"0.5","claim":"none"}',
+        turn="TRADER",
+        finish_reason="stop",
+    )
+    assert reason is None
+    assert parsed == {
+        "claim": "NONE", "confidence": 0.5, "stance": "OUT", "turn": "TRADER",
+    }
+
+
+def test_markdown_fence_around_compact_json_is_accepted():
+    payload = example_compact_payload("RISK")
+    fenced = "```json\n" + json.dumps(payload, separators=(",", ":")) + "\n```"
+    parsed, reason = parse_deliberation_turn(fenced, turn="RISK", finish_reason="stop")
+    assert reason is None
+    assert parsed == payload
+
+
+def test_boolean_confidence_is_rejected():
+    parsed, reason = parse_deliberation_turn(
+        '{"turn":"RISK","action":"PASS","confidence":true}',
+        turn="RISK",
+        finish_reason="stop",
+    )
+    assert parsed is None
+    assert reason == "deliberation confidence is invalid"
+
+
+def test_rejected_content_snippet_is_capped():
+    blob = "x" * (RAW_CONTENT_SNIPPET_CHARS + 25)
+    snippet = raw_content_snippet(blob)
+    assert snippet == blob[:RAW_CONTENT_SNIPPET_CHARS]
+    assert raw_content_snippet(None) is None
+    assert raw_content_snippet("") == ""
