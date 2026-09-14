@@ -134,8 +134,9 @@ authorization and it is not a provider switch.
   json_object` is set. Arm E does **not** reuse the five-field Actor schema
   on 64-token turns. Compact E-arm JSON is `turn` plus closed enums
   (`stance`/`claim` on BULL/BEAR/TRADER; scored `action` on RISK) with no
-  free-text fields. Fixture preflight `--include-deliberation` replays those
-  compact turns from
+  free-text fields. Chat Completions cannot pin `json_schema`, so each E
+  turn's system prompt includes an `EXAMPLE json OUTPUT` object. Fixture
+  preflight `--include-deliberation` replays those compact turns from
   `configs/fixtures/deepseek_flash_preflight_v1.json` against
   `configs/aat_v2_e_arm_compact_schema_amendment_v1.json`. `execution_authority`
   stays `ABSENT`.
@@ -177,8 +178,12 @@ The library function is `run_deepseek_flash_pilot` in
   `--call-ceiling` plus `--spend-ceiling-usd`. Hard caps fail closed above
   20 opportunities, 50 calls, or `$5.00`. CI must not pass `--allow-live`.
 - **Payload rules.** Thinking disabled. B/C/D use the Actor JSON schema at
-  512 output tokens. E uses compact closed-enum turns at 64 tokens. Do not
-  reintroduce five-field Actor JSON on E.
+  512 output tokens. E uses compact closed-enum turns at 64 tokens with a
+  per-turn `EXAMPLE json OUTPUT` in the system prompt. Chat Completions
+  `response_format` stays `json_object` (`json_schema` is unavailable and
+  would 400). Do not reintroduce five-field Actor JSON on E. Rejected
+  records persist `raw_content_snippet` (512 characters) so a live miss is
+  diagnosable offline.
 
 ### Nick-authorized live knobs (not TRAINING)
 
@@ -198,12 +203,33 @@ Peak cache-miss worst case for the 7-opportunity / 49-call shape is well
 under $5 given Flash prices and the conservative byte/4 input proxy. A
 TRAINING-sized ceiling is refused.
 
+### Live Flash pilot result (2026-09-14, not TRAINING)
+
+Nick ran:
+
+```
+python scripts/run_aat_v2_deepseek_flash_pilot.py --allow-live --opportunities 7 --call-ceiling 50 --spend-ceiling-usd 5.00
+```
+
+Receipt: `PILOT_NOT_TRAINING`, `execution_authority` `ABSENT`, holdout
+untouched, cost about `$0.010`. B/C/D accepted **21/21**. E accepted
+**3/28** (`24` `deliberation output schema mismatch`, `1` `OUTPUT_TRUNCATED`).
+The three accepts were compact RISK `{action, confidence, turn}` and TRADER
+`{claim, confidence, stance, turn}`. Many mismatch rows had output-token
+counts well under 64, so the dominant failure was extra keys / wrong enums /
+Actor-shaped payloads, not compact overflow. The 64-token E budget is kept:
+raising it would break the equal-budget story (4 × 64 = 256). The one
+truncation is treated as extra-key verbosity hitting the cap. This harden
+adds per-turn example json, keeps the parser fail-closed, and stores a raw
+snippet on rejected records. It is not TRAINING authorization.
+
 ## Decision boundary
 
-The DeepSeek candidate identity and fixture pilot are in-tree. The next
-authorized step is a live DeepSeek API pilot under the knobs above, or a
-hosted-Qwen compatibility benchmark — not the full 116,935-call run. Arm E's
-JSON truncation is addressed at schema level (compact closed-enum turns at
-the registered 4 x 64 budget) without raising TRAINING spend. No provider
-switch into the registered protocol, RunPod account charge, TRAINING
-execution, or holdout operation is authorized by this document.
+The DeepSeek candidate identity and fixture pilot are in-tree. A first live
+Flash sample already ran under the knobs above and showed E schema mismatch,
+not compact overflow. The next authorized step is a **re-run of that same
+bounded live command** after the E-prompt harden, or a hosted-Qwen
+compatibility benchmark — not the full 116,935-call run. Arm E stays at the
+registered 4 x 64 budget without raising TRAINING spend. No provider switch
+into the registered protocol, RunPod account charge, TRAINING execution, or
+holdout operation is authorized by this document.

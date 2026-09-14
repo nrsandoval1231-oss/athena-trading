@@ -24,6 +24,7 @@ from .deepseek_preflight import (
     SINGLE_CALL_OUTPUT_TOKENS,
     DeepSeekPreflightError,
     _assert_no_secret,
+    _assistant_content,
     _cost_usd,
     _live_transport,
     _load_preflight_fixture,
@@ -43,6 +44,7 @@ from .deliberation import (
     DELIBERATION_TURNS,
     DeliberationError,
     load_e_arm_amendment,
+    raw_content_snippet,
     worst_case_compact_payloads,
 )
 from .identity import (
@@ -237,6 +239,10 @@ def run_deepseek_flash_pilot(
                     "accepted": rejection is None,
                     "rejection_reason": rejection,
                     "decision": decision,
+                    "raw_content_snippet": (
+                        None if rejection is None
+                        else raw_content_snippet(_assistant_content(response))
+                    ),
                     "input_tokens": prompt_tokens,
                     "output_tokens": completion_tokens,
                     "cumulative_cost_usd": actual_cost,

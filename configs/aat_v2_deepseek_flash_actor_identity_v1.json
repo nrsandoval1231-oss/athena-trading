@@ -3,10 +3,10 @@
   "bound_to_registered_protocol": false,
   "claim_authorized": false,
   "consulted_terra_protocol_hash": "85d97d923f7b502dea20a936abe6334b57df64a677afdb6510376c5ea5b08027",
-  "deliberation_hash": "ebf2db6fa323b7fef6c9274103a219683e128421fd8cbf13ed47fa607606b86a",
+  "deliberation_hash": "203742f341429b058f3f8f26f71e5f0ca109343535e380ade5236991bba2dc5f",
   "execution_authority": "ABSENT",
   "execution_authorized": false,
-  "identity_hash": "9f74f170888e09300cf99ccb1f0742c6bcbecc7e264f48ed6a91cbe62cf87e44",
+  "identity_hash": "ee1133be82fd4a1bc20a03adb00685187a5a44aa10957312eaa6991eb42b33cd",
   "identity_status": "CANDIDATE_PILOT",
   "inference": {
     "endpoint": "chat.completions",

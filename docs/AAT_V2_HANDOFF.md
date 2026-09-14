@@ -11,12 +11,14 @@ path is not TRAINING authorization.
 claim contract and a `REGISTERED_NOT_AUTHORIZED` protocol.
 `execution_authority` is `ABSENT`. Arm E has a non-authorizing compact-schema
 amendment so 64-token deliberation turns can emit complete JSON without
-raising TRAINING spend. Adapters are not the blocker: the ALFRED macro adapter
-is built, GDELT was rejected for this run after a bounded coverage study, and
-news stays explicitly missing. DeepSeek Flash now has a provider-scoped
-**candidate / pilot** identity and a bounded fixture pilot; that is not
-TRAINING. TRAINING cannot run until a separate authorization supplies Actor
-credentials and spend.
+raising TRAINING spend. A live DeepSeek Flash pilot (not TRAINING) accepted
+B/C/D 21/21 and E only 3/28, mostly schema mismatch rather than truncation;
+E prompts now carry per-turn example json and rejected receipts store a raw
+snippet. Adapters are not the blocker: the ALFRED macro adapter is built,
+GDELT was rejected for this run after a bounded coverage study, and news
+stays explicitly missing. DeepSeek Flash remains a provider-scoped
+**candidate / pilot** identity. TRAINING cannot run until a separate
+authorization supplies Actor credentials and spend.
 
 ---
 
@@ -293,8 +295,13 @@ be more thinking tokens. The five-field Actor schema does not fit those
 64-token turns (local Qwen accepted 0/400 E responses to unbounded JSON).
 The compact closed-enum schema is bound by
 `configs/aat_v2_e_arm_compact_schema_amendment_v1.json`, a
-`NON_AUTHORIZING_PROTOCOL_NOTE`. It does not rewrite the registered protocol
-and does not authorize TRAINING.
+`NON_AUTHORIZING_PROTOCOL_NOTE`. A live DeepSeek Flash pilot then accepted
+B/C/D 21/21 but E 3/28 (`24` schema mismatch, `1` `OUTPUT_TRUNCATED`,
+output-token counts often well under 64). Chat Completions cannot pin
+`json_schema`, so E system prompts now include a per-turn `EXAMPLE json
+OUTPUT` object and rejected pilot records persist a raw content snippet.
+The 4 x 64 budget is unchanged. The amendment does not rewrite the
+registered protocol and does not authorize TRAINING.
 
 #### The dataset assignment is drawn
 
@@ -340,7 +347,7 @@ deleted and redrawn under the fix.
 | Phase 3 coverage / claim contract | **Frozen, macro-only.** Required source is `macro` at floor 0.90; frozen measured coverage is macro 1.0, news 0.0. `claim_authorized` is false. Do not freeze a new contract. |
 | Phase 3 protocol registration | **Registered as `REGISTERED_NOT_AUTHORIZED`.** `configs/aat_v2_registered_protocol_v1.json`. Actor identity remains OpenAI / `gpt-5.6-terra`. DeepSeek Flash is a separate `CANDIDATE_PILOT` identity and does not rewrite this protocol. |
 | Phase 3 TRAINING dry-run plans | Present. `configs/aat_v2_training_plan_v2.json` supersedes v1: 16,705 opportunities, **116,935** planned calls, `dry_run: true`, `execution_authorized: false`. |
-| Model execution options | Documented in `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. DeepSeek Flash dry-run / fixture preflight planner exists; thinking is disabled and Actor JSON is required on the B/C/D path. Arm E uses the compact closed-enum schema. A bounded pilot entrypoint exists (`scripts/run_aat_v2_deepseek_flash_pilot.py`) and defaults to fixture/dry. Nick-authorized live pilot limits are **50 calls** and **$5.00** (not TRAINING). Hard PREFLIGHT spend ceiling remains $1.00. |
+| Model execution options | Documented in `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. DeepSeek Flash dry-run / fixture preflight planner exists; thinking is disabled and Actor JSON is required on the B/C/D path. Arm E uses the compact closed-enum schema with per-turn example json after the live Flash E mismatch. A bounded pilot entrypoint exists (`scripts/run_aat_v2_deepseek_flash_pilot.py`) and defaults to fixture/dry. Nick-authorized live pilot limits are **50 calls** and **$5.00** (not TRAINING). Hard PREFLIGHT spend ceiling remains $1.00. |
 | Phase 3 TRAINING run | **Blocked — needs authorized TRAINING execution, Actor credentials, and spend.** Not blocked on missing adapters. |
 | Phase 4 sealed holdout | Not started; needs a completed Phase 3 TRAINING run and separate authorization. The consumed AAT-V1 holdout must not be reused. |
 | AAT-V1 | Frozen and closed. Holdout consumed (`INVALID_EVIDENCE`). Limitation stands. |
@@ -411,7 +418,11 @@ consumed AAT-V1 holdout.
    limits (not TRAINING): about 50 calls and $5.00, typically 7 synthetic
    opportunities with B/C/D plus four compact E turns (49 calls). Dry
    default stays 1 / 7 / $1.00. Fail-closed above 20 opportunities, 50
-   calls, or $5.00. Hosted Qwen remains a separate candidate. Do not
+   calls, or $5.00. Nick already ran that live sample: status
+   `PILOT_NOT_TRAINING`, `execution_authority` `ABSENT`, holdout untouched,
+   cost about `$0.010`. B/C/D accepted 21/21; E accepted 3/28 (24 schema
+   mismatch, 1 `OUTPUT_TRUNCATED`). Re-run the same command only after this
+   E-prompt harden merges. Hosted Qwen remains a separate candidate. Do not
    silently reuse the Terra protocol.
 
 ### Then, in order
@@ -422,10 +433,15 @@ machinery only. Items 6-8 still wait on explicit TRAINING authorization.
 5. **E-arm JSON truncation is addressed without TRAINING spend.** The local
    Qwen 100-opportunity pilot accepted 0/400 E responses because 64-token
    turns required the five-field Actor schema. Compact closed-enum turns are
-   bound by `configs/aat_v2_e_arm_compact_schema_amendment_v1.json`. That
-   artifact is a `NON_AUTHORIZING_PROTOCOL_NOTE`: it does not rewrite the
-   registered protocol, does not freeze a new coverage contract, and does not
-   authorize TRAINING. The 4 x 64 = 256 equal-budget cap is unchanged.
+   bound by `configs/aat_v2_e_arm_compact_schema_amendment_v1.json`. The live
+   Flash pilot showed a second E failure: extra keys / wrong enums / Actor
+   shapes under `json_object`, not compact overflow. Prompts now include a
+   per-turn example json object; the parser stays fail-closed (case and
+   numeric-string coercions only); rejected receipts store a 512-character
+   snippet. The 4 x 64 = 256 equal-budget cap is unchanged. That artifact is
+   a `NON_AUTHORIZING_PROTOCOL_NOTE`: it does not rewrite the registered
+   protocol, does not freeze a new coverage contract, and does not
+   authorize TRAINING.
 6. Only after **explicit TRAINING authorization**: run the comparison. Audit
    it. Label it in-sample evidence, because that is what it is.
 7. Compile holdout opportunities only under a future V2 authorization. If a
@@ -493,10 +509,11 @@ produce a defensible answer either way — including "it did not help" — once
 TRAINING is separately authorized.
 
 The next real risk is not a missing adapter, and it is no longer "E cannot
-emit JSON at 64 tokens." It is authorizing spend, or promoting the DeepSeek
-pilot identity into the registered protocol, without a separately verified
-live pilot and a new TRAINING authorization; and the temptation, once a full
-run is expensive, to lower a frozen floor or reuse the consumed V1 holdout.
+emit JSON at 64 tokens" or "Flash E emits the wrong object." It is
+authorizing spend, or promoting the DeepSeek pilot identity into the
+registered protocol, without a separately verified live E-arm accept rate
+and a new TRAINING authorization; and the temptation, once a full run is
+expensive, to lower a frozen floor or reuse the consumed V1 holdout.
 The contract, the protocol status, the candidate identity, the compact-schema
 amendment, and the consumed-holdout registry are written to make those moves
 visible. Keep them that way.

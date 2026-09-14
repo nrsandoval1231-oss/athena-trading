@@ -6,11 +6,19 @@ each turn required the five-field Actor object (``action``, ``confidence``,
 unbounded strings. At 64 output tokens the model hit ``done_reason: length``
 before the JSON closed.
 
+A later live DeepSeek Flash pilot (7 opportunities, 49 calls, not TRAINING)
+accepted B/C/D 21/21 but E only 3/28: 24 ``deliberation output schema
+mismatch`` and 1 ``OUTPUT_TRUNCATED``. Most rejects had completion counts
+well under 64, so the failure was extra keys / wrong enums / Actor-shaped
+payloads, not compact-schema overflow. Chat Completions only supports
+``response_format: json_object`` (not ``json_schema``); the per-turn prompt
+therefore carries an example json object.
+
 Arm E stays equal-budget with one arm-D call: four turns, 64 tokens each,
-256 total. This module does not raise TRAINING spend. It replaces the per-turn
-payload with closed enums so a valid object has a bounded worst-case size
-that fits the 64-token ceiling under the same conservative ``utf-8 bytes / 4``
-proxy used elsewhere in AAT planning.
+256 total. This module does not raise TRAINING spend. It does not bump the
+E-only token ceiling: worst-case compact payloads still fit, and a 64-token
+RISK truncation is treated as extra-key verbosity, not budget exhaustion of
+a valid compact object.
 
 B/C/D still emit the five-field Actor schema. Only E uses the compact turns.
 The registered protocol JSON is not rewritten; the compact schema is bound
@@ -19,6 +27,7 @@ by a non-authorizing amendment. ``execution_authority`` stays ``ABSENT``.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -41,10 +50,14 @@ CLAIMS = ("MACRO", "PRICE", "NONE")
 LEGAL_ACTIONS = ("PASS", "ENTER_REDUCED", "ENTER_STANDARD", "ENTER_HIGH_CONVICTION")
 STANCE_KEYS = ("turn", "stance", "confidence", "claim")
 DECISION_KEYS = ("turn", "action", "confidence")
+ACTOR_TEXT_KEYS = ("horizon", "invalidation", "rationale")
 TRUNCATION_FINISH_REASONS = ("length", "max_tokens")
 
 #: Conservative planning proxy used by AAT-V1 training plans.
 BYTES_PER_TOKEN_PROXY = 4
+
+#: Rejected-receipt preview. Long enough to diagnose extra keys; not a dump.
+RAW_CONTENT_SNIPPET_CHARS = 512
 
 OUTPUT_TRUNCATED = "OUTPUT_TRUNCATED"
 INCOMPLETE_JSON = "INCOMPLETE_JSON"
@@ -53,9 +66,10 @@ INVALID_CONFIDENCE = "deliberation confidence is invalid"
 INVALID_ACTION = "deliberation action is not allowed"
 
 DELIBERATION_PROMPT = (
-    "Fail-closed AAT-V2 arm-E turn. Return exactly one compact JSON object and "
+    "Fail-closed AAT-V2 arm-E turn. Return exactly one compact json object and "
     "nothing else: no markdown, no code fences, no commentary, no extra keys, "
-    "no prose. Never claim execution_authority. This is PREFLIGHT, not TRAINING."
+    "no prose. Copy the EXAMPLE json OUTPUT shape for this turn. Never claim "
+    "execution_authority. This is not TRAINING."
 )
 
 
@@ -89,6 +103,43 @@ def is_truncation_finish(response: Mapping[str, Any] | None, *, finish_reason: s
     return reason in TRUNCATION_FINISH_REASONS
 
 
+def example_compact_payload(turn: str) -> dict[str, Any]:
+    """Short legal object for the prompt example. Shorter than worst-case."""
+    role = _validate_turn(turn)
+    if role == DECISION_TURN:
+        return {"action": "PASS", "confidence": 0.5, "turn": role}
+    return {"claim": "NONE", "confidence": 0.5, "stance": "OUT", "turn": role}
+
+
+def turn_system_prompt(turn: str) -> str:
+    """Per-turn system prompt with an example json object.
+
+    DeepSeek Chat Completions JSON mode requires the word ``json`` plus an
+    example of the desired shape. ``json_schema`` is not available on this
+    endpoint, so the example is the schema pin.
+    """
+    role = _validate_turn(turn)
+    example = json.dumps(example_compact_payload(role), separators=(",", ":"), sort_keys=True)
+    if role == DECISION_TURN:
+        contract = (
+            "This turn is RISK. Required keys: turn, action, confidence. "
+            "turn must equal RISK. action must be one of PASS, ENTER_REDUCED, "
+            "ENTER_STANDARD, ENTER_HIGH_CONVICTION. confidence must be a number "
+            "in [0, 1]. Do not emit stance, claim, horizon, invalidation, "
+            "rationale, or extra keys."
+        )
+    else:
+        contract = (
+            f"This turn is {role}. Required keys: turn, stance, confidence, claim. "
+            f"turn must equal {role}. stance must be IN or OUT. claim must be "
+            "MACRO, PRICE, or NONE. confidence must be a number in [0, 1]. "
+            "Do not emit action, horizon, invalidation, rationale, or extra keys."
+        )
+    return (
+        f"{DELIBERATION_PROMPT} {contract} EXAMPLE json OUTPUT: {example}"
+    )
+
+
 def deliberation_plan() -> dict[str, Any]:
     """Hashable compact-schema plan. Equal-budget with one 256-token call."""
     assert_equal_token_budget(
@@ -113,27 +164,39 @@ def deliberation_plan() -> dict[str, Any]:
         "decision_keys": list(DECISION_KEYS),
         "unbounded_text_fields": False,
         "prompt": DELIBERATION_PROMPT,
+        "turn_prompts": {role: turn_system_prompt(role) for role in DELIBERATION_TURN_ROLES},
+        "response_format": {"type": "json_object"},
+        "json_schema_not_available_on_chat_completions": True,
     }
     plan["deliberation_hash"] = canonical_hash(plan)
     return plan
 
 
 def turn_instruction(turn: str) -> dict[str, Any]:
-    """Closed-enum emit contract for one E-arm turn. No free-text fields."""
+    """Closed-enum emit contract for one E-arm turn. No free-text fields.
+
+    Enums are pipe-separated strings so Flash cannot copy a JSON array into
+    ``stance`` / ``claim`` / ``action``. The example object is the emit shape.
+    """
     role = _validate_turn(turn)
+    example = example_compact_payload(role)
     if role == DECISION_TURN:
         return {
             "turn": role,
             "required_keys": list(DECISION_KEYS),
-            "action": list(LEGAL_ACTIONS),
-            "confidence": "[0,1]",
+            "forbidden_keys": ["stance", "claim", *ACTOR_TEXT_KEYS],
+            "action_one_of": "|".join(LEGAL_ACTIONS),
+            "confidence": "number in [0,1]",
+            "example_json": example,
         }
     return {
         "turn": role,
         "required_keys": list(STANCE_KEYS),
-        "stance": list(STANCES),
-        "claim": list(CLAIMS),
-        "confidence": "[0,1]",
+        "forbidden_keys": ["action", *ACTOR_TEXT_KEYS],
+        "stance_one_of": "|".join(STANCES),
+        "claim_one_of": "|".join(CLAIMS),
+        "confidence": "number in [0,1]",
+        "example_json": example,
     }
 
 
@@ -153,6 +216,7 @@ def compact_user_payload(
         "packet": dict(packet),
         "turn": role,
         "emit": turn_instruction(turn),
+        "example_json": example_compact_payload(role),
     }
     if prior_turns:
         if role == DELIBERATION_TURN_ROLES[0]:
@@ -200,6 +264,18 @@ def assert_compact_payloads_fit_budget(
     return counts
 
 
+def raw_content_snippet(
+    content: str | None, *, limit: int = RAW_CONTENT_SNIPPET_CHARS,
+) -> str | None:
+    """Redacted preview of rejected model content. ``None`` means no content."""
+    if not isinstance(content, str):
+        return None
+    text = content.replace("\x00", "")
+    if len(text) > limit:
+        return text[:limit]
+    return text
+
+
 def parse_deliberation_turn(
     content: str,
     *,
@@ -207,7 +283,12 @@ def parse_deliberation_turn(
     finish_reason: str | None = None,
     done_reason: str | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """Parse one E-arm turn. Truncated or unbounded Actor JSON is not accepted."""
+    """Parse one E-arm turn. Truncated or unbounded Actor JSON is not accepted.
+
+    Minimal fail-closed coercions: markdown fences, enum case, and numeric
+    confidence strings. Extra keys, missing keys, synonyms, and Actor-shaped
+    payloads still mismatch.
+    """
     role = _validate_turn(turn)
     truncated = (finish_reason in TRUNCATION_FINISH_REASONS) or (
         done_reason in TRUNCATION_FINISH_REASONS
@@ -215,7 +296,7 @@ def parse_deliberation_turn(
     if not isinstance(content, str) or not content.strip():
         return None, OUTPUT_TRUNCATED if truncated else INCOMPLETE_JSON
     try:
-        parsed = json.loads(content)
+        parsed = json.loads(_json_text(content))
     except json.JSONDecodeError:
         return None, OUTPUT_TRUNCATED if truncated else INCOMPLETE_JSON
     if not isinstance(parsed, Mapping):
@@ -223,18 +304,26 @@ def parse_deliberation_turn(
     expected_keys = DECISION_KEYS if role == DECISION_TURN else STANCE_KEYS
     if set(parsed) != set(expected_keys):
         return None, SCHEMA_MISMATCH
-    if parsed.get("turn") != role:
+    if _closed_enum(parsed.get("turn"), DELIBERATION_TURN_ROLES) != role:
         return None, SCHEMA_MISMATCH
-    confidence = parsed.get("confidence")
-    if not isinstance(confidence, (int, float)) or not 0 <= float(confidence) <= 1:
+    confidence = _parse_confidence(parsed.get("confidence"))
+    if confidence is None:
         return None, INVALID_CONFIDENCE
     if role == DECISION_TURN:
-        if parsed.get("action") not in LEGAL_ACTIONS:
+        action = _closed_enum(parsed.get("action"), LEGAL_ACTIONS)
+        if action is None:
             return None, INVALID_ACTION
-    else:
-        if parsed.get("stance") not in STANCES or parsed.get("claim") not in CLAIMS:
-            return None, SCHEMA_MISMATCH
-    return dict(parsed), None
+        return {"action": action, "confidence": confidence, "turn": role}, None
+    stance = _closed_enum(parsed.get("stance"), STANCES)
+    claim = _closed_enum(parsed.get("claim"), CLAIMS)
+    if stance is None or claim is None:
+        return None, SCHEMA_MISMATCH
+    return {
+        "claim": claim,
+        "confidence": confidence,
+        "stance": stance,
+        "turn": role,
+    }, None
 
 
 def scored_action_from_turns(turns: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -290,6 +379,46 @@ def _validate_turn(turn: str) -> str:
     if turn not in DELIBERATION_TURN_ROLES:
         raise DeliberationError(f"unknown deliberation turn {turn!r}")
     return turn
+
+
+def _json_text(content: str) -> str:
+    """Strip optional markdown fences. Does not repair truncated JSON."""
+    text = content.strip()
+    if not text.startswith("```"):
+        return text
+    text = text[3:]
+    if text[:4].lower() == "json":
+        text = text[4:]
+    text = text.strip()
+    if text.endswith("```"):
+        text = text[:-3].strip()
+    return text
+
+
+def _closed_enum(value: Any, allowed: Sequence[str]) -> str | None:
+    if not isinstance(value, str):
+        return None
+    token = value.strip().upper()
+    if token in allowed:
+        return token
+    return None
+
+
+def _parse_confidence(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+    elif isinstance(value, str):
+        try:
+            number = float(value.strip())
+        except ValueError:
+            return None
+    else:
+        return None
+    if not math.isfinite(number) or not 0 <= number <= 1:
+        return None
+    return number
 
 
 def _finish_reason(response: Mapping[str, Any]) -> str | None:

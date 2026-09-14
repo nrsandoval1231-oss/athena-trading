@@ -30,13 +30,14 @@ from ..exogenous import feature_keys
 from .arms import ACTOR_ARMS, B_MEMORYLESS, C_NAIVE_MEMORY, D_ATHENA, E_DELIBERATION
 from .deliberation import (
     DELIBERATION_OUTPUT_TOKENS,
-    DELIBERATION_PROMPT,
     DELIBERATION_TURN_ROLES,
     DELIBERATION_TURNS,
     DeliberationError,
     compact_user_payload,
     load_e_arm_amendment,
     parse_deliberation_turn,
+    raw_content_snippet,
+    turn_system_prompt,
 )
 from .identity import (
     COMMITTED_IDENTITY_PATH,
@@ -252,16 +253,18 @@ def build_deepseek_payload(
 
     Thinking is disabled so reasoning tokens cannot consume ``max_tokens`` and
     leave ``content`` empty. ``response_format`` asks the chat-completions API
-    for a JSON object. B/C/D still validate the five-field Actor schema; arm E
-    emits the compact closed-enum turn schema that fits 64 tokens.
+    for a JSON object (``json_schema`` is unavailable on this endpoint and
+    would 400). B/C/D still validate the five-field Actor schema; arm E emits
+    the compact closed-enum turn schema that fits 64 tokens and uses a
+    per-turn system prompt with an example json object.
     """
     if max_output_tokens < 1:
         raise DeepSeekPreflightError("output token budget must be positive")
     if arm == E_DELIBERATION or turn is not None:
         if arm not in (E_DELIBERATION, None) or turn is None:
             raise DeepSeekPreflightError("E-arm preflight requires a deliberation turn")
-        system = DELIBERATION_PROMPT
         try:
+            system = turn_system_prompt(turn)
             user = compact_user_payload(packet, turn=turn, prior_turns=prior_turns)
         except DeliberationError as exc:
             raise DeepSeekPreflightError(str(exc)) from exc
@@ -404,6 +407,9 @@ def run_deepseek_flash_preflight(
             "accepted": rejection is None,
             "rejection_reason": rejection,
             "decision": decision,
+            "raw_content_snippet": (
+                None if rejection is None else raw_content_snippet(_assistant_content(response))
+            ),
             "input_tokens": prompt_tokens,
             "output_tokens": completion_tokens,
             "cumulative_cost_usd": actual_cost,
@@ -584,6 +590,17 @@ def _read_usage(response: Mapping[str, Any]) -> tuple[int, int]:
     if prompt_tokens < 0 or completion_tokens < 0:
         raise DeepSeekPreflightError("DeepSeek usage evidence is malformed")
     return prompt_tokens, completion_tokens
+
+
+def _assistant_content(response: Mapping[str, Any]) -> str | None:
+    """Return assistant ``content`` when present. Used for reject snippets."""
+    choices = response.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], Mapping):
+        return None
+    message = choices[0].get("message")
+    if not isinstance(message, Mapping) or not isinstance(message.get("content"), str):
+        return None
+    return message["content"]
 
 
 def _read_decision(

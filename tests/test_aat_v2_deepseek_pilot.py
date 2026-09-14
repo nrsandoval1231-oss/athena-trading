@@ -26,7 +26,12 @@ from athena_trading.aat_v2.deepseek_preflight import (
     MissingDeepSeekCredentialsError,
     _live_transport,
 )
-from athena_trading.aat_v2.deliberation import DELIBERATION_OUTPUT_TOKENS, DELIBERATION_PROMPT
+from athena_trading.aat_v2.deliberation import (
+    DELIBERATION_OUTPUT_TOKENS,
+    DELIBERATION_PROMPT,
+    DELIBERATION_TURN_ROLES,
+    turn_system_prompt,
+)
 from athena_trading.aat_v2.identity import PILOT_PROMPT, declared_deepseek_flash_identity
 
 
@@ -36,6 +41,7 @@ PROTOCOL = ROOT / "configs/aat_v2_registered_protocol_v1.json"
 AMENDMENT = ROOT / "configs/aat_v2_e_arm_compact_schema_amendment_v1.json"
 IDENTITY = ROOT / "configs/aat_v2_deepseek_flash_actor_identity_v1.json"
 FIXTURE = ROOT / "configs/fixtures/deepseek_flash_preflight_v1.json"
+MISMATCH = ROOT / "configs/fixtures/deepseek_flash_e_arm_mismatch_v1.json"
 SCRIPT = ROOT / "scripts/run_aat_v2_deepseek_flash_pilot.py"
 FIXTURE_KEY = "fixture-key-not-serialized"
 IDENTITY_HASH = declared_deepseek_flash_identity()["identity_hash"]
@@ -92,7 +98,14 @@ def test_fixture_pilot_accepts_compact_e_and_actor_json():
     actor_payloads = seen[:3]
     e_payloads = seen[3:]
     assert all(payload["messages"][0]["content"] == PILOT_PROMPT for payload in actor_payloads)
-    assert all(payload["messages"][0]["content"] == DELIBERATION_PROMPT for payload in e_payloads)
+    assert all(
+        payload["messages"][0]["content"] == turn_system_prompt(role)
+        for payload, role in zip(e_payloads, DELIBERATION_TURN_ROLES, strict=True)
+    )
+    assert all(payload["messages"][0]["content"].startswith(DELIBERATION_PROMPT) for payload in e_payloads)
+    assert all("EXAMPLE json OUTPUT" in payload["messages"][0]["content"] for payload in e_payloads)
+    assert all(payload["response_format"] == {"type": "json_object"} for payload in e_payloads)
+    assert all(payload["response_format"].get("type") != "json_schema" for payload in seen)
     assert "PILOT_NOT_TRAINING" in PILOT_PROMPT
     e_rows = [row for row in result["records"] if row["arm"] == "E_DELIBERATION"]
     actor_rows = [row for row in result["records"] if row["arm"] != "E_DELIBERATION"]
@@ -103,10 +116,13 @@ def test_fixture_pilot_accepts_compact_e_and_actor_json():
     } for row in actor_rows)
     assert e_rows[-1]["decision"]["action"] == "PASS"
     assert [row["prior_turn_count"] for row in e_rows] == [0, 1, 2, 3]
+    assert all(row["raw_content_snippet"] is None for row in result["records"])
     risk_user = json.loads(e_payloads[-1]["messages"][1]["content"])
     assert [item["turn"] for item in risk_user["prior_turns"]] == ["BULL", "BEAR", "TRADER"]
     bull_user = json.loads(e_payloads[0]["messages"][1]["content"])
     assert "prior_turns" not in bull_user
+    assert bull_user["example_json"]["turn"] == "BULL"
+    assert "EXAMPLE json OUTPUT" in e_payloads[0]["messages"][0]["content"]
     assert all(row["actor_identity_hash"] == IDENTITY_HASH for row in result["records"])
     assert FIXTURE_KEY not in json.dumps(result)
     assert SINGLE_CALL_OUTPUT_TOKENS == 512
@@ -374,3 +390,94 @@ def test_cli_reports_live_attempt_evidence_on_failure(monkeypatch, capsys):
     assert payload["attempted_calls"] == 3
     assert payload["execution_authority"] == "ABSENT"
     assert payload["sealed_holdout_consumed"] is False
+
+
+def _chat_reply(content, *, finish_reason="stop", completion_tokens=24):
+    return {
+        "id": "chatcmpl-fixture-mismatch",
+        "model": "deepseek-flash",
+        "object": "chat.completion",
+        "choices": [{
+            "finish_reason": finish_reason,
+            "index": 0,
+            "message": {"content": content, "role": "assistant"},
+        }],
+        "usage": {
+            "completion_tokens": completion_tokens,
+            "prompt_tokens": 80,
+            "total_tokens": 80 + completion_tokens,
+        },
+    }
+
+
+def test_pilot_replays_flash_mismatch_fixtures_and_stores_snippets():
+    cases = json.loads(MISMATCH.read_text(encoding="utf-8"))["cases"]
+    by_turn = {
+        "BULL": cases["extra_keys"],
+        "BEAR": cases["missing_claim"],
+        "TRADER": cases["wrong_turn_string"],
+        "RISK": cases["truncated_json"],
+    }
+
+    def transport(payload, key):
+        user = json.loads(payload["messages"][1]["content"])
+        turn = user.get("turn") if isinstance(user, dict) else None
+        if turn in by_turn:
+            case = by_turn[turn]
+            return _chat_reply(
+                case["content"],
+                finish_reason=case.get("finish_reason", "stop"),
+                completion_tokens=20,
+            )
+        return _fixture_transport(payload, key)
+
+    result = run_deepseek_flash_pilot(
+        fixture_path=FIXTURE, pricing_path=PRICING, protocol_path=PROTOCOL,
+        identity_path=IDENTITY, amendment_path=AMENDMENT,
+        opportunity_count=1, call_ceiling=7, spend_ceiling_usd=1.00,
+        api_key=FIXTURE_KEY, transport=transport, include_deliberation=True,
+    )
+    assert result["status"] == "PILOT_NOT_TRAINING"
+    assert result["execution_authority"] == "ABSENT"
+    assert result["sealed_holdout_consumed"] is False
+    actor_rows = [row for row in result["records"] if row["arm"] != "E_DELIBERATION"]
+    e_rows = [row for row in result["records"] if row["arm"] == "E_DELIBERATION"]
+    assert all(row["accepted"] for row in actor_rows)
+    assert all(row["raw_content_snippet"] is None for row in actor_rows)
+    assert [row["turn"] for row in e_rows] == ["BULL", "BEAR", "TRADER", "RISK"]
+    assert all(row["accepted"] is False for row in e_rows)
+    assert [row["rejection_reason"] for row in e_rows] == [
+        "deliberation output schema mismatch",
+        "deliberation output schema mismatch",
+        "deliberation output schema mismatch",
+        "OUTPUT_TRUNCATED",
+    ]
+    for row in e_rows:
+        expected = by_turn[row["turn"]]["content"]
+        assert row["raw_content_snippet"] == expected
+        assert row["decision"] is None
+        assert row["output_tokens"] == 20
+        assert row["execution_authority"] == "ABSENT"
+
+
+def test_pilot_stores_actor_shaped_e_payload_snippet():
+    actor = json.loads(MISMATCH.read_text(encoding="utf-8"))["cases"]["actor_shaped_payload"]
+
+    def transport(payload, key):
+        user = json.loads(payload["messages"][1]["content"])
+        if isinstance(user, dict) and user.get("turn") == "RISK":
+            return _chat_reply(actor["content"], completion_tokens=32)
+        return _fixture_transport(payload, key)
+
+    result = run_deepseek_flash_pilot(
+        fixture_path=FIXTURE, pricing_path=PRICING, protocol_path=PROTOCOL,
+        identity_path=IDENTITY, amendment_path=AMENDMENT,
+        opportunity_count=1, call_ceiling=7, spend_ceiling_usd=1.00,
+        api_key=FIXTURE_KEY, transport=transport, include_deliberation=True,
+    )
+    risk = [row for row in result["records"] if row["turn"] == "RISK"][0]
+    assert risk["accepted"] is False
+    assert risk["rejection_reason"] == "deliberation output schema mismatch"
+    assert risk["raw_content_snippet"] == actor["content"]
+    assert "horizon" in risk["raw_content_snippet"]
+    assert result["execution_authority"] == "ABSENT"
