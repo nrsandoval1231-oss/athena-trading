@@ -51,6 +51,12 @@ from .deepseek_preflight import (
     plan_deepseek_flash_dry_run,
     run_deepseek_flash_preflight,
 )
+from .deepseek_pilot import DeepSeekPilotError, run_deepseek_flash_pilot
+from .identity import (
+    IdentityError,
+    declared_deepseek_flash_identity,
+    load_deepseek_flash_identity,
+)
 from .deliberation import (
     DeliberationError,
     assert_compact_payloads_fit_budget,
@@ -62,23 +68,27 @@ from .deliberation import (
 
 __all__ = [
     "ACTOR_ARMS", "ARMS", "DELIBERATION_ARMS", "EXOGENOUS_ARMS", "MEMORY_ARMS",
-    "ArmError", "AssignmentError", "ContractError", "DeepSeekPreflightError",
-    "DeliberationError",
+    "ArmError", "AssignmentError", "ContractError", "DeepSeekPilotError",
+    "DeepSeekPreflightError",
+    "DeliberationError", "IdentityError",
     "MissingDeepSeekCredentialsError", "arm_definitions",
     "api_key_from_env",
     "assert_compact_payloads_fit_budget",
     "assert_control_arm_never_saw_treatment", "assert_equal_token_budget",
     "assert_linked_symbols_share_a_partition", "assert_partitions_disjoint",
     "assert_treatment_asymmetry", "build_packet",
-    "calls_actor", "deliberates", "deliberation_plan", "draw_assignment",
+    "calls_actor", "declared_deepseek_flash_identity", "deliberates",
+    "deliberation_plan", "draw_assignment",
     "filter_opportunities",
     "freeze_claim_contract", "ledger_projection", "load_contract",
+    "load_deepseek_flash_identity",
     "load_e_arm_amendment", "load_universe",
     "packet_hash", "parse_deliberation_turn", "partition_for",
     "plan_deepseek_flash_dry_run",
     "receives_exogenous", "receives_memory",
     "OpportunityIndexError", "build_opportunity_index",
-    "ProtocolError", "register_protocol", "run_deepseek_flash_preflight",
+    "ProtocolError", "register_protocol", "run_deepseek_flash_pilot",
+    "run_deepseek_flash_preflight",
     "scored_action_from_turns",
     "write_assignment", "write_contract",
 ]

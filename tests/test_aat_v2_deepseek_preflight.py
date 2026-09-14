@@ -72,7 +72,11 @@ def test_dry_run_matches_the_documented_deepseek_estimate():
     assert plan["live_calls"] is False
     assert plan["actor_called"] is False
     assert plan["terra_protocol_not_reused"] is True
-    assert plan["actor_identity_status"] == "UNREGISTERED_CANDIDATE"
+    assert plan["actor_identity_status"] == "CANDIDATE_PILOT"
+    assert plan["pilot_is_not_training"] is True
+    assert plan["declared_identity_hash"] == (
+        "9f74f170888e09300cf99ccb1f0742c6bcbecc7e264f48ed6a91cbe62cf87e44"
+    )
     assert plan["planned_calls"] == 116935
     assert round(plan["off_peak_cost_usd"], 2) == 32.68
     assert round(plan["peak_cost_usd"], 2) == 65.35
@@ -163,6 +167,8 @@ def test_fixture_preflight_stays_absent_and_does_not_consume_a_holdout():
     assert result["execution_authorized"] is False
     assert result["live_calls"] is False
     assert result["terra_protocol_not_reused"] is True
+    assert result["actor_identity_status"] == "CANDIDATE_PILOT"
+    assert result["pilot_is_not_training"] is True
     assert {row["arm"] for row in result["records"]} == {
         "B_MEMORYLESS", "C_NAIVE_MEMORY", "D_ATHENA",
     }
@@ -242,6 +248,8 @@ def test_output_cannot_overwrite_the_consumed_holdout_registry(tmp_path):
         forbid_output_path(ROOT / "configs/aat_v2_registered_protocol_v1.json")
     with pytest.raises(DeepSeekPreflightError, match="registered or consumed"):
         forbid_output_path(AMENDMENT)
+    with pytest.raises(DeepSeekPreflightError, match="registered or consumed"):
+        forbid_output_path(ROOT / "configs/aat_v2_deepseek_flash_actor_identity_v1.json")
     existing = tmp_path / "out.json"
     existing.write_text("{}\n", encoding="utf-8")
     with pytest.raises(DeepSeekPreflightError, match="overwrite"):
@@ -413,6 +421,10 @@ def test_full_actor_schema_on_an_e_turn_is_a_schema_mismatch():
 
 def test_deepseek_is_not_registered_as_a_v1_provider():
     assert registered_providers() == ("openai",)
+    from athena_trading.aat_v1.providers import DEEPSEEK, get_provider
+    from athena_trading.aat_v1 import AATValidationError
+    with pytest.raises(AATValidationError, match="unregistered"):
+        get_provider(DEEPSEEK.provider)
     assert PREFLIGHT_CALL_CEILING == 7
     assert PREFLIGHT_SPEND_CEILING_USD == 1.00
     assert SINGLE_CALL_OUTPUT_TOKENS == 512
