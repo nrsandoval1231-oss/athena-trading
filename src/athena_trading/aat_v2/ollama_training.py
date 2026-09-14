@@ -1,19 +1,24 @@
-"""Fail-closed local Ollama AAT-V2 TRAINING runner.
+"""Fail-closed Ollama AAT-V2 TRAINING runner.
 
 Reads the frozen macro-only V2 TRAINING plan and a real opportunity index /
-macro snapshot. Defaults to a tiny dry-run smoke. The full 16,705-opportunity
-/ 116,935-call run requires Nick's authorization artifact *and*
-``--authorize-local-training``. It never rewrites the Terra protocol, never
-raises ``execution_authority`` above ``ABSENT``, and refuses holdout paths or
-holdout symbols.
+macro snapshot. Defaults to a tiny dry-run smoke against the desktop
+``qwen3.5:9b`` identity. The full 16,705-opportunity / 116,935-call run
+requires Nick's matching authorization artifact *and* either
+``--authorize-local-training`` (desktop 9b) or ``--authorize-runpod-training``
+(RunPod / remote ``qwen2.5:14b``). Neither flag rewrites the Terra protocol,
+raises ``execution_authority`` above ``ABSENT``, or consumes a holdout.
 
-Live HTTP is a separate opt-in (``allow_live=True``). Tests inject a mocked
-transport and never contact DeepSeek or Ollama.
+Live HTTP is a separate opt-in (``allow_live=True``). Non-loopback
+``base_url`` is allowed only for the RunPod 14b identity (pod IP or an SSH
+tunnel to loopback). Tests inject a mocked transport and never contact
+DeepSeek, RunPod, or Ollama.
 """
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -34,25 +39,32 @@ from .ollama_identity import (
     CLI_AUTHORIZATION_FLAG,
     COMMITTED_AUTHORIZATION_PATH,
     COMMITTED_IDENTITY_PATH,
+    COMMITTED_RUNPOD_AUTHORIZATION_PATH,
     DEFAULT_MODEL_ID,
     IDENTITY_STATUS,
+    RUNPOD_CLI_AUTHORIZATION_FLAG,
+    RUNPOD_IDENTITY_STATUS,
     AuthorizationError,
     assert_full_run_authorized,
     identity_digest,
-    load_local_training_authorization,
-    load_ollama_qwen_identity,
+    is_runpod_identity,
+    load_committed_ollama_training_authorization,
+    load_committed_ollama_training_identity,
 )
 from .ollama_transport import (
     OllamaTransportError,
     Transport,
     assistant_content,
     build_ollama_payload,
+    is_loopback_base_url,
     live_ollama_transport,
+    ollama_chat_url,
     payload_turn,
     read_decision,
     read_usage,
     reject_snippet,
     request_hash,
+    transport_host_scope,
 )
 from .packet import build_packet, packet_hash
 
@@ -73,6 +85,8 @@ DEFAULT_ACTOR_ARMS = (B_MEMORYLESS, C_NAIVE_MEMORY, D_ATHENA)
 CALLS_PER_OPPORTUNITY = len(DEFAULT_ACTOR_ARMS) + DELIBERATION_TURNS
 FROZEN_ROW_COUNT = 16705
 FROZEN_PLANNED_CALLS = 116935
+DEFAULT_MAX_CONCURRENT_CALLS = 1
+MAX_CONCURRENT_CALLS_CEILING = 4
 
 _FORBIDDEN_PATH_TOKENS = ("holdout", "sealed")
 _PROTECTED_ARTIFACTS = (
@@ -84,6 +98,8 @@ _PROTECTED_ARTIFACTS = (
     "aat_v2_actor_identity_v1.json",
     "aat_v2_ollama_qwen_actor_identity_v1.json",
     "aat_v2_ollama_local_training_authorization_v1.json",
+    "aat_v2_ollama_qwen_14b_runpod_actor_identity_v1.json",
+    "aat_v2_ollama_runpod_training_authorization_v1.json",
     "aat_v2_dataset_assignment_v1.json",
     "aat_v2_training_plan_v2.json",
 )
@@ -252,12 +268,15 @@ def arm_sequence(*, include_deliberation: bool = True) -> tuple[dict[str, Any], 
     return tuple(items)
 
 
-def fixture_transport(fixture_path: str | Path) -> Transport:
-    envelope = _load_training_fixture(fixture_path)
+def fixture_transport(
+    fixture_path: str | Path, *, model_id: str | None = None,
+) -> Transport:
+    envelope = _load_training_fixture(fixture_path, expected_model_id=model_id)
+    expected_model = envelope["model_id"]
 
     def _replay(payload: Mapping[str, Any]) -> Mapping[str, Any]:
-        if payload.get("model") != envelope.get("model_id"):
-            raise OllamaTrainingError("fixture transport received a non-Qwen payload")
+        if payload.get("model") != expected_model:
+            raise OllamaTrainingError("fixture transport received a non-matching model payload")
         if payload.get("think") is not False:
             raise OllamaTrainingError("fixture transport requires thinking disabled")
         turn = payload_turn(payload)
@@ -289,53 +308,62 @@ def run_ollama_local_training(
     output_dir: str | Path,
     limit_opportunities: int | None = DEFAULT_SMOKE_LIMIT,
     authorize_local_training: bool = False,
+    authorize_runpod_training: bool = False,
     allow_live: bool = False,
     transport: Transport | None = None,
     model_id: str | None = None,
     include_deliberation: bool = True,
     resume: bool = False,
     base_url: str = "http://127.0.0.1:11434",
+    max_concurrent_calls: int = DEFAULT_MAX_CONCURRENT_CALLS,
 ) -> dict[str, Any]:
-    """Run smoke or authorized in-sample local TRAINING. Never touches holdout."""
+    """Run smoke or authorized in-sample Ollama TRAINING. Never touches holdout."""
     plan = load_macro_only_training_plan(training_plan_path)
     protocol = load_registered_v2_protocol(protocol_path)
     assignment = load_training_assignment(assignment_path)
     if assignment.get("assignment_hash") != protocol["protocol"]["assignment_hash"]:
         raise OllamaTrainingError("assignment does not match the registered protocol")
     identity_file = COMMITTED_IDENTITY_PATH if identity_path is None else identity_path
-    authorization_file = (
-        COMMITTED_AUTHORIZATION_PATH if authorization_path is None else authorization_path
-    )
-    requested_model = DEFAULT_MODEL_ID if model_id is None else model_id
     try:
-        identity = load_ollama_qwen_identity(
-            identity_file, protocol_path=protocol_path, expected_model_id=requested_model,
+        identity = load_committed_ollama_training_identity(
+            identity_file, protocol_path=protocol_path, expected_model_id=model_id,
         )
-        authorization = load_local_training_authorization(
+        if authorization_path is None:
+            authorization_file = (
+                COMMITTED_RUNPOD_AUTHORIZATION_PATH
+                if is_runpod_identity(identity)
+                else COMMITTED_AUTHORIZATION_PATH
+            )
+        else:
+            authorization_file = authorization_path
+        authorization = load_committed_ollama_training_authorization(
             authorization_file, identity=identity, protocol_path=protocol_path,
         )
     except (IdentityError, AuthorizationError) as exc:
         raise OllamaTrainingError(str(exc)) from exc
     actor_id = identity_digest(identity)
+    runpod = is_runpod_identity(identity)
+    _assert_base_url_matches_identity(identity, base_url)
+    if not isinstance(max_concurrent_calls, int) or max_concurrent_calls < 1:
+        raise OllamaTrainingError("max-concurrent-calls must be a positive integer")
+    if max_concurrent_calls > MAX_CONCURRENT_CALLS_CEILING:
+        raise OllamaTrainingError(
+            "max-concurrent-calls cannot exceed 4; Ollama on one GPU serializes "
+            "inference and Semaphore-64-style blasts are refused"
+        )
     try:
         load_e_arm_amendment(amendment_path, protocol_path=protocol_path)
     except DeliberationError as exc:
         raise OllamaTrainingError(str(exc)) from exc
 
     full_plan = limit_opportunities is None
-    if full_plan:
+    using_auth_flag = authorize_local_training or authorize_runpod_training
+    if full_plan or using_auth_flag:
         try:
             assert_full_run_authorized(
                 authorization=authorization,
                 authorize_local_training=authorize_local_training,
-            )
-        except AuthorizationError as exc:
-            raise OllamaTrainingError(str(exc)) from exc
-    elif authorize_local_training:
-        try:
-            assert_full_run_authorized(
-                authorization=authorization,
-                authorize_local_training=True,
+                authorize_runpod_training=authorize_runpod_training,
             )
         except AuthorizationError as exc:
             raise OllamaTrainingError(str(exc)) from exc
@@ -370,7 +398,10 @@ def run_ollama_local_training(
     planned_calls = len(selected) * len(arms)
     sender = _resolve_transport(transport=transport, allow_live=allow_live, base_url=base_url)
     live_calls = allow_live and transport is None
-    status = IN_SAMPLE_STATUS if authorize_local_training else SMOKE_STATUS
+    host_scope = transport_host_scope(base_url)
+    status = IN_SAMPLE_STATUS if using_auth_flag else SMOKE_STATUS
+    actor_status = RUNPOD_IDENTITY_STATUS if runpod else IDENTITY_STATUS
+    auth_flag = RUNPOD_CLI_AUTHORIZATION_FLAG if runpod else CLI_AUTHORIZATION_FLAG
 
     output = Path(output_dir)
     _forbid_holdout_path(output)
@@ -383,64 +414,68 @@ def run_ollama_local_training(
 
     records = _load_ledger(ledger_path, actor_id=actor_id, resume=resume)
     completed = {(row["opportunity_id"], row["arm"], row["turn"]) for row in records}
+    ledger_by_key = {
+        (row["opportunity_id"], row["arm"], row["turn"]): row for row in records
+    }
     total_input = sum(int(row["input_tokens"]) for row in records)
     total_output = sum(int(row["output_tokens"]) for row in records)
     attempted_calls = len(records)
     estimated_rows = sum(row.get("usage_source") == "BYTE_PROXY_ESTIMATE" for row in records)
+    lock = threading.Lock()
 
-    try:
-        for index, opportunity in enumerate(selected):
-            prior_turns: list[dict[str, Any]] = []
-            packet = _opportunity_packet(opportunity, snapshot_rows, actor_id)
-            hashed = packet_hash(packet)
-            for item in arms:
-                key = (opportunity["opportunity_id"], item["arm"], item["turn"])
-                if key in completed:
-                    if item["arm"] == E_DELIBERATION:
-                        existing = next(
-                            row for row in records
-                            if (row["opportunity_id"], row["arm"], row["turn"]) == key
-                        )
-                        if existing.get("accepted") and existing.get("decision"):
-                            prior_turns.append(existing["decision"])
-                    continue
-                priors = tuple(prior_turns) if item["arm"] == E_DELIBERATION else ()
-                max_output_tokens = (
-                    DELIBERATION_OUTPUT_TOKENS if item["arm"] == E_DELIBERATION
-                    else SINGLE_CALL_OUTPUT_TOKENS
-                )
-                payload = build_ollama_payload(
-                    packet,
-                    max_output_tokens=max_output_tokens,
-                    model_id=identity["model_id"],
-                    arm=item["arm"],
-                    turn=item["turn"],
-                    system_prompt=identity["prompt"],
-                    prior_turns=priors,
-                )
+    def _process_opportunity(index: int, opportunity: Mapping[str, Any]) -> None:
+        nonlocal total_input, total_output, attempted_calls, estimated_rows
+        prior_turns: list[dict[str, Any]] = []
+        packet = _opportunity_packet(opportunity, snapshot_rows, actor_id)
+        hashed = packet_hash(packet)
+        for item in arms:
+            key = (opportunity["opportunity_id"], item["arm"], item["turn"])
+            if key in completed:
+                existing = ledger_by_key.get(key)
+                if (
+                    item["arm"] == E_DELIBERATION
+                    and existing
+                    and existing.get("accepted")
+                    and existing.get("decision")
+                ):
+                    prior_turns.append(existing["decision"])
+                continue
+            priors = tuple(prior_turns) if item["arm"] == E_DELIBERATION else ()
+            max_output_tokens = (
+                DELIBERATION_OUTPUT_TOKENS if item["arm"] == E_DELIBERATION
+                else SINGLE_CALL_OUTPUT_TOKENS
+            )
+            payload = build_ollama_payload(
+                packet,
+                max_output_tokens=max_output_tokens,
+                model_id=identity["model_id"],
+                arm=item["arm"],
+                turn=item["turn"],
+                system_prompt=identity["prompt"],
+                prior_turns=priors,
+            )
+            try:
+                response = sender(payload)
+            except OllamaTransportError as exc:
+                with lock:
+                    failed_attempts = len(records) + 1
+                raise OllamaTrainingError(
+                    str(exc),
+                    live_calls=live_calls,
+                    authorize_local_training=authorize_local_training,
+                    completed_calls=len(records),
+                    attempted_calls=failed_attempts,
+                    status=INCOMPLETE_STATUS,
+                ) from exc
+            content_tokens_hint = assistant_content(response)
+            input_tokens, output_tokens, usage_source = read_usage(
+                response, payload=payload, content=content_tokens_hint,
+            )
+            decision, rejection = read_decision(
+                response, model_id=identity["model_id"], turn=item["turn"],
+            )
+            with lock:
                 attempted_calls += 1
-                try:
-                    response = sender(payload)
-                except OllamaTransportError as exc:
-                    raise OllamaTrainingError(
-                        str(exc),
-                        live_calls=live_calls,
-                        authorize_local_training=authorize_local_training,
-                        completed_calls=len(records),
-                        attempted_calls=attempted_calls,
-                        status=INCOMPLETE_STATUS,
-                    ) from exc
-                content_tokens_hint = assistant_content(response)
-                input_tokens, output_tokens, usage_source = read_usage(
-                    response, payload=payload, content=content_tokens_hint,
-                )
-                total_input += input_tokens
-                total_output += output_tokens
-                if usage_source == "BYTE_PROXY_ESTIMATE":
-                    estimated_rows += 1
-                decision, rejection = read_decision(
-                    response, model_id=identity["model_id"], turn=item["turn"],
-                )
                 record = {
                     "sequence": attempted_calls,
                     "arm": item["arm"],
@@ -464,6 +499,10 @@ def run_ollama_local_training(
                     "partition": "TRAINING",
                 }
                 records.append(record)
+                total_input += input_tokens
+                total_output += output_tokens
+                if usage_source == "BYTE_PROXY_ESTIMATE":
+                    estimated_rows += 1
                 _append_ledger(ledger_path, record)
                 _write_checkpoint(
                     checkpoint_path,
@@ -471,14 +510,28 @@ def run_ollama_local_training(
                     plan_hash=plan["plan_hash"],
                     assignment_hash=assignment["assignment_hash"],
                     completed_calls=len(records),
-                    last_opportunity_id=opportunity["opportunity_id"],
+                    last_opportunity_id=str(opportunity["opportunity_id"]),
                     last_arm=item["arm"],
                     last_turn=item["turn"],
                     status=INCOMPLETE_STATUS,
                     authorize_local_training=authorize_local_training,
+                    authorize_runpod_training=authorize_runpod_training,
                 )
-                if item["arm"] == E_DELIBERATION and rejection is None and decision:
-                    prior_turns.append(decision)
+            if item["arm"] == E_DELIBERATION and rejection is None and decision:
+                prior_turns.append(decision)
+
+    try:
+        if max_concurrent_calls == 1:
+            for index, opportunity in enumerate(selected):
+                _process_opportunity(index, opportunity)
+        else:
+            with ThreadPoolExecutor(max_workers=max_concurrent_calls) as pool:
+                futures = [
+                    pool.submit(_process_opportunity, index, opportunity)
+                    for index, opportunity in enumerate(selected)
+                ]
+                for future in as_completed(futures):
+                    future.result()
     except OllamaTrainingError:
         _write_receipt(
             receipt_path,
@@ -487,9 +540,13 @@ def run_ollama_local_training(
                 assignment=assignment, selected=selected, records=records, arms=arms,
                 planned_calls=planned_calls, total_input=total_input, total_output=total_output,
                 estimated_rows=estimated_rows, live_calls=live_calls, allow_live=allow_live,
-                authorize_local_training=authorize_local_training, full_plan=full_plan,
-                include_deliberation=include_deliberation, status=INCOMPLETE_STATUS,
-                limit_opportunities=limit_opportunities, actor_id=actor_id,
+                authorize_local_training=authorize_local_training,
+                authorize_runpod_training=authorize_runpod_training,
+                full_plan=full_plan, include_deliberation=include_deliberation,
+                status=INCOMPLETE_STATUS, limit_opportunities=limit_opportunities,
+                actor_id=actor_id, actor_status=actor_status, auth_flag=auth_flag,
+                host_scope=host_scope, base_url=base_url,
+                max_concurrent_calls=max_concurrent_calls, runpod=runpod,
             ),
             resume=True,
         )
@@ -501,9 +558,13 @@ def run_ollama_local_training(
         assignment=assignment, selected=selected, records=records, arms=arms,
         planned_calls=planned_calls, total_input=total_input, total_output=total_output,
         estimated_rows=estimated_rows, live_calls=live_calls, allow_live=allow_live,
-        authorize_local_training=authorize_local_training, full_plan=full_plan,
-        include_deliberation=include_deliberation, status=result_status,
-        limit_opportunities=limit_opportunities, actor_id=actor_id,
+        authorize_local_training=authorize_local_training,
+        authorize_runpod_training=authorize_runpod_training,
+        full_plan=full_plan, include_deliberation=include_deliberation,
+        status=result_status, limit_opportunities=limit_opportunities,
+        actor_id=actor_id, actor_status=actor_status, auth_flag=auth_flag,
+        host_scope=host_scope, base_url=base_url,
+        max_concurrent_calls=max_concurrent_calls, runpod=runpod,
     )
     _write_receipt(receipt_path, result, resume=resume or receipt_path.exists())
     if result_status != INCOMPLETE_STATUS:
@@ -518,6 +579,7 @@ def run_ollama_local_training(
             last_turn=arms[-1]["turn"],
             status=result_status,
             authorize_local_training=authorize_local_training,
+            authorize_runpod_training=authorize_runpod_training,
         )
     return result
 
@@ -565,12 +627,33 @@ def _resolve_transport(
     if not allow_live:
         raise OllamaTrainingError(
             "live Ollama calls are not authorized by the default smoke path; "
-            "pass --allow-live-ollama on Nick's desktop or inject a mock transport"
+            "pass --allow-live-ollama on Nick's desktop or RunPod, or inject a mock transport"
         )
+    remote = not is_loopback_base_url(base_url)
     try:
-        return live_ollama_transport(base_url=base_url)
+        return live_ollama_transport(base_url=base_url, allow_remote=remote)
     except OllamaTransportError as exc:
         raise OllamaTrainingError(str(exc)) from exc
+
+
+def _assert_base_url_matches_identity(identity: Mapping[str, Any], base_url: str) -> None:
+    """Desktop 9b is loopback-only. RunPod 14b may use a pod IP or an SSH tunnel."""
+    if is_runpod_identity(identity):
+        inference = identity.get("inference")
+        if not isinstance(inference, Mapping) or inference.get("base_url_policy") != "explicit_cli":
+            raise OllamaTrainingError("RunPod identity must declare an explicit CLI base-url policy")
+        try:
+            ollama_chat_url(base_url, allow_remote=True)
+        except OllamaTransportError as exc:
+            raise OllamaTrainingError(str(exc)) from exc
+        return
+    try:
+        ollama_chat_url(base_url, allow_remote=False)
+    except OllamaTransportError as exc:
+        raise OllamaTrainingError(
+            "local qwen3.5:9b identity cannot target a non-loopback Ollama host; "
+            "use the RunPod qwen2.5:14b identity and --authorize-runpod-training"
+        ) from exc
 
 
 def _assert_full_plan_receipts(
@@ -600,11 +683,14 @@ def _assert_full_plan_receipts(
     _assert_absent_authority(snapshot_receipt)
 
 
-def _load_training_fixture(path: str | Path) -> dict[str, Any]:
+def _load_training_fixture(
+    path: str | Path, *, expected_model_id: str | None = None,
+) -> dict[str, Any]:
     payload = _load_json(path)
+    model_id = expected_model_id or DEFAULT_MODEL_ID
     if (
         payload.get("schema_version") != FIXTURE_SCHEMA
-        or payload.get("model_id") != DEFAULT_MODEL_ID
+        or payload.get("model_id") != model_id
         or payload.get("execution_authority") != "ABSENT"
         or not isinstance(payload.get("response"), Mapping)
     ):
@@ -653,6 +739,7 @@ def _write_checkpoint(
     last_turn: str | None,
     status: str,
     authorize_local_training: bool,
+    authorize_runpod_training: bool = False,
 ) -> None:
     payload = {
         "schema_version": CHECKPOINT_SCHEMA,
@@ -666,6 +753,7 @@ def _write_checkpoint(
         "last_arm": last_arm,
         "last_turn": last_turn,
         "authorize_local_training": authorize_local_training,
+        "authorize_runpod_training": authorize_runpod_training,
         "partition": "TRAINING",
         "terra_protocol_not_reused": True,
     }
@@ -695,11 +783,18 @@ def _result_body(
     live_calls: bool,
     allow_live: bool,
     authorize_local_training: bool,
+    authorize_runpod_training: bool,
     full_plan: bool,
     include_deliberation: bool,
     status: str,
     limit_opportunities: int | None,
     actor_id: str,
+    actor_status: str,
+    auth_flag: str,
+    host_scope: str,
+    base_url: str,
+    max_concurrent_calls: int,
+    runpod: bool,
 ) -> dict[str, Any]:
     result = {
         "schema_version": RUN_SCHEMA,
@@ -712,14 +807,17 @@ def _result_body(
         "registration_status": "REGISTERED_NOT_AUTHORIZED",
         "terra_protocol_not_reused": True,
         "deepseek_identity_not_reused": True,
+        "local_9b_identity_not_reused": runpod,
+        "runpod_training": runpod,
         "candidate_provider": identity["provider"],
         "candidate_model_id": identity["model_id"],
-        "actor_identity_status": IDENTITY_STATUS,
+        "actor_identity_status": actor_status,
         "actor_identity_hash": actor_id,
         "authorization_status": AUTHORIZATION_STATUS,
         "authorization_hash": authorization["authorization_hash"],
-        "authorization_cli_flag": CLI_AUTHORIZATION_FLAG,
+        "authorization_cli_flag": auth_flag,
         "authorize_local_training": authorize_local_training,
+        "authorize_runpod_training": authorize_runpod_training,
         "full_plan": full_plan,
         "protocol_hash": protocol["protocol_hash"],
         "training_plan_hash": plan["plan_hash"],
@@ -738,12 +836,21 @@ def _result_body(
         "estimated_usage_rows": estimated_rows,
         "token_accounting": (
             "OLLAMA_REPORTED counts when prompt_eval_count/eval_count are present; "
-            "otherwise utf-8 bytes/4 labeled BYTE_PROXY_ESTIMATE. Local GPU time is "
-            "unpriced; this is not OpenAI-style billed usage."
+            "otherwise utf-8 bytes/4 labeled BYTE_PROXY_ESTIMATE. Ollama tokens are "
+            "unpriced. RunPod bills GPU time separately; this is not OpenAI-style "
+            "billed usage."
         ),
         "live_calls": live_calls,
         "actor_called": bool(records),
         "allow_live": allow_live,
+        "base_url": base_url,
+        "transport_host_scope": host_scope,
+        "max_concurrent_calls": max_concurrent_calls,
+        "concurrency_note": (
+            "Default is 1. Optional bounded opportunity-level concurrency is 2-4. "
+            "Ollama on one GPU serializes inference; Semaphore-64-style blasts "
+            "are refused. Arm E turns stay sequential inside each opportunity."
+        ),
         "include_deliberation": include_deliberation,
         "arms": [item["arm"] for item in arms],
         "v2_lessons_bound": False,

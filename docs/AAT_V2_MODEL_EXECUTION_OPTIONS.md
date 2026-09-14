@@ -1,13 +1,16 @@
 # AAT-V2 Model Execution Options
 
-Status: local Ollama TRAINING plumbing is in-tree. No full 116,935-call run
-has been started in this repository. The registered protocol remains
-`REGISTERED_NOT_AUTHORIZED` and `execution_authority` remains `ABSENT`.
-DeepSeek Flash is a `CANDIDATE_PILOT` whose API is currently overloaded
-(503). Nick authorized a bigger live Flash sample at $50 / 500 calls / 71
-opportunities; that is still not TRAINING. He then authorized a pivot to
-**local Ollama `qwen3.5:9b`** for tonight's in-sample TRAINING start. Astra Desk stays
-isolated. V1/V2 holdout stays unused.
+Status: local Ollama TRAINING plumbing is in-tree, and a **RunPod / remote-Ollama
+path** now exists for Nick-directed TRAINING against a separate hashed
+`qwen2.5:14b` Actor. No full 116,935-call run has been started in this
+repository. The registered protocol remains `REGISTERED_NOT_AUTHORIZED` and
+`execution_authority` remains `ABSENT`. DeepSeek Flash is a `CANDIDATE_PILOT`
+whose API is currently overloaded (503). Nick authorized a bigger live Flash
+sample at $50 / 500 calls / 71 opportunities; that is still not TRAINING. He
+then authorized a pivot to **local Ollama `qwen3.5:9b`** for a desktop
+in-sample start, and separately authorized **RunPod remote Ollama plumbing**
+for a stronger 14b-class Actor. Astra Desk stays isolated. V1/V2 holdout stays
+unused.
 
 ## Workload
 
@@ -98,9 +101,9 @@ Sources:
 - <https://www.runpod.io/pricing>
 - <https://docs.runpod.io/pods/pricing>
 
-A 24 GB RTX 4090 is a more suitable host for the approximately 19 GB Qwen
-model than the local 8 GB GPU. Actual throughput must be benchmarked on the
-selected image and inference server. Illustrative compute-only costs for the
+A 24 GB RTX 4090 is a more suitable host for a 14b-class Qwen model than the
+local 8 GB GPU. Actual throughput must be benchmarked on the selected image
+and inference server. Illustrative compute-only costs for the
 17,105,920-token output ceiling are:
 
 | Measured output speed | Runtime | At $0.34/hr | At $0.74/hr |
@@ -117,6 +120,11 @@ worst-case valid turns fit the registered 64-token budget under the
 conservative byte/4 proxy. It is a `NON_AUTHORIZING_PROTOCOL_NOTE`. It does
 not raise TRAINING spend, does not rewrite the registered protocol, and does
 not make E optional.
+
+The RunPod path below is plumbing for Nick-directed remote Ollama TRAINING.
+It is still `ABSENT`. It does not authorize Terra. Do not start the 116k run
+from CI or an agent. Download `ledger.jsonl`, `checkpoint.json`, and
+`receipt.json` before terminating the pod.
 
 ## DeepSeek Flash dry-run / preflight planner
 
@@ -263,12 +271,13 @@ It records Nick's direction and still requires `--authorize-local-training`.
 `execution_authorized` on that artifact stays `false` so CI and agents cannot
 silently start 116k calls. `execution_authority` stays `ABSENT`.
 
-Transport: `http://127.0.0.1:11434/api/chat` only (loopback HTTP). Thinking
+Transport: `http://127.0.0.1:11434/api/chat` only for this 9b identity
+(loopback HTTP, including an SSH tunnel *to a 9b desktop process*). Thinking
 disabled (`think: false`). `format: json`. B/C/D use the five-field Actor
 schema at the registered **256** tokens. E uses the compact closed-enum
 parser at **64** tokens with per-turn example json. Timeouts default to 180s
 with three retries on local GPU hitch (408/429/5xx/connection). Non-loopback
-hosts are refused.
+hosts are refused for `qwen3.5:9b`; use the RunPod 14b identity for a pod IP.
 
 **Token accounting.** Local GPU time is unpriced
 (`configs/ollama_local_unpriced_v1.json`). When Ollama returns
@@ -326,20 +335,140 @@ python scripts/run_aat_v2_ollama_local_training.py \
 Resume after a hitch, same flags plus `--resume` and the same `--output-dir`.
 
 Do not pass holdout paths. Do not omit `--authorize-local-training` for the
-full plan. Do not run this in CI with `--allow-live-ollama`.
+full desktop plan. Do not run this in CI with `--allow-live-ollama`.
+
+## RunPod / remote Ollama TRAINING (`qwen2.5:14b`)
+
+Nick authorized a **separate** remote-Ollama TRAINING path. This is not the
+desktop 9b Actor, not Terra, not DeepSeek, and not a toy Instructor
+name/role script. The real TRAINING index, snapshot, and receipt hash gates
+still apply (`dataset_hash` `179e6f21…`, `snapshot_hash` `3240a4fa…`).
+
+**Why `qwen2.5:14b` rather than `qwen3:14b`.** The committed RunPod tag is
+`qwen2.5:14b`. It is the widely available 14b-class Ollama model that fits a
+Community RTX 4090 (~Q4, well under 24 GB), and the string cannot be mistaken
+for a runtime swap of desktop `qwen3.5:9b`. `qwen3:14b` would sit next to
+`qwen3.5:9b` as if it were a typo, and it is a different generation from
+Qwen 3.5 anyway. A different tag is a different hashed Actor: `--model-id`
+must match `configs/aat_v2_ollama_qwen_14b_runpod_actor_identity_v1.json`.
+
+Identity: `configs/aat_v2_ollama_qwen_14b_runpod_actor_identity_v1.json`
+(`RUNPOD_TRAINING_CANDIDATE`). Provider `ollama`. Host is **not** an Actor
+axis (`base_url_policy: explicit_cli`); the pod IP or SSH tunnel is a runtime
+`--base-url`. Swapping to `qwen3.5:9b` or `qwen3:14b` without minting a
+matching identity fails closed.
+
+Authorization: `configs/aat_v2_ollama_runpod_training_authorization_v1.json`.
+Full plan requires `--authorize-runpod-training`. That flag does **not**
+authorize Terra and does **not** authorize desktop `qwen3.5:9b`.
+`--authorize-local-training` does not authorize this 14b Actor.
+`execution_authority` stays `ABSENT`.
+
+Transport: native Ollama `/api/chat` (the same payload the desktop runner
+already uses). OpenAI-compat `/v1/chat/completions` is refused so a toy
+Instructor schema cannot sneak in. Live still needs `--allow-live-ollama`.
+`--base-url http://<pod>:11434` (or `https://…`) is the remote opt-in. An
+SSH tunnel to loopback is also legal for this identity.
+
+**Concurrency.** Default `--max-concurrent-calls 1`. Optional 2–4 is
+opportunity-level only; arm E turns stay sequential inside each row. Ollama
+on one GPU serializes inference. Semaphore-64-style blasts are refused.
+
+**Durable artifacts.** Prefer the chunked `ledger.jsonl` over one giant JSON
+dump. `--resume` replays the ledger. Download `ledger.jsonl`,
+`checkpoint.json`, and `receipt.json` **before terminating the pod**.
+
+### RunPod bring-up checklist
+
+1. Start a Community RTX 4090 (or similar 24 GB) pod.
+2. Install Ollama on the pod and pull the committed tag: `ollama pull qwen2.5:14b`.
+3. Expose native Ollama on port 11434, **or** SSH-tunnel it to
+   `http://127.0.0.1:11434` on the machine that runs the harness.
+4. Confirm `qwen2.5:14b` is the serving tag. A different tag is a different Actor.
+5. Point the existing runner at `--base-url http://<pod>:11434` (or the tunnel)
+   with the 14b identity. Do not reuse the desktop 9b identity file.
+6. Offline smoke (mocked transport; safe in this repo):
+
+```
+python scripts/run_aat_v2_ollama_local_training.py \
+  --identity configs/aat_v2_ollama_qwen_14b_runpod_actor_identity_v1.json \
+  --authorization configs/aat_v2_ollama_runpod_training_authorization_v1.json \
+  --base-url http://<pod>:11434 \
+  --output-dir artifacts/aat_v2_ollama_runpod_training_smoke
+```
+
+7. Live warmup 2 opportunities / 14 calls, then 100 if compact-E JSON and
+   throughput look honest. Then full 16,705 with receipts. Exact commands
+   below. Do not start the 116k run from an agent.
+
+### Exact RunPod commands
+
+Live warmup (2 opportunities / 14 calls):
+
+```
+python scripts/run_aat_v2_ollama_local_training.py \
+  --identity configs/aat_v2_ollama_qwen_14b_runpod_actor_identity_v1.json \
+  --authorization configs/aat_v2_ollama_runpod_training_authorization_v1.json \
+  --allow-live-ollama \
+  --limit-opportunities 2 \
+  --base-url http://<pod>:11434 \
+  --opportunity-index <TRAINING opportunity JSONL> \
+  --snapshot <macro snapshot JSONL> \
+  --output-dir artifacts/aat_v2_ollama_runpod_training_warmup
+```
+
+Optional 100-opportunity live sample (700 calls) after the 2-row warmup:
+
+```
+python scripts/run_aat_v2_ollama_local_training.py \
+  --identity configs/aat_v2_ollama_qwen_14b_runpod_actor_identity_v1.json \
+  --authorization configs/aat_v2_ollama_runpod_training_authorization_v1.json \
+  --allow-live-ollama \
+  --limit-opportunities 100 \
+  --base-url http://<pod>:11434 \
+  --opportunity-index <TRAINING opportunity JSONL> \
+  --snapshot <macro snapshot JSONL> \
+  --output-dir artifacts/aat_v2_ollama_runpod_training_100
+```
+
+Full in-sample TRAINING (16,705 opportunities / 116,935 calls). Still ABSENT.
+Terra stays `REGISTERED_NOT_AUTHORIZED`. Holdout untouched:
+
+```
+python scripts/run_aat_v2_ollama_local_training.py \
+  --identity configs/aat_v2_ollama_qwen_14b_runpod_actor_identity_v1.json \
+  --authorization configs/aat_v2_ollama_runpod_training_authorization_v1.json \
+  --authorize-runpod-training \
+  --allow-live-ollama \
+  --base-url http://<pod>:11434 \
+  --opportunity-index <TRAINING opportunity JSONL> \
+  --snapshot <macro snapshot JSONL> \
+  --opportunity-receipt <receipt whose index_hash is 179e6f21…> \
+  --snapshot-receipt <receipt whose snapshot_hash is 3240a4fa…> \
+  --output-dir artifacts/aat_v2_ollama_runpod_training
+```
+
+Resume after a hitch, same flags plus `--resume` and the same `--output-dir`.
+Optional `--max-concurrent-calls 2` (max 4) after the warmup proves the GPU
+is not swapping. Leave the default at 1 if unsure.
+
+Do not pass holdout paths. Do not use `--authorize-local-training` for this
+Actor. Do not run this in CI with `--allow-live-ollama`. Do not terminate the
+pod before copying the ledger.
 
 ## Decision boundary
 
-The local Ollama TRAINING path is in-tree and is the authorized *plumbing*
-for Nick's tonight start. It does not flip the registered Terra protocol to
-authorized, does not grant broker `execution_authority`, and does not
-consume V1 or V2 holdout. DeepSeek Flash remains a bounded candidate whose
-API is overloaded; the bigger live command (not TRAINING) is still:
+The local Ollama TRAINING path is in-tree for Nick's desktop `qwen3.5:9b`
+start. A separate RunPod / remote-Ollama path is in-tree for
+`qwen2.5:14b`. Neither flips the registered Terra protocol to authorized,
+grants broker `execution_authority`, or consumes V1 or V2 holdout. DeepSeek
+Flash remains a bounded candidate whose API is overloaded; the bigger live
+command (not TRAINING) is still:
 
 ```
 python scripts/run_aat_v2_deepseek_flash_pilot.py --allow-live --opportunities 71 --call-ceiling 500 --spend-ceiling-usd 50.00
 ```
 
 Do not treat a 503 as a reason to rewrite Terra. Arm E stays at the
-registered 4 x 64 compact budget. No RunPod charge, Astra Desk coupling, or
-holdout operation is authorized by this document.
+registered 4 x 64 compact budget. Astra Desk stays isolated. Holdout stays
+unused. RunPod plumbing does not by itself start the 116k run.
