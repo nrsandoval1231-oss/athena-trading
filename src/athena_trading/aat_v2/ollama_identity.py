@@ -11,7 +11,7 @@ only when Nick's explicit local-TRAINING authorization artifact is loaded
 **and** the CLI flag ``--authorize-local-training`` is present. Smoke / dry
 defaults never flip those bits.
 
-The default local model tag is ``qwen3-coder:30b``. A different Ollama tag is
+The default local model tag is ``qwen3.5:9b``. A different Ollama tag is
 a different Actor: pass a separately hashed identity file rather than swapping
 the string at runtime.
 """
@@ -44,7 +44,7 @@ IDENTITY_STATUS = "LOCAL_TRAINING_CANDIDATE"
 AUTHORIZATION_STATUS = "AUTHORIZATION_REQUIRED_FOR_FULL_RUN"
 
 PROVIDER = OLLAMA.provider
-DEFAULT_MODEL_ID = "qwen3-coder:30b"
+DEFAULT_MODEL_ID = "qwen3.5:9b"
 MODEL_ID = DEFAULT_MODEL_ID
 DEFAULT_BASE_URL = "http://127.0.0.1:11434"
 CHAT_PATH = "/api/chat"

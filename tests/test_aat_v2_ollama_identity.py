@@ -39,11 +39,11 @@ PROTOCOL = ROOT / "configs/aat_v2_registered_protocol_v1.json"
 TERRA_IDENTITY = ROOT / "configs/aat_v2_actor_identity_v1.json"
 DEEPSEEK_IDENTITY = ROOT / "configs/aat_v2_deepseek_flash_actor_identity_v1.json"
 
-OLLAMA_MODEL_HASH = "2f8c35e215510365dc7511480943ce9cda55a09dfad9bb36e4fd568113ebc884"
+OLLAMA_MODEL_HASH = "ff4bbdf6b84f4e40806630bcbb5a507e4770d72a4456e3f94cb22b2409c36f1a"
 OLLAMA_PROMPT_HASH = "fb00f2c6ba3b6484450db2a1476bdfbcbe0b66c01a0bf5b88faa1a03b1869aa4"
 OLLAMA_INFERENCE_HASH = "5c8c8eadeaed77446a8b60f150995b760bb171bca794fd5949c7d2bc3aba384c"
-OLLAMA_IDENTITY_HASH = "6663856d6fd7d04f12fe5c70e63fa890bd30bd6fc1fc545f64c982011c0b41a1"
-OLLAMA_AUTHORIZATION_HASH = "c66c7ba021ef9c3aa352253d4e93fa6e5f35c770ecedda77ce0031f8370a4380"
+OLLAMA_IDENTITY_HASH = "343df3a40ed2c8f521085afde9caaadf611889f6eb5872e8fb0bc0d9123745de"
+OLLAMA_AUTHORIZATION_HASH = "bd95a58bc20e136a4a6e50098885623ca035157139509117635074cb2f7c9218"
 SHARED_ACTION_SCHEMA_HASH = "852c32a80b5f4187ea6629270bfaf14162779e1a742690716a337eb107a26b3c"
 
 
@@ -54,7 +54,7 @@ def test_declared_identity_is_provider_scoped_and_not_terra():
         action_schema=ACTION_SCHEMA,
     )
     assert identity["provider"] == PROVIDER == "ollama"
-    assert identity["model_id"] == DEFAULT_MODEL_ID == "qwen3-coder:30b"
+    assert identity["model_id"] == DEFAULT_MODEL_ID == "qwen3.5:9b"
     assert identity["identity_status"] == IDENTITY_STATUS == "LOCAL_TRAINING_CANDIDATE"
     assert identity["bound_to_registered_protocol"] is False
     assert identity["rewrites_registered_protocol"] is False
@@ -134,8 +134,17 @@ def test_identity_hash_tamper_is_refused(tmp_path):
 def test_runtime_model_swap_is_refused():
     with pytest.raises(IdentityError, match="model id"):
         load_ollama_qwen_identity(
-            IDENTITY, protocol_path=PROTOCOL, expected_model_id="some-other-tag",
+            IDENTITY, protocol_path=PROTOCOL, expected_model_id="qwen3-coder:30b",
         )
+
+
+def test_previous_30b_tag_is_a_different_actor():
+    previous = declared_ollama_qwen_identity(model_id="qwen3-coder:30b")
+    current = declared_ollama_qwen_identity()
+    assert previous["model_id"] == "qwen3-coder:30b"
+    assert current["model_id"] == "qwen3.5:9b"
+    assert previous["identity_hash"] != current["identity_hash"] == OLLAMA_IDENTITY_HASH
+    assert previous["model_hash"] != current["model_hash"]
 
 
 def test_identity_refuses_a_terra_protocol_swap(tmp_path):

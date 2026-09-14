@@ -78,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--model-id",
         default=DEFAULT_MODEL_ID,
-        help="must match the hashed identity (default qwen3-coder:30b)",
+        help="must match the hashed identity (default qwen3.5:9b)",
     )
     parser.add_argument(
         "--limit-opportunities",

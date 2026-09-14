@@ -125,12 +125,12 @@ def test_ollama_descriptor_is_declared_not_v1_registered():
     with pytest.raises(AATValidationError, match="unregistered"):
         get_provider("ollama")
     payload = OLLAMA.build_payload(
-        "qwen3-coder:30b",
+        "qwen3.5:9b",
         {"candidate_hash": "abc"},
         "local-training",
         {"inference": {"max_output_tokens": 256}},
     )
-    assert payload["model"] == "qwen3-coder:30b"
+    assert payload["model"] == "qwen3.5:9b"
     assert payload["think"] is False
     assert payload["format"] == "json"
     assert payload["options"]["num_predict"] == 256

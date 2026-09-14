@@ -4,8 +4,10 @@ Status: local Ollama TRAINING plumbing is in-tree. No full 116,935-call run
 has been started in this repository. The registered protocol remains
 `REGISTERED_NOT_AUTHORIZED` and `execution_authority` remains `ABSENT`.
 DeepSeek Flash is a `CANDIDATE_PILOT` whose API is currently overloaded
-(503). Nick authorized a pivot to **local Ollama** for tonight's in-sample
-TRAINING start. Astra Desk stays isolated. V1/V2 holdout stays unused.
+(503). Nick authorized a bigger live Flash sample at $50 / 500 calls / 71
+opportunities; that is still not TRAINING. He then authorized a pivot to
+**local Ollama `qwen3.5:9b`** for tonight's in-sample TRAINING start. Astra Desk stays
+isolated. V1/V2 holdout stays unused.
 
 ## Workload
 
@@ -50,13 +52,15 @@ ignored temp storage. That E configuration required unbounded
 `horizon` / `invalidation` / `rationale` strings on every 64-token turn. A
 non-authorizing compact-schema amendment now binds closed-enum E-arm turns
 that fit the same 64-token budget. The registered protocol is not rewritten.
-Tonight's local TRAINING runner uses that compact E schema. Re-benchmark
-accept rate and wall-clock before treating the ~93h figure as current.
+Tonight's local TRAINING runner uses that compact E schema on **`qwen3.5:9b`**,
+a different hashed Actor from the 30b pilot tag. Re-benchmark accept rate
+and wall-clock before treating the ~93h figure as current.
 
-**Wall-clock warning.** 116,935 calls at 0.348 calls/s is about **93 hours**.
-"Tonight" means *start* tonight on Nick's desktop. It does not mean the run
-finishes tonight. A 2-opportunity live warmup (`14` calls) should precede
-the overnight start so compact-E JSON can be confirmed on this GPU.
+**Wall-clock warning.** The ~93 hour estimate is from `qwen3-coder:30b` at
+0.348 calls/s. Nick bound `qwen3.5:9b` for tonight; that tag should be
+faster on the same 8 GB GPU, but it is unmeasured. "Tonight" means *start*
+tonight. A 2-opportunity live warmup (`14` calls) should precede the
+overnight start so compact-E JSON and 9b throughput can be confirmed.
 
 ## DeepSeek V4.1 Flash API
 
@@ -249,9 +253,10 @@ protocol rewrite, not broker authority, and not holdout consumption.
 
 Identity: `configs/aat_v2_ollama_qwen_actor_identity_v1.json`
 (`LOCAL_TRAINING_CANDIDATE`). Provider `ollama`, default model
-`qwen3-coder:30b` (configurable only by minting a new hashed identity file;
-`--model-id` must match). The Terra protocol is consulted and not reused.
-DeepSeek Flash is a different Actor.
+`qwen3.5:9b` (Nick bound this tag; the earlier local-pilot tag
+`qwen3-coder:30b` is a different Actor). Configurable only by minting a new
+hashed identity file; `--model-id` must match. The Terra protocol is
+consulted and not reused. DeepSeek Flash is a different Actor.
 
 Authorization: `configs/aat_v2_ollama_local_training_authorization_v1.json`.
 It records Nick's direction and still requires `--authorize-local-training`.

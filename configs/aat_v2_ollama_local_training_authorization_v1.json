@@ -1,7 +1,7 @@
 {
-  "actor_identity_hash": "6663856d6fd7d04f12fe5c70e63fa890bd30bd6fc1fc545f64c982011c0b41a1",
+  "actor_identity_hash": "343df3a40ed2c8f521085afde9caaadf611889f6eb5872e8fb0bc0d9123745de",
   "authorization_cli_flag": "--authorize-local-training",
-  "authorization_hash": "c66c7ba021ef9c3aa352253d4e93fa6e5f35c770ecedda77ce0031f8370a4380",
+  "authorization_hash": "bd95a58bc20e136a4a6e50098885623ca035157139509117635074cb2f7c9218",
   "authorization_kind": "NICK_EXPLICIT_LOCAL_OLLAMA_TRAINING",
   "authorization_status": "AUTHORIZATION_REQUIRED_FOR_FULL_RUN",
   "authorizes_terra_protocol": false,
@@ -12,7 +12,7 @@
   "execution_authorized": false,
   "execution_requires_cli_flag": true,
   "holdout_untouched": true,
-  "model_id": "qwen3-coder:30b",
+  "model_id": "qwen3.5:9b",
   "nick_authorized_local_training_execution": true,
   "nick_authorized_plumbing": true,
   "notes": "Authorizes local Ollama TRAINING execution plumbing under Nick's direction. Full 16,705-opportunity runs still require the CLI flag. The registered Terra protocol stays REGISTERED_NOT_AUTHORIZED. Broker execution_authority stays ABSENT. V1/V2 holdout stays unused.",

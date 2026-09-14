@@ -24,7 +24,7 @@ that path is still not TRAINING. Adapters are not the blocker: the ALFRED
 macro adapter is built, GDELT was rejected for this run after a bounded
 coverage study, and news stays explicitly missing. DeepSeek Flash remains a
 provider-scoped **candidate / pilot** identity. Local Ollama
-`qwen3-coder:30b` is a separate hashed `LOCAL_TRAINING_CANDIDATE`. Full
+`qwen3.5:9b` is a separate hashed `LOCAL_TRAINING_CANDIDATE`. Full
 in-sample TRAINING against it is allowed only with Nick's authorization
 artifact **and** `--authorize-local-training` on his desktop. Astra Desk
 stays isolated. Holdout stays untouched.
@@ -357,8 +357,8 @@ deleted and redrawn under the fix.
 | Phase 3 protocol registration | **Registered as `REGISTERED_NOT_AUTHORIZED`.** `configs/aat_v2_registered_protocol_v1.json`. Actor identity remains OpenAI / `gpt-5.6-terra`. DeepSeek Flash is a separate `CANDIDATE_PILOT` identity and does not rewrite this protocol. |
 | Phase 3 TRAINING dry-run plans | Present. `configs/aat_v2_training_plan_v2.json` supersedes v1: 16,705 opportunities, **116,935** planned calls, `dry_run: true`, `execution_authorized: false`. |
 | Model execution options | Documented in `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. DeepSeek Flash dry-run / fixture preflight planner exists; thinking is disabled and Actor JSON is required on the B/C/D path. Arm E uses the compact closed-enum schema with per-turn example json after the live Flash E mismatch. A bounded pilot entrypoint exists (`scripts/run_aat_v2_deepseek_flash_pilot.py`) and defaults to fixture/dry. Nick-authorized **bigger live Flash pilot** (not TRAINING): **500 calls**, **$50.00**, **71 opportunities** (71 × 7 = 497 with E). Hard fail-closed caps are 80 opportunities / 500 calls / $50.00. Dry default stays 1 / 7 / $1.00. Hard PREFLIGHT spend ceiling remains $1.00. DeepSeek API 503 blocked that bigger sample. **Tonight's path is local Ollama.** |
-| Local Ollama TRAINING plumbing | Present. Hashed identity `configs/aat_v2_ollama_qwen_actor_identity_v1.json` (`LOCAL_TRAINING_CANDIDATE`, default model `qwen3-coder:30b`). Authorization artifact `configs/aat_v2_ollama_local_training_authorization_v1.json` records Nick's local-TRAINING direction but still requires `--authorize-local-training` and does **not** rewrite Terra. Runner: `scripts/run_aat_v2_ollama_local_training.py`. Defaults to dry smoke (tiny N, mocked transport). Live loopback HTTP is `--allow-live-ollama`. Full 16,705 / 116,935 requires the flag plus frozen receipts. Resume/checkpoint is supported. Status `LOCAL_TRAINING_IN_SAMPLE` or `LOCAL_TRAINING_SMOKE`; `execution_authority` `ABSENT`. |
-| Phase 3 TRAINING run | **Local Ollama plumbing is ready; the 116,935-call run is not started in-repo.** Nick can smoke then start overnight on his desktop. Prior local evidence: ~0.348 calls/s → **~93h** full-run estimate. "Tonight" means *start* tonight, not finish. Compact E-arm schema now applies; re-benchmark after a 2-opportunity live warmup. DeepSeek remains blocked on API overload. |
+| Local Ollama TRAINING plumbing | Present. Hashed identity `configs/aat_v2_ollama_qwen_actor_identity_v1.json` (`LOCAL_TRAINING_CANDIDATE`, default model `qwen3.5:9b`). Authorization artifact `configs/aat_v2_ollama_local_training_authorization_v1.json` records Nick's local-TRAINING direction but still requires `--authorize-local-training` and does **not** rewrite Terra. Runner: `scripts/run_aat_v2_ollama_local_training.py`. Defaults to dry smoke (tiny N, mocked transport). Live loopback HTTP is `--allow-live-ollama`. Full 16,705 / 116,935 requires the flag plus frozen receipts. Resume/checkpoint is supported. Status `LOCAL_TRAINING_IN_SAMPLE` or `LOCAL_TRAINING_SMOKE`; `execution_authority` `ABSENT`. |
+| Phase 3 TRAINING run | **Local Ollama plumbing is ready on `qwen3.5:9b`; the 116,935-call run is not started in-repo.** Nick can smoke then start overnight on his desktop. Prior local evidence was `qwen3-coder:30b` at ~0.348 calls/s → **~93h**; that tag is a different Actor. Compact E-arm schema now applies; re-benchmark 9b after a 2-opportunity live warmup. DeepSeek remains blocked on API overload. |
 | Phase 4 sealed holdout | Not started; needs a completed Phase 3 TRAINING run and separate authorization. The consumed AAT-V1 holdout must not be reused. V2 holdout symbols must not appear in the TRAINING index. |
 | AAT-V1 | Frozen and closed. Holdout consumed (`INVALID_EVIDENCE`). Limitation stands. |
 | Execution authority | `ABSENT` everywhere. No live-trading code exists. Astra Desk stays isolated. |
@@ -369,8 +369,10 @@ Not on adapters, and not on an unfrozen contract. The macro-only claim contract
 is already frozen and the protocol is already registered as
 `REGISTERED_NOT_AUTHORIZED`. DeepSeek Flash was the hosted candidate; a
 bounded live pilot ran, then API 503 blocked the bigger Flash sample. Nick
-authorized a pivot to **local Ollama** on his desktop (`qwen3-coder:30b`,
-RTX 5060 8 GB + ~33.8 GB RAM).
+authorized a pivot to **local Ollama** on his desktop (`qwen3.5:9b`,
+RTX 5060 8 GB + ~33.8 GB RAM). The earlier local 100-opportunity evidence
+used `qwen3-coder:30b`; that tag is a different Actor and is refused unless
+a matching identity is minted.
 
 That pivot ships execution *plumbing*. It does not rewrite
 `configs/aat_v2_registered_protocol_v1.json`, does not grant broker
@@ -412,7 +414,8 @@ the consumed AAT-V1 holdout. Astra Desk stays isolated.
    calls / $50 / 71 opportunities; API 503 blocked it. Do not retry a
    TRAINING-sized DeepSeek spend while 503s persist. Local identity:
    `configs/aat_v2_ollama_qwen_actor_identity_v1.json`. Default model
-   `qwen3-coder:30b` (a different Ollama tag is a new hashed identity, not a
+   `qwen3.5:9b` (a different Ollama tag, including the earlier
+   `qwen3-coder:30b` local-pilot tag, is a new hashed identity, not a
    runtime swap). Transport is loopback `http://127.0.0.1:11434/api/chat`
    with `think: false`. Compact E-arm schema applies.
 4. **Smoke, then optional 2-opportunity live warmup, then overnight full

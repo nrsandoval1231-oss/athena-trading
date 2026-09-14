@@ -9,7 +9,7 @@
         "content": "{\"claim\":\"PRICE\",\"confidence\":0.6,\"stance\":\"OUT\",\"turn\":\"BEAR\"}",
         "role": "assistant"
       },
-      "model": "qwen3-coder:30b",
+      "model": "qwen3.5:9b",
       "prompt_eval_count": 80
     },
     "BULL": {
@@ -21,7 +21,7 @@
         "content": "{\"claim\":\"MACRO\",\"confidence\":0.7,\"stance\":\"IN\",\"turn\":\"BULL\"}",
         "role": "assistant"
       },
-      "model": "qwen3-coder:30b",
+      "model": "qwen3.5:9b",
       "prompt_eval_count": 80
     },
     "RISK": {
@@ -33,7 +33,7 @@
         "content": "{\"action\":\"PASS\",\"confidence\":0.5,\"turn\":\"RISK\"}",
         "role": "assistant"
       },
-      "model": "qwen3-coder:30b",
+      "model": "qwen3.5:9b",
       "prompt_eval_count": 80
     },
     "TRADER": {
@@ -45,12 +45,12 @@
         "content": "{\"claim\":\"MACRO\",\"confidence\":0.55,\"stance\":\"IN\",\"turn\":\"TRADER\"}",
         "role": "assistant"
       },
-      "model": "qwen3-coder:30b",
+      "model": "qwen3.5:9b",
       "prompt_eval_count": 80
     }
   },
   "execution_authority": "ABSENT",
-  "model_id": "qwen3-coder:30b",
+  "model_id": "qwen3.5:9b",
   "note": "Synthetic Ollama chat response. Not a vendor dump, not holdout evidence, not a live TRAINING receipt. Compact E-arm turns fit the registered 64-token budget.",
   "response": {
     "created_at": "2026-09-14T00:00:00Z",
@@ -61,7 +61,7 @@
       "content": "{\"action\":\"PASS\",\"confidence\":0.4,\"horizon\":\"session\",\"invalidation\":\"range break\",\"rationale\":\"macro only smoke\"}",
       "role": "assistant"
     },
-    "model": "qwen3-coder:30b",
+    "model": "qwen3.5:9b",
     "prompt_eval_count": 80
   },
   "schema_version": "athena-aat-v2-ollama-qwen-training-fixture-v1"

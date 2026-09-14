@@ -90,7 +90,7 @@ def test_smoke_defaults_are_tiny_mocked_and_absent_authority(tmp_path):
     assert result["rejected_count"] == 0
     assert result["actor_identity_hash"] == IDENTITY_HASH
     assert result["frozen_plan_calls"] == FROZEN_PLANNED_CALLS == 116935
-    assert result["candidate_model_id"] == "qwen3-coder:30b"
+    assert result["candidate_model_id"] == "qwen3.5:9b"
     assert result["v2_lessons_bound"] is False
     assert all(row["usage_source"] == USAGE_REPORTED for row in result["records"])
     assert all(row["execution_authority"] == "ABSENT" for row in result["records"])
@@ -177,7 +177,7 @@ def test_payload_disables_thinking_and_keeps_compact_e_budget():
     assert actor["think"] is False
     assert actor["stream"] is False
     assert actor["format"] == "json"
-    assert actor["model"] == "qwen3-coder:30b"
+    assert actor["model"] == "qwen3.5:9b"
     assert actor["options"]["num_predict"] == 256
     compact = build_ollama_payload(packet, max_output_tokens=64, arm="E_DELIBERATION", turn="RISK")
     assert compact["options"]["num_predict"] == 64
@@ -187,7 +187,7 @@ def test_payload_disables_thinking_and_keeps_compact_e_budget():
 def test_missing_ollama_usage_is_labeled_as_a_byte_proxy_estimate():
     prompt, completion, source = read_usage(
         {"message": {"content": '{"action":"PASS"}'}},
-        payload={"model": "qwen3-coder:30b"},
+        payload={"model": "qwen3.5:9b"},
         content='{"action":"PASS"}',
     )
     assert source == USAGE_ESTIMATED
