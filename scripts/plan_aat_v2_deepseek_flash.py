@@ -10,6 +10,7 @@ Default is plan-only: no model call, no credential required.
 ``--preflight`` dry-runs a tiny N-call against the shipped fixture. Missing
 ``DEEPSEEK_API_KEY`` fails closed. Live spend is not implied; the planner
 refuses a live transport unless library callers pass ``allow_live=True``.
+Thinking is disabled and the Actor JSON schema is required on that path.
 """
 from __future__ import annotations
 
@@ -45,7 +46,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--fixture", type=Path, default=DEFAULT_FIXTURE)
     parser.add_argument("--call-ceiling", type=int, default=3)
-    parser.add_argument("--spend-ceiling-usd", type=float, default=0.05)
+    parser.add_argument(
+        "--spend-ceiling-usd",
+        type=float,
+        default=0.05,
+        help=(
+            "invocation spend cap; hard PREFLIGHT ceiling is $1.00 and is not "
+            "TRAINING authorization"
+        ),
+    )
     parser.add_argument(
         "--include-deliberation", action="store_true",
         help="add four E-arm turns to the fixture preflight (still capped at 7)",

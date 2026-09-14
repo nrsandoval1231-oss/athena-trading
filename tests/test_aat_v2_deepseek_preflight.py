@@ -7,11 +7,19 @@ import pytest
 from athena_trading.athena_adapter.contracts import canonical_hash
 from athena_trading.aat_v1.providers import registered_providers
 from athena_trading.aat_v2.deepseek_preflight import (
+    ACTOR_DECISION_KEYS,
+    LEGAL_ACTIONS,
     MODEL_ID,
     PREFLIGHT_CALL_CEILING,
+    PREFLIGHT_PROMPT,
+    PREFLIGHT_SPEND_CEILING_USD,
+    RESPONSE_FORMAT,
+    SINGLE_CALL_OUTPUT_TOKENS,
+    THINKING,
     DeepSeekPreflightError,
     MissingDeepSeekCredentialsError,
     api_key_from_env,
+    build_deepseek_payload,
     forbid_output_path,
     load_macro_only_training_plan,
     plan_deepseek_flash_dry_run,
@@ -47,6 +55,8 @@ def _fixture_transport(payload, key):
     assert key == FIXTURE_KEY
     assert payload["model"] == MODEL_ID
     assert payload["stream"] is False
+    assert payload["thinking"] == THINKING
+    assert payload["response_format"] == RESPONSE_FORMAT
     envelope = json.loads(FIXTURE.read_text(encoding="utf-8"))
     return envelope["response"]
 
@@ -174,9 +184,20 @@ def test_preflight_refuses_spend_above_the_tiny_ceiling():
     with pytest.raises(DeepSeekPreflightError, match="spend ceiling"):
         run_deepseek_flash_preflight(
             fixture_path=FIXTURE, pricing_path=PRICING, protocol_path=PROTOCOL,
-            call_ceiling=3, spend_ceiling_usd=1.00, api_key=FIXTURE_KEY,
+            call_ceiling=3, spend_ceiling_usd=1.01, api_key=FIXTURE_KEY,
             transport=_fixture_transport,
         )
+
+
+def test_preflight_allows_the_authorized_one_dollar_ceiling():
+    result = run_deepseek_flash_preflight(
+        fixture_path=FIXTURE, pricing_path=PRICING, protocol_path=PROTOCOL,
+        call_ceiling=3, spend_ceiling_usd=1.00, api_key=FIXTURE_KEY,
+        transport=_fixture_transport,
+    )
+    assert result["status"] == "PREFLIGHT_NOT_TRAINING"
+    assert result["execution_authority"] == "ABSENT"
+    assert result["accepted_count"] == 3
 
 
 def test_preflight_without_allow_live_never_opens_a_network_transport():
@@ -236,6 +257,7 @@ def test_invalid_decisions_are_rejected_not_accepted():
           "rationale": "R"}, "Actor confidence is invalid"),
         ({"action": "PASS", "confidence": 0.5, "horizon": "", "invalidation": "I",
           "rationale": "R"}, "Actor text fields are invalid"),
+        ({"type": "PASS", "reason": "opaque"}, "Actor output schema mismatch"),
     )
 
     for decision, reason in cases:
@@ -255,11 +277,74 @@ def test_invalid_decisions_are_rejected_not_accepted():
         assert result["records"][0]["rejection_reason"] == reason
 
 
+def test_empty_content_is_rejected_as_non_json():
+    envelope = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    response = json.loads(json.dumps(envelope["response"]))
+    response["choices"][0]["finish_reason"] = "length"
+    response["choices"][0]["message"]["content"] = ""
+
+    def transport(payload, key):
+        return response
+
+    result = run_deepseek_flash_preflight(
+        fixture_path=FIXTURE, pricing_path=PRICING, protocol_path=PROTOCOL,
+        call_ceiling=3, spend_ceiling_usd=0.05, api_key=FIXTURE_KEY,
+        transport=transport,
+    )
+    assert result["accepted_count"] == 0
+    assert result["rejected_count"] == 3
+    assert result["records"][0]["rejection_reason"] == "Actor output is not JSON"
+    assert result["execution_authority"] == "ABSENT"
+
+
+def test_preflight_payload_disables_thinking_and_pins_actor_schema():
+    packet = {"schema_version": "athena-aat-v2-actor-packet-v1", "features": {"opaque": 1}}
+    payload = build_deepseek_payload(packet, max_output_tokens=SINGLE_CALL_OUTPUT_TOKENS)
+    assert payload["thinking"] == {"type": "disabled"}
+    assert payload["response_format"] == {"type": "json_object"}
+    assert payload["max_tokens"] == 512
+    system = payload["messages"][0]["content"]
+    assert system == PREFLIGHT_PROMPT
+    for key in ACTOR_DECISION_KEYS:
+        assert key in system
+    for action in LEGAL_ACTIONS:
+        assert action in system
+    assert "markdown" in system
+    assert "execution_authority" in system
+    assert "PREFLIGHT" in system
+    assert "TRAINING" in system
+
+
+def test_deliberation_preflight_keeps_e_arm_budget_and_disables_thinking():
+    seen = []
+
+    def transport(payload, key):
+        seen.append(payload)
+        return _fixture_transport(payload, key)
+
+    result = run_deepseek_flash_preflight(
+        fixture_path=FIXTURE, pricing_path=PRICING, protocol_path=PROTOCOL,
+        call_ceiling=7, spend_ceiling_usd=1.00, api_key=FIXTURE_KEY,
+        transport=transport, include_deliberation=True,
+    )
+    assert result["request_count"] == 7
+    assert result["execution_authority"] == "ABSENT"
+    assert result["sealed_holdout_consumed"] is False
+    assert [payload["max_tokens"] for payload in seen] == [512, 512, 512, 64, 64, 64, 64]
+    assert all(payload["thinking"] == THINKING for payload in seen)
+    assert all(payload["response_format"] == RESPONSE_FORMAT for payload in seen)
+
+
 def test_deepseek_is_not_registered_as_a_v1_provider():
     assert registered_providers() == ("openai",)
     assert PREFLIGHT_CALL_CEILING == 7
-    assert registered_providers() == ("openai",)
-    assert PREFLIGHT_CALL_CEILING == 7
+    assert PREFLIGHT_SPEND_CEILING_USD == 1.00
+    assert SINGLE_CALL_OUTPUT_TOKENS == 512
+    assert THINKING == {"type": "disabled"}
+    assert RESPONSE_FORMAT == {"type": "json_object"}
+    assert ACTOR_DECISION_KEYS == (
+        "action", "confidence", "horizon", "invalidation", "rationale",
+    )
 
 
 def test_documented_plan_only_command(capsys):

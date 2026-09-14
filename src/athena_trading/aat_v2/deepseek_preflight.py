@@ -9,7 +9,8 @@ This module does not authorize TRAINING, freeze a claim contract, register or
 rewrite a protocol, consume a holdout, or bind DeepSeek as a substitute for the
 registered Terra Actor identity. ``execution_authority`` is always ``ABSENT``.
 Live transport fails closed without ``DEEPSEEK_API_KEY`` and is never implied
-by a plan.
+by a plan. Structured preflight payloads disable thinking and require the
+Actor JSON schema; the PREFLIGHT spend ceiling is not a TRAINING authorization.
 """
 from __future__ import annotations
 
@@ -40,17 +41,31 @@ PRICING_SOURCE_PREFIX = "https://api-docs.deepseek.com/"
 
 #: One synthetic opportunity: B/C/D plus four E turns. Never a TRAINING run.
 PREFLIGHT_CALL_CEILING = 7
-PREFLIGHT_SPEND_CEILING_USD = 0.10
-SINGLE_CALL_OUTPUT_TOKENS = 256
+#: Nick-authorized PREFLIGHT-only spend cap. TRAINING / full-run spend is
+#: separately unauthorized and is not implied by this constant.
+PREFLIGHT_SPEND_CEILING_USD = 1.00
+#: Preflight-only output budget for complete Actor JSON once thinking is off.
+#: The registered TRAINING protocol still uses 256; do not treat 512 as a
+#: TRAINING amendment. Live Flash preflight with thinking enabled exhausted 256
+#: on reasoning tokens (`finish_reason: length`, empty `content`).
+SINGLE_CALL_OUTPUT_TOKENS = 512
 DELIBERATION_OUTPUT_TOKENS = 64
 DELIBERATION_TURNS = 4
 DEFAULT_PREFLIGHT_ARMS = (B_MEMORYLESS, C_NAIVE_MEMORY, D_ATHENA)
 LEGAL_ACTIONS = ("PASS", "ENTER_REDUCED", "ENTER_STANDARD", "ENTER_HIGH_CONVICTION")
+ACTOR_DECISION_KEYS = ("action", "confidence", "horizon", "invalidation", "rationale")
+#: Flash defaults to thinking; reasoning tokens count against max_tokens.
+THINKING = {"type": "disabled"}
+RESPONSE_FORMAT = {"type": "json_object"}
 
 PREFLIGHT_PROMPT = (
     "You are a fail-closed AAT-V2 preflight Actor. Use only the supplied opaque "
-    "features. Return one allowed entry action as JSON. Never claim execution "
-    "authority. This is not TRAINING."
+    "features. Return exactly one JSON object and nothing else: no markdown, no "
+    "code fences, no commentary, no extra keys. Required keys: action, "
+    "confidence, horizon, invalidation, rationale. action must be one of PASS, "
+    "ENTER_REDUCED, ENTER_STANDARD, ENTER_HIGH_CONVICTION. confidence must be a "
+    "number in [0, 1]. horizon, invalidation, and rationale must be non-empty "
+    "strings. Never claim execution_authority. This is PREFLIGHT, not TRAINING."
 )
 
 Transport = Callable[[Mapping[str, Any], str], Mapping[str, Any]]
@@ -203,7 +218,13 @@ def plan_deepseek_flash_dry_run(
 def build_deepseek_payload(
     packet: Mapping[str, Any], *, max_output_tokens: int,
 ) -> dict[str, Any]:
-    """Chat-completions body for a DeepSeek Flash preflight call."""
+    """Chat-completions body for a structured DeepSeek Flash preflight call.
+
+    Thinking is disabled so reasoning tokens cannot consume ``max_tokens`` and
+    leave ``content`` empty. ``response_format`` asks the chat-completions API
+    for a JSON object; validation still fail-closes if the body is not the
+    Actor schema.
+    """
     if max_output_tokens < 1:
         raise DeepSeekPreflightError("output token budget must be positive")
     return {
@@ -216,7 +237,8 @@ def build_deepseek_payload(
             },
         ],
         "max_tokens": max_output_tokens,
-        "response_format": {"type": "json_object"},
+        "response_format": RESPONSE_FORMAT,
+        "thinking": THINKING,
         "stream": False,
     }
 
@@ -462,12 +484,14 @@ def _read_decision(response: Mapping[str, Any]) -> tuple[dict[str, Any] | None, 
     message = choices[0].get("message") if isinstance(choices[0], Mapping) else None
     if not isinstance(message, Mapping) or not isinstance(message.get("content"), str):
         return None, "RESPONSE_NOT_COMPLETED"
+    content = message["content"]
+    if not content.strip():
+        return None, "Actor output is not JSON"
     try:
-        decision = json.loads(message["content"])
+        decision = json.loads(content)
     except json.JSONDecodeError:
         return None, "Actor output is not JSON"
-    required = {"action", "confidence", "horizon", "invalidation", "rationale"}
-    if not isinstance(decision, Mapping) or set(decision) != required:
+    if not isinstance(decision, Mapping) or set(decision) != set(ACTOR_DECISION_KEYS):
         return None, "Actor output schema mismatch"
     if decision["action"] not in LEGAL_ACTIONS:
         return None, "Actor action is not allowed"

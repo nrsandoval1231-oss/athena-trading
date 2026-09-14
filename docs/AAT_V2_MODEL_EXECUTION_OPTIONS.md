@@ -106,8 +106,18 @@ authorization and it is not a provider switch.
 - **Fixture preflight (`--preflight`).** Requires `DEEPSEEK_API_KEY` and fails
   closed without it. Dry-runs at most seven calls (default three: arms B/C/D)
   against `configs/fixtures/deepseek_flash_preflight_v1.json`. Live HTTP is
-  not implied; the CLI injects the fixture transport. Spend ceiling is capped
-  at $0.10.
+  not implied; the CLI injects the fixture transport. The hard PREFLIGHT spend
+  ceiling is $1.00 (Nick-authorized for preflight only; not TRAINING). CLI
+  `--preflight` stays fixture/dry by default. Live library calls still need
+  `allow_live=True` plus `DEEPSEEK_API_KEY`.
+- **Structured Actor JSON.** Preflight payloads send `thinking: {type:
+  disabled}` so Flash reasoning tokens cannot consume `max_tokens` and leave
+  `content` empty. The system prompt requires exactly the Actor keys (`action`,
+  `confidence`, `horizon`, `invalidation`, `rationale`) and legal actions
+  (PASS / ENTER_REDUCED / ENTER_STANDARD / ENTER_HIGH_CONVICTION). Single-call
+  preflight output is 512 tokens so complete JSON can land once thinking is
+  off; the registered TRAINING protocol remains 256. `response_format:
+  json_object` is set. `execution_authority` stays `ABSENT`.
 - **Hard refusals.** `execution_authority` stays `ABSENT`. The Terra protocol
   is consulted and not rewritten; DeepSeek remains an `UNREGISTERED_CANDIDATE`
   and must not reuse the Terra identity. Holdout paths and the consumed AAT-V1
