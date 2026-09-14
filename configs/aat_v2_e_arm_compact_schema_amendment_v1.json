@@ -1,0 +1,62 @@
+{
+  "amendment_hash": "65f581ebed8938a45b389522275ef9066d017947f4ead4eaa6d744708c54ea25",
+  "amendment_kind": "NON_AUTHORIZING_PROTOCOL_NOTE",
+  "base_protocol_hash": "85d97d923f7b502dea20a936abe6334b57df64a677afdb6510376c5ea5b08027",
+  "claim_authorized": false,
+  "deliberation": {
+    "claims": [
+      "MACRO",
+      "PRICE",
+      "NONE"
+    ],
+    "decision_keys": [
+      "turn",
+      "action",
+      "confidence"
+    ],
+    "decision_turn": "RISK",
+    "deliberation_hash": "ebf2db6fa323b7fef6c9274103a219683e128421fd8cbf13ed47fa607606b86a",
+    "legal_actions": [
+      "PASS",
+      "ENTER_REDUCED",
+      "ENTER_STANDARD",
+      "ENTER_HIGH_CONVICTION"
+    ],
+    "per_turn_output_tokens": 64,
+    "prompt": "Fail-closed AAT-V2 arm-E turn. Return exactly one compact JSON object and nothing else: no markdown, no code fences, no commentary, no extra keys, no prose. Never claim execution_authority. This is PREFLIGHT, not TRAINING.",
+    "schema_version": "athena-aat-v2-e-arm-compact-schema-amendment-v1",
+    "single_call_output_tokens": 256,
+    "stance_keys": [
+      "turn",
+      "stance",
+      "confidence",
+      "claim"
+    ],
+    "stance_turns": [
+      "BULL",
+      "BEAR",
+      "TRADER"
+    ],
+    "stances": [
+      "IN",
+      "OUT"
+    ],
+    "turn_roles": [
+      "BULL",
+      "BEAR",
+      "TRADER",
+      "RISK"
+    ],
+    "turns": 4,
+    "unbounded_text_fields": false
+  },
+  "execution_authority": "ABSENT",
+  "execution_authorized": false,
+  "purpose": "Fit arm-E deliberation JSON into the registered 4x64 token budget without raising TRAINING spend. Unbounded Actor text fields truncated at 64 tokens; compact closed-enum turns do not.",
+  "registration_status": "REGISTERED_NOT_AUTHORIZED",
+  "rewrites_registered_protocol": false,
+  "schema_version": "athena-aat-v2-e-arm-compact-schema-amendment-v1",
+  "sealed_holdout_consumed": false,
+  "source_document": "docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md",
+  "training_spend_unchanged": true
+}

@@ -10,7 +10,9 @@ The full macro-only TRAINING plan contains 16,705 opportunities. Arm A is the
 frozen deterministic control and makes no model calls. Arms B, C, and D make
 one call per opportunity. Arm E has four deliberation turns per opportunity,
 with 64 output tokens per turn so its total output allowance equals one 256
--token single call.
+-token single call. Those E-arm turns now require a compact closed-enum JSON
+object rather than the five-field Actor schema. The 4 x 64 = 256 output
+ceiling is unchanged, so TRAINING spend is not raised.
 
 The corrected workload is:
 
@@ -35,13 +37,17 @@ A 100-opportunity, 700-call pilot completed in 2,008.8 seconds:
 
 - B/C/D: 300/300 responses accepted;
 - E: 0/400 responses accepted;
-- E failed because 64 tokens truncated the required JSON (`done_reason:
-  length`);
+- E failed because 64 tokens truncated the required five-field Actor JSON
+  (`done_reason: length`);
 - observed throughput: 0.348 calls/second;
 - extrapolated full-run time: approximately 93.2 hours.
 
 The local model was stopped after the pilot. Its ledger remains in disposable
-ignored temp storage. The full run must not use the current E configuration.
+ignored temp storage. That E configuration required unbounded
+`horizon` / `invalidation` / `rationale` strings on every 64-token turn. A
+non-authorizing compact-schema amendment now binds closed-enum E-arm turns
+that fit the same 64-token budget. TRAINING remains unauthorized; the
+registered protocol is not rewritten.
 
 ## DeepSeek V4.1 Flash API
 
@@ -88,9 +94,13 @@ selected image and inference server. Illustrative compute-only costs for the
 | 200 tokens/sec | 23.8 hr | $8.08 | $17.58 |
 | 500 tokens/sec | 9.5 hr | $3.23 | $7.03 |
 
-These figures exclude storage and setup time. A faster GPU does not fix the
-current E-arm JSON truncation; the protocol still needs an E redesign or a
-B/C/D-only amendment.
+These figures exclude storage and setup time. A faster GPU does not by itself
+fix E-arm JSON truncation. The compact closed-enum schema in
+`configs/aat_v2_e_arm_compact_schema_amendment_v1.json` is the E redesign:
+worst-case valid turns fit the registered 64-token budget under the
+conservative byte/4 proxy. It is a `NON_AUTHORIZING_PROTOCOL_NOTE`. It does
+not raise TRAINING spend, does not rewrite the registered protocol, and does
+not make E optional.
 
 ## DeepSeek Flash dry-run / preflight planner
 
@@ -117,7 +127,14 @@ authorization and it is not a provider switch.
   (PASS / ENTER_REDUCED / ENTER_STANDARD / ENTER_HIGH_CONVICTION). Single-call
   preflight output is 512 tokens so complete JSON can land once thinking is
   off; the registered TRAINING protocol remains 256. `response_format:
-  json_object` is set. `execution_authority` stays `ABSENT`.
+  json_object` is set. Arm E does **not** reuse the five-field Actor schema
+  on 64-token turns. Compact E-arm JSON is `turn` plus closed enums
+  (`stance`/`claim` on BULL/BEAR/TRADER; scored `action` on RISK) with no
+  free-text fields. Fixture preflight `--include-deliberation` replays those
+  compact turns from
+  `configs/fixtures/deepseek_flash_preflight_v1.json` against
+  `configs/aat_v2_e_arm_compact_schema_amendment_v1.json`. `execution_authority`
+  stays `ABSENT`.
 - **Hard refusals.** `execution_authority` stays `ABSENT`. The Terra protocol
   is consulted and not rewritten; DeepSeek remains an `UNREGISTERED_CANDIDATE`
   and must not reuse the Terra identity. Holdout paths and the consumed AAT-V1
@@ -131,7 +148,9 @@ tiny ceilings and still cannot flip authority or consume a holdout.
 ## Decision boundary
 
 The recommended next step remains a bounded hosted-Qwen compatibility
-benchmark or DeepSeek API pilot, not the full run. The dry-run planner above
-is cost and credential evidence for that decision. No provider switch, RunPod
-account charge, TRAINING execution, or holdout operation is authorized by this
-document.
+benchmark or DeepSeek API pilot, not the full run. Arm E's JSON truncation is
+addressed at schema level (compact closed-enum turns at the registered 4 x 64
+budget) without raising TRAINING spend. The dry-run planner above is cost and
+credential evidence for a later authorization decision. No provider switch,
+RunPod account charge, TRAINING execution, or holdout operation is authorized
+by this document.

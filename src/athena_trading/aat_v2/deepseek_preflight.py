@@ -9,8 +9,9 @@ This module does not authorize TRAINING, freeze a claim contract, register or
 rewrite a protocol, consume a holdout, or bind DeepSeek as a substitute for the
 registered Terra Actor identity. ``execution_authority`` is always ``ABSENT``.
 Live transport fails closed without ``DEEPSEEK_API_KEY`` and is never implied
-by a plan. Structured preflight payloads disable thinking and require the
-Actor JSON schema; the PREFLIGHT spend ceiling is not a TRAINING authorization.
+by a plan. Structured preflight payloads disable thinking. B/C/D require the
+Actor JSON schema; arm E uses the compact closed-enum turn schema so 64-token
+turns can complete. The PREFLIGHT spend ceiling is not a TRAINING authorization.
 """
 from __future__ import annotations
 
@@ -25,6 +26,16 @@ from urllib.request import Request, urlopen
 from ..athena_adapter.contracts import canonical_hash
 from ..exogenous import feature_keys
 from .arms import ACTOR_ARMS, B_MEMORYLESS, C_NAIVE_MEMORY, D_ATHENA, E_DELIBERATION
+from .deliberation import (
+    DELIBERATION_OUTPUT_TOKENS,
+    DELIBERATION_PROMPT,
+    DELIBERATION_TURN_ROLES,
+    DELIBERATION_TURNS,
+    DeliberationError,
+    compact_user_payload,
+    load_e_arm_amendment,
+    parse_deliberation_turn,
+)
 from .packet import build_packet
 
 PLAN_SCHEMA = "athena-aat-v2-deepseek-flash-dry-run-v1"
@@ -49,8 +60,6 @@ PREFLIGHT_SPEND_CEILING_USD = 1.00
 #: TRAINING amendment. Live Flash preflight with thinking enabled exhausted 256
 #: on reasoning tokens (`finish_reason: length`, empty `content`).
 SINGLE_CALL_OUTPUT_TOKENS = 512
-DELIBERATION_OUTPUT_TOKENS = 64
-DELIBERATION_TURNS = 4
 DEFAULT_PREFLIGHT_ARMS = (B_MEMORYLESS, C_NAIVE_MEMORY, D_ATHENA)
 LEGAL_ACTIONS = ("PASS", "ENTER_REDUCED", "ENTER_STANDARD", "ENTER_HIGH_CONVICTION")
 ACTOR_DECISION_KEYS = ("action", "confidence", "horizon", "invalidation", "rationale")
@@ -75,6 +84,7 @@ _PROTECTED_ARTIFACTS = (
     "aat_v2_registered_protocol_v1.json",
     "aat_v2_claim_contract_v1.json",
     "aat_consumed_holdouts_v1.json",
+    "aat_v2_e_arm_compact_schema_amendment_v1.json",
 )
 
 
@@ -216,24 +226,41 @@ def plan_deepseek_flash_dry_run(
 
 
 def build_deepseek_payload(
-    packet: Mapping[str, Any], *, max_output_tokens: int,
+    packet: Mapping[str, Any],
+    *,
+    max_output_tokens: int,
+    arm: str | None = None,
+    turn: str | None = None,
 ) -> dict[str, Any]:
     """Chat-completions body for a structured DeepSeek Flash preflight call.
 
     Thinking is disabled so reasoning tokens cannot consume ``max_tokens`` and
     leave ``content`` empty. ``response_format`` asks the chat-completions API
-    for a JSON object; validation still fail-closes if the body is not the
-    Actor schema.
+    for a JSON object. B/C/D still validate the five-field Actor schema; arm E
+    emits the compact closed-enum turn schema that fits 64 tokens.
     """
     if max_output_tokens < 1:
         raise DeepSeekPreflightError("output token budget must be positive")
+    if arm == E_DELIBERATION or turn is not None:
+        if arm not in (E_DELIBERATION, None) or turn is None:
+            raise DeepSeekPreflightError("E-arm preflight requires a deliberation turn")
+        system = DELIBERATION_PROMPT
+        try:
+            user = compact_user_payload(packet, turn=turn)
+        except DeliberationError as exc:
+            raise DeepSeekPreflightError(str(exc)) from exc
+        if max_output_tokens != DELIBERATION_OUTPUT_TOKENS:
+            raise DeepSeekPreflightError("E-arm turns must keep the 64-token budget")
+    else:
+        system = PREFLIGHT_PROMPT
+        user = packet
     return {
         "model": MODEL_ID,
         "messages": [
-            {"role": "system", "content": PREFLIGHT_PROMPT},
+            {"role": "system", "content": system},
             {
                 "role": "user",
-                "content": json.dumps(packet, sort_keys=True, separators=(",", ":")),
+                "content": json.dumps(user, sort_keys=True, separators=(",", ":")),
             },
         ],
         "max_tokens": max_output_tokens,
@@ -251,7 +278,16 @@ def fixture_transport(fixture_path: str | Path) -> Transport:
         _require_key(api_key)
         if payload.get("model") != MODEL_ID:
             raise DeepSeekPreflightError("fixture transport received a non-Flash payload")
-        return dict(envelope["response"])
+        turn = _payload_turn(payload)
+        if turn is None:
+            return dict(envelope["response"])
+        replies = envelope.get("deliberation_responses")
+        if not isinstance(replies, Mapping) or turn not in replies:
+            raise DeepSeekPreflightError("fixture lacks a compact E-arm turn reply")
+        reply = replies[turn]
+        if not isinstance(reply, Mapping):
+            raise DeepSeekPreflightError("fixture E-arm turn reply is unusable")
+        return dict(reply)
 
     return _replay
 
@@ -267,6 +303,7 @@ def run_deepseek_flash_preflight(
     transport: Transport | None = None,
     allow_live: bool = False,
     include_deliberation: bool = False,
+    amendment_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Tiny N-call preflight. Fixture-safe by default; live spend is not implied.
 
@@ -287,6 +324,15 @@ def run_deepseek_flash_preflight(
     _require_key(key)
     pricing = load_deepseek_pricing(pricing_path)
     protocol = load_registered_v2_protocol(protocol_path)
+    if include_deliberation:
+        if amendment_path is None:
+            raise DeepSeekPreflightError(
+                "E-arm preflight requires the non-authorizing compact-schema amendment"
+            )
+        try:
+            load_e_arm_amendment(amendment_path, protocol_path=protocol_path)
+        except DeliberationError as exc:
+            raise DeepSeekPreflightError(str(exc)) from exc
     fixture = _load_preflight_fixture(fixture_path)
     sender = _resolve_transport(transport=transport, allow_live=allow_live)
 
@@ -295,24 +341,26 @@ def run_deepseek_flash_preflight(
         raise DeepSeekPreflightError("preflight arm sequence exceeds call ceiling")
 
     packet = _fixture_packet(fixture)
-    requests = [
-        {
+    requests = []
+    for item in arms:
+        arm = item["arm"]
+        turn = item["turn"]
+        max_output_tokens = (
+            DELIBERATION_OUTPUT_TOKENS if arm == E_DELIBERATION
+            else SINGLE_CALL_OUTPUT_TOKENS
+        )
+        requests.append({
             "arm": arm,
+            "turn": turn,
             "opportunity_id": fixture["opportunity_id"],
-            "max_output_tokens": (
-                DELIBERATION_OUTPUT_TOKENS if arm == E_DELIBERATION
-                else SINGLE_CALL_OUTPUT_TOKENS
-            ),
+            "max_output_tokens": max_output_tokens,
             "payload": build_deepseek_payload(
                 packet,
-                max_output_tokens=(
-                    DELIBERATION_OUTPUT_TOKENS if arm == E_DELIBERATION
-                    else SINGLE_CALL_OUTPUT_TOKENS
-                ),
+                max_output_tokens=max_output_tokens,
+                arm=arm,
+                turn=turn,
             ),
-        }
-        for arm in arms
-    ]
+        })
     worst_cost = _preflight_worst_case_usd(requests, pricing["peak"])
     if worst_cost > spend_ceiling_usd:
         raise DeepSeekPreflightError("worst-case preflight cost exceeds spend ceiling")
@@ -328,10 +376,11 @@ def run_deepseek_flash_preflight(
         actual_cost = _cost_usd(total_input, total_output, pricing["peak"])
         if actual_cost > spend_ceiling_usd:
             raise DeepSeekPreflightError("reported usage exceeds spend ceiling")
-        decision, rejection = _read_decision(response)
+        decision, rejection = _read_decision(response, turn=item["turn"])
         records.append({
             "sequence": index,
             "arm": item["arm"],
+            "turn": item["turn"],
             "opportunity_id": item["opportunity_id"],
             "request_hash": canonical_hash(item["payload"]),
             "accepted": rejection is None,
@@ -427,6 +476,12 @@ def _load_preflight_fixture(path: str | Path) -> dict[str, Any]:
         or not isinstance(payload.get("response"), Mapping)
     ):
         raise DeepSeekPreflightError("DeepSeek preflight fixture is unusable")
+    replies = payload.get("deliberation_responses")
+    if replies is not None:
+        if not isinstance(replies, Mapping) or set(replies) != set(DELIBERATION_TURN_ROLES):
+            raise DeepSeekPreflightError("DeepSeek preflight fixture E-arm replies are unusable")
+        if not all(isinstance(replies[role], Mapping) for role in DELIBERATION_TURN_ROLES):
+            raise DeepSeekPreflightError("DeepSeek preflight fixture E-arm replies are unusable")
     return payload
 
 
@@ -441,14 +496,40 @@ def _fixture_packet(fixture: Mapping[str, Any]) -> dict[str, Any]:
     )
 
 
-def _preflight_arm_sequence(*, include_deliberation: bool) -> tuple[str, ...]:
-    arms: list[str] = list(DEFAULT_PREFLIGHT_ARMS)
+def _preflight_arm_sequence(*, include_deliberation: bool) -> tuple[dict[str, Any], ...]:
+    items: list[dict[str, Any]] = [
+        {"arm": arm, "turn": None} for arm in DEFAULT_PREFLIGHT_ARMS
+    ]
     if include_deliberation:
-        arms.extend(E_DELIBERATION for _ in range(DELIBERATION_TURNS))
-    for arm in arms:
-        if arm not in ACTOR_ARMS:
-            raise DeepSeekPreflightError(f"preflight cannot call arm {arm}")
-    return tuple(arms)
+        items.extend(
+            {"arm": E_DELIBERATION, "turn": role} for role in DELIBERATION_TURN_ROLES
+        )
+    if len(items) != (
+        len(DEFAULT_PREFLIGHT_ARMS)
+        + (DELIBERATION_TURNS if include_deliberation else 0)
+    ):
+        raise DeepSeekPreflightError("preflight arm sequence is malformed")
+    for item in items:
+        if item["arm"] not in ACTOR_ARMS:
+            raise DeepSeekPreflightError(f"preflight cannot call arm {item['arm']}")
+    return tuple(items)
+
+
+def _payload_turn(payload: Mapping[str, Any]) -> str | None:
+    messages = payload.get("messages")
+    if not isinstance(messages, list) or len(messages) < 2:
+        return None
+    user = messages[1]
+    if not isinstance(user, Mapping) or not isinstance(user.get("content"), str):
+        return None
+    try:
+        body = json.loads(user["content"])
+    except json.JSONDecodeError:
+        return None
+    turn = body.get("turn") if isinstance(body, Mapping) else None
+    if turn in DELIBERATION_TURN_ROLES:
+        return turn
+    return None
 
 
 def _preflight_worst_case_usd(
@@ -475,16 +556,31 @@ def _read_usage(response: Mapping[str, Any]) -> tuple[int, int]:
     return prompt_tokens, completion_tokens
 
 
-def _read_decision(response: Mapping[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+def _read_decision(
+    response: Mapping[str, Any], *, turn: str | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
     if response.get("model") != MODEL_ID:
         return None, "MODEL_IDENTITY_DRIFT"
     choices = response.get("choices")
     if not isinstance(choices, list) or not choices:
         return None, "RESPONSE_NOT_COMPLETED"
-    message = choices[0].get("message") if isinstance(choices[0], Mapping) else None
+    choice = choices[0] if isinstance(choices[0], Mapping) else None
+    message = choice.get("message") if isinstance(choice, Mapping) else None
     if not isinstance(message, Mapping) or not isinstance(message.get("content"), str):
         return None, "RESPONSE_NOT_COMPLETED"
     content = message["content"]
+    finish_reason = choice.get("finish_reason") if isinstance(choice, Mapping) else None
+    done_reason = response.get("done_reason")
+    if turn is not None:
+        try:
+            return parse_deliberation_turn(
+                content,
+                turn=turn,
+                finish_reason=finish_reason if isinstance(finish_reason, str) else None,
+                done_reason=done_reason if isinstance(done_reason, str) else None,
+            )
+        except DeliberationError as exc:
+            raise DeepSeekPreflightError(str(exc)) from exc
     if not content.strip():
         return None, "Actor output is not JSON"
     try:

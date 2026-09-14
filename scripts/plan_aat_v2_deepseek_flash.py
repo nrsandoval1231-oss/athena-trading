@@ -10,7 +10,9 @@ Default is plan-only: no model call, no credential required.
 ``--preflight`` dry-runs a tiny N-call against the shipped fixture. Missing
 ``DEEPSEEK_API_KEY`` fails closed. Live spend is not implied; the planner
 refuses a live transport unless library callers pass ``allow_live=True``.
-Thinking is disabled and the Actor JSON schema is required on that path.
+Thinking is disabled. B/C/D require the Actor JSON schema; arm E uses the
+compact closed-enum turn schema. Live spend is not implied; the planner
+refuses a live transport unless library callers pass ``allow_live=True``.
 """
 from __future__ import annotations
 
@@ -32,6 +34,7 @@ DEFAULT_PLAN = ROOT / "configs" / "aat_v2_training_plan_v2.json"
 DEFAULT_PRICING = ROOT / "configs" / "deepseek_flash_pricing_2026-09-14.json"
 DEFAULT_PROTOCOL = ROOT / "configs" / "aat_v2_registered_protocol_v1.json"
 DEFAULT_FIXTURE = ROOT / "configs" / "fixtures" / "deepseek_flash_preflight_v1.json"
+DEFAULT_AMENDMENT = ROOT / "configs" / "aat_v2_e_arm_compact_schema_amendment_v1.json"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -57,7 +60,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--include-deliberation", action="store_true",
-        help="add four E-arm turns to the fixture preflight (still capped at 7)",
+        help="add four compact E-arm turns to the fixture preflight (still capped at 7)",
+    )
+    parser.add_argument(
+        "--amendment",
+        type=Path,
+        default=DEFAULT_AMENDMENT,
+        help="non-authorizing E-arm compact-schema amendment; required with --include-deliberation",
     )
     args = parser.parse_args(argv)
 
@@ -70,6 +79,7 @@ def main(argv: list[str] | None = None) -> int:
                 call_ceiling=args.call_ceiling,
                 spend_ceiling_usd=args.spend_ceiling_usd,
                 include_deliberation=args.include_deliberation,
+                amendment_path=args.amendment if args.include_deliberation else None,
                 transport=fixture_transport(args.fixture),
             )
         else:
