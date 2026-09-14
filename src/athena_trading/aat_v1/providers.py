@@ -25,7 +25,9 @@ prefix is documented in that vendor's provenance record.  ``OPENAI`` stays the
 only *V1-registered* provider: a consumed holdout cannot grow a second vendor.
 ``DEEPSEEK`` is a named descriptor for a V2 candidate / pilot identity.  It is
 not inserted into ``_REGISTRY``, so ``registered_providers()`` remains
-``("openai",)`` and V1 receipts keep their meaning.
+``("openai",)`` and V1 receipts keep their meaning.  ``OLLAMA`` is the local
+Qwen TRAINING candidate descriptor.  It is also declared, not V1-registered,
+and does not inherit Terra or DeepSeek evidence.
 """
 from __future__ import annotations
 
@@ -185,7 +187,71 @@ DEEPSEEK = ProviderDescriptor(
     },
 )
 
-#: V1 registry stays a singleton. DeepSeek is declared, not registered here.
+
+def _ollama_payload(
+    model_id: str, packet: Mapping[str, Any], prompt: Any, spec: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    """Chat body for the local Ollama Qwen TRAINING candidate.
+
+    Thinking is disabled when the runtime honors ``think: false``. ``format``
+    asks for a JSON object. This is the B/C/D Actor path; arm E compact turns
+    are assembled by V2 deliberation code.
+    """
+    inference = spec["inference"]
+    return {
+        "model": model_id,
+        "messages": [
+            {"role": "system", "content": prompt},
+            {
+                "role": "user",
+                "content": json.dumps(packet, sort_keys=True, separators=(",", ":")),
+            },
+        ],
+        "stream": False,
+        "think": False,
+        "format": "json",
+        "options": {"num_predict": inference["max_output_tokens"]},
+    }
+
+
+def _ollama_output_text(response: Mapping[str, Any]) -> str:
+    if isinstance(response.get("output_text"), str):
+        return response["output_text"]
+    message = response.get("message")
+    if isinstance(message, Mapping) and isinstance(message.get("content"), str):
+        return message["content"]
+    if isinstance(response.get("response"), str):
+        return response["response"]
+    raise AATValidationError("Actor response lacks output text")
+
+
+def _ollama_usage(response: Mapping[str, Any]) -> tuple[int, int]:
+    """Return Ollama ``prompt_eval_count`` / ``eval_count`` when present.
+
+    Missing counts are not invented here. The TRAINING transport may fall back
+    to a labeled byte/4 estimate; that estimate is not vendor usage.
+    """
+    prompt_tokens = response.get("prompt_eval_count")
+    completion_tokens = response.get("eval_count")
+    if not isinstance(prompt_tokens, int) or not isinstance(completion_tokens, int):
+        raise AATValidationError("Actor usage evidence is malformed")
+    if prompt_tokens < 0 or completion_tokens < 0:
+        raise AATValidationError("Actor usage evidence is malformed")
+    return prompt_tokens, completion_tokens
+
+
+OLLAMA = ProviderDescriptor(
+    provider="ollama",
+    endpoint="http://127.0.0.1:11434/api/chat",
+    pricing_schema="ollama-local-unpriced-v1",
+    pricing_source_prefix="https://github.com/ollama/",
+    build_payload=_ollama_payload,
+    read_output_text=_ollama_output_text,
+    read_usage=_ollama_usage,
+    build_headers=lambda _key: {"Content-Type": "application/json"},
+)
+
+#: V1 registry stays a singleton. DeepSeek and Ollama are declared, not registered.
 _REGISTRY: dict[str, ProviderDescriptor] = {OPENAI.provider: OPENAI}
 
 

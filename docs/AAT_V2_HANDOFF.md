@@ -3,10 +3,13 @@
 Written 8 September 2026. Status refreshed 14 September 2026 against current
 `main` (macro-only claim contract, `REGISTERED_NOT_AUTHORIZED` protocol,
 GDELT rejection, TRAINING dry-run plans, model-execution options, the
-non-authorizing E-arm compact-schema amendment, and a DeepSeek Flash
-**candidate / pilot** identity). The Terra protocol is unchanged. The DeepSeek
-path is not TRAINING authorization. Nick authorized a **bigger live Flash
-pilot** at $50 / ~500 calls / ~71 opportunities; that is still not TRAINING.
+non-authorizing E-arm compact-schema amendment, a DeepSeek Flash
+**candidate / pilot** identity, and a **local Ollama / Qwen TRAINING
+candidate** identity). The Terra protocol is unchanged. Nick authorized a
+**bigger live Flash pilot** at $50 / ~500 calls / ~71 opportunities; that
+is still not TRAINING. DeepSeek API overload (503) blocked that sample;
+Nick then authorized a pivot to a fail-closed local Ollama TRAINING path.
+That plumbing does not silently flip Terra to authorized.
 
 **One-line status.** The V2 experiment is built through a frozen macro-only
 claim contract and a `REGISTERED_NOT_AUTHORIZED` protocol.
@@ -16,12 +19,15 @@ raising TRAINING spend. A live DeepSeek Flash pilot (not TRAINING) accepted
 B/C/D 21/21 and E only 3/28, mostly schema mismatch rather than truncation;
 E prompts now carry per-turn example json and rejected receipts store a raw
 snippet. Nick authorized a bigger live Flash sample at $50 / ~500 calls
-(~71 opportunities × 7 = 497 with deliberation); that is still not
-TRAINING. Adapters are not the blocker: the ALFRED macro adapter is built,
-GDELT was rejected for this run after a bounded coverage study, and news
-stays explicitly missing. DeepSeek Flash remains a provider-scoped
-**candidate / pilot** identity. TRAINING cannot run until a separate
-authorization supplies Actor credentials and spend.
+(~71 opportunities × 7 = 497 with deliberation); API 503 blocked it, and
+that path is still not TRAINING. Adapters are not the blocker: the ALFRED
+macro adapter is built, GDELT was rejected for this run after a bounded
+coverage study, and news stays explicitly missing. DeepSeek Flash remains a
+provider-scoped **candidate / pilot** identity. Local Ollama
+`qwen3-coder:30b` is a separate hashed `LOCAL_TRAINING_CANDIDATE`. Full
+in-sample TRAINING against it is allowed only with Nick's authorization
+artifact **and** `--authorize-local-training` on his desktop. Astra Desk
+stays isolated. Holdout stays untouched.
 
 ---
 
@@ -350,26 +356,30 @@ deleted and redrawn under the fix.
 | Phase 3 coverage / claim contract | **Frozen, macro-only.** Required source is `macro` at floor 0.90; frozen measured coverage is macro 1.0, news 0.0. `claim_authorized` is false. Do not freeze a new contract. |
 | Phase 3 protocol registration | **Registered as `REGISTERED_NOT_AUTHORIZED`.** `configs/aat_v2_registered_protocol_v1.json`. Actor identity remains OpenAI / `gpt-5.6-terra`. DeepSeek Flash is a separate `CANDIDATE_PILOT` identity and does not rewrite this protocol. |
 | Phase 3 TRAINING dry-run plans | Present. `configs/aat_v2_training_plan_v2.json` supersedes v1: 16,705 opportunities, **116,935** planned calls, `dry_run: true`, `execution_authorized: false`. |
-| Model execution options | Documented in `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. DeepSeek Flash dry-run / fixture preflight planner exists; thinking is disabled and Actor JSON is required on the B/C/D path. Arm E uses the compact closed-enum schema with per-turn example json after the live Flash E mismatch. A bounded pilot entrypoint exists (`scripts/run_aat_v2_deepseek_flash_pilot.py`) and defaults to fixture/dry. Nick-authorized **bigger live pilot** (not TRAINING): **500 calls**, **$50.00**, **71 opportunities** (71 × 7 = 497 with E). Hard fail-closed caps are 80 opportunities / 500 calls / $50.00. Dry default stays 1 / 7 / $1.00. Hard PREFLIGHT spend ceiling remains $1.00. |
-| Phase 3 TRAINING run | **Blocked — needs authorized TRAINING execution, Actor credentials, and spend.** Not blocked on missing adapters. |
-| Phase 4 sealed holdout | Not started; needs a completed Phase 3 TRAINING run and separate authorization. The consumed AAT-V1 holdout must not be reused. |
+| Model execution options | Documented in `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. DeepSeek Flash dry-run / fixture preflight planner exists; thinking is disabled and Actor JSON is required on the B/C/D path. Arm E uses the compact closed-enum schema with per-turn example json after the live Flash E mismatch. A bounded pilot entrypoint exists (`scripts/run_aat_v2_deepseek_flash_pilot.py`) and defaults to fixture/dry. Nick-authorized **bigger live Flash pilot** (not TRAINING): **500 calls**, **$50.00**, **71 opportunities** (71 × 7 = 497 with E). Hard fail-closed caps are 80 opportunities / 500 calls / $50.00. Dry default stays 1 / 7 / $1.00. Hard PREFLIGHT spend ceiling remains $1.00. DeepSeek API 503 blocked that bigger sample. **Tonight's path is local Ollama.** |
+| Local Ollama TRAINING plumbing | Present. Hashed identity `configs/aat_v2_ollama_qwen_actor_identity_v1.json` (`LOCAL_TRAINING_CANDIDATE`, default model `qwen3-coder:30b`). Authorization artifact `configs/aat_v2_ollama_local_training_authorization_v1.json` records Nick's local-TRAINING direction but still requires `--authorize-local-training` and does **not** rewrite Terra. Runner: `scripts/run_aat_v2_ollama_local_training.py`. Defaults to dry smoke (tiny N, mocked transport). Live loopback HTTP is `--allow-live-ollama`. Full 16,705 / 116,935 requires the flag plus frozen receipts. Resume/checkpoint is supported. Status `LOCAL_TRAINING_IN_SAMPLE` or `LOCAL_TRAINING_SMOKE`; `execution_authority` `ABSENT`. |
+| Phase 3 TRAINING run | **Local Ollama plumbing is ready; the 116,935-call run is not started in-repo.** Nick can smoke then start overnight on his desktop. Prior local evidence: ~0.348 calls/s → **~93h** full-run estimate. "Tonight" means *start* tonight, not finish. Compact E-arm schema now applies; re-benchmark after a 2-opportunity live warmup. DeepSeek remains blocked on API overload. |
+| Phase 4 sealed holdout | Not started; needs a completed Phase 3 TRAINING run and separate authorization. The consumed AAT-V1 holdout must not be reused. V2 holdout symbols must not appear in the TRAINING index. |
 | AAT-V1 | Frozen and closed. Holdout consumed (`INVALID_EVIDENCE`). Limitation stands. |
-| Execution authority | `ABSENT` everywhere. No live-trading code exists. |
+| Execution authority | `ABSENT` everywhere. No live-trading code exists. Astra Desk stays isolated. |
 
-### Why the run is blocked
+### Why the run was blocked, and what tonight changes
 
 Not on adapters, and not on an unfrozen contract. The macro-only claim contract
-is already frozen and the protocol is already registered. What remains is
-**authorization**: `registration_status` is `REGISTERED_NOT_AUTHORIZED`,
-`execution_authorized` is false on the TRAINING plans, and
-`execution_authority` is `ABSENT`. A full run also needs a priced Actor
-credential (DeepSeek Flash and hosted Qwen are planning options in
-`docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`) and an explicit spend ceiling.
+is already frozen and the protocol is already registered as
+`REGISTERED_NOT_AUTHORIZED`. DeepSeek Flash was the hosted candidate; a
+bounded live pilot ran, then API 503 blocked the bigger Flash sample. Nick
+authorized a pivot to **local Ollama** on his desktop (`qwen3-coder:30b`,
+RTX 5060 8 GB + ~33.8 GB RAM).
 
-The earlier coverage refusal still exists as a guard, and it already fired for
-news: GDELT's 0.0778% measured coverage could not meet the floor, so news was
-dropped from `required_sources` rather than lowering the floor. Do not reverse
-that by treating a missing adapter as the next coding task.
+That pivot ships execution *plumbing*. It does not rewrite
+`configs/aat_v2_registered_protocol_v1.json`, does not grant broker
+`execution_authority`, and does not consume V1 or V2 holdout. Full TRAINING
+still needs Nick's `--authorize-local-training` flag on the machine that
+hosts Ollama. A prior 100-opportunity local pilot was ~93 hours at 0.348
+calls/s with E truncated under the old five-field schema. Compact E JSON now
+applies; wall-clock must be re-benchmarked. Do not expect the 116,935-call
+run to finish in one night.
 
 ```
 registration_status: REGISTERED_NOT_AUTHORIZED
@@ -381,13 +391,13 @@ execution_authority: ABSENT
 
 ## 5. Handoff — what to do next
 
-### Immediate: authorized TRAINING execution, not more adapters
+### Immediate: local Ollama TRAINING on Nick's desktop
 
 The ALFRED adapter exists. GDELT was evaluated and rejected for this run. The
 macro-only claim contract is frozen; the protocol is
 `REGISTERED_NOT_AUTHORIZED`; the corrected dry-run plan is 116,935 calls.
-Nothing below authorizes TRAINING, freezes a new contract, or touches the
-consumed AAT-V1 holdout.
+Nothing below authorizes broker execution, freezes a new contract, or touches
+the consumed AAT-V1 holdout. Astra Desk stays isolated.
 
 1. **Do not acquire a news dump for this run.** GDELT coverage was 0.0778%
    under the frozen compressor window. News remains explicitly missing unless
@@ -397,48 +407,34 @@ consumed AAT-V1 holdout.
 2. **Do not freeze another claim contract.** The current one already binds
    measured macro coverage 1.0 at a 0.90 floor. Lowering the floor because
    coverage disappointed is the move the contract exists to prevent.
-3. **Obtain Actor credentials and an explicit spend ceiling.** The planner
-   `scripts/plan_aat_v2_deepseek_flash.py` estimates DeepSeek Flash cost from
-   the frozen prices in `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md` (~$32.68
-   off-peak / ~$65.35 peak cache-miss worst case). Plan-only needs no key.
-   `--preflight` fails closed without `DEEPSEEK_API_KEY` and dry-runs a tiny
-   N-call against `configs/fixtures/deepseek_flash_preflight_v1.json`. Live
-   Flash preflight must disable thinking and require the Actor JSON schema
-   (`action`, `confidence`, `horizon`, `invalidation`, `rationale`); otherwise
-   reasoning tokens empty `content` or the model returns non-Actor keys.
-   The hard PREFLIGHT spend ceiling is $1.00 and is not TRAINING
-   authorization. CLI `--preflight` stays fixture/dry; live still needs
-   `allow_live=True` plus the env key. It does not authorize TRAINING, does
-   not register DeepSeek as the V2 Actor, and does not consume a holdout.
-   `execution_authority` stays `ABSENT`.
-4. **DeepSeek Flash has a provider-scoped candidate identity and a bounded
-   pilot. That is not TRAINING.** Changing off Terra changes Actor identity.
-   The hashed identity is `configs/aat_v2_deepseek_flash_actor_identity_v1.json`
-   (`CANDIDATE_PILOT`). The Terra protocol is consulted and not reused.
-   `scripts/run_aat_v2_deepseek_flash_pilot.py` defaults to fixture/dry.
-   Live still requires explicit `--allow-live`, `DEEPSEEK_API_KEY`,
-   `--call-ceiling`, and `--spend-ceiling-usd`. Nick-authorized **bigger
-   live pilot** (not TRAINING): about 500 calls and $50.00, typically 71
-   synthetic opportunities with B/C/D plus four compact E turns
-   (`71 × 7 = 497` calls). Dry default stays 1 / 7 / $1.00. Fail-closed
-   above 80 opportunities, 500 calls, or $50.00. Nick already ran a first
-   live sample under the earlier $5 / 50-call caps: status
-   `PILOT_NOT_TRAINING`, `execution_authority` `ABSENT`, holdout untouched,
-   cost about `$0.012`. B/C/D accepted 21/21; E accepted 3/28 (24 schema
-   mismatch, 1 `OUTPUT_TRUNCATED`) before the E-prompt harden. Re-run the
-   bigger live command only after this ceiling raise merges:
-
-   ```
-   python scripts/run_aat_v2_deepseek_flash_pilot.py --allow-live --opportunities 71 --call-ceiling 500 --spend-ceiling-usd 50.00
-   ```
-
-   Hosted Qwen remains a separate candidate. Do not silently reuse the
-   Terra protocol. Do not treat this as TRAINING authorization.
+3. **Tonight: local Ollama, not DeepSeek API.** Flash remains a
+   `CANDIDATE_PILOT`. Nick authorized a bigger live Flash sample at 500
+   calls / $50 / 71 opportunities; API 503 blocked it. Do not retry a
+   TRAINING-sized DeepSeek spend while 503s persist. Local identity:
+   `configs/aat_v2_ollama_qwen_actor_identity_v1.json`. Default model
+   `qwen3-coder:30b` (a different Ollama tag is a new hashed identity, not a
+   runtime swap). Transport is loopback `http://127.0.0.1:11434/api/chat`
+   with `think: false`. Compact E-arm schema applies.
+4. **Smoke, then optional 2-opportunity live warmup, then overnight full
+   start.** Exact commands are in `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`.
+   Default CLI is mocked smoke. Live needs `--allow-live-ollama`. The full
+   16,705-opportunity run needs `--authorize-local-training` plus frozen
+   TRAINING index/snapshot receipts. `--resume` is required after a hitch.
+   Prior local estimate ~93 hours: start tonight; do not assume a finish
+   tonight. Re-benchmark E accept rate under the compact schema before
+   treating throughput as known.
+5. **DeepSeek Flash identity and bounded pilot remain in-tree and are not
+   TRAINING.** The bigger-pilot command is still
+   `python scripts/run_aat_v2_deepseek_flash_pilot.py --allow-live --opportunities 71 --call-ceiling 500 --spend-ceiling-usd 50.00`
+   if the API recovers. Hard caps stay 80 / 500 / $50.00. Do not silently
+   reuse the Terra protocol for either vendor.
 
 ### Then, in order
 
-Item 5 below is done. The DeepSeek identity + bounded pilot in item 4 is
-machinery only. Items 6-8 still wait on explicit TRAINING authorization.
+Item 5 below is done. Local Ollama TRAINING plumbing is in-tree and is
+in-sample execution under Nick's flag, not a Terra protocol promotion.
+DeepSeek identity + bounded pilot remains machinery only. Items 6-8 still
+wait on a completed in-sample run and separate holdout authorization.
 
 5. **E-arm JSON truncation is addressed without TRAINING spend.** The local
    Qwen 100-opportunity pilot accepted 0/400 E responses because 64-token
@@ -462,17 +458,15 @@ machinery only. Items 6-8 still wait on explicit TRAINING authorization.
 
 ### Open decisions still outstanding
 
-- **Which hosted runtime to authorize, if any.** DeepSeek Flash API vs
-  RunPod-hosted Qwen vs staying on Terra. Cost, E-arm compatibility, and the
-  DeepSeek candidate identity / pilot knobs are in
-  `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. Declaring the identity and shipping
-  the fixture pilot does not authorize live spend or TRAINING.
+- **Whether tonight's local Ollama start finishes, and at what E accept
+  rate.** Compact E JSON is bound; the old 0/400 E result is stale. A 2-
+  opportunity live warmup should precede the overnight start. Hosted Flash
+  remains blocked on API 503. RunPod-hosted Qwen remains a separate
+  candidate. Declaring the Ollama identity does not rewrite Terra.
 - **Whether arm E earns its cost.** It is the most interesting thing
   TradingAgents does and the least likely to survive an equal-budget
   comparison. The 64-token turn no longer requires unbounded Actor JSON; the
-  compact schema is bound but TRAINING is still unauthorized. E stays in the
-  registered arm set. A later authorization still has to decide whether to
-  spend on it.
+  compact schema is bound. E stays in the registered arm set.
 - **Which Tier-2 sources to adopt at all.** Social has sound timestamps but
   awkward retrieval — Pushshift has no public API since losing privileged
   ingestion after Reddit's 2023 changes; historical access now runs through
@@ -493,8 +487,10 @@ at 1.0. Do not reopen it after looking at a result.
   pass `prior_close`.
 - Compressor scoring semantics are frozen but unvalidated.
 - Only one Actor provider is registered in V1 (`openai`). DeepSeek Flash is a
-  V2 `CANDIDATE_PILOT` identity with a bounded fixture pilot. It is not the
-  registered Terra Actor, and the pilot is not TRAINING.
+  V2 `CANDIDATE_PILOT` identity with a bounded fixture pilot. Local Ollama
+  Qwen is a V2 `LOCAL_TRAINING_CANDIDATE` identity. Neither is the registered
+  Terra Actor. Local TRAINING receipts are in-sample and still
+  `execution_authority: ABSENT`.
 - `four_arm.py` is pinned to OpenAI by design.
 - Exogenous coverage is denser for large caps and for names that later moved.
   Coverage density is emitted as a feature so the effect stays measurable, but
@@ -518,12 +514,9 @@ cannot spend. Whether adaptation helps is still unknown. The machinery can
 produce a defensible answer either way — including "it did not help" — once
 TRAINING is separately authorized.
 
-The next real risk is not a missing adapter, and it is no longer "E cannot
-emit JSON at 64 tokens" or "Flash E emits the wrong object." It is
-authorizing spend, or promoting the DeepSeek pilot identity into the
-registered protocol, without a separately verified live E-arm accept rate
-and a new TRAINING authorization; and the temptation, once a full run is
-expensive, to lower a frozen floor or reuse the consumed V1 holdout.
-The contract, the protocol status, the candidate identity, the compact-schema
-amendment, and the consumed-holdout registry are written to make those moves
-visible. Keep them that way.
+The next real risk is not a missing adapter. It is promoting the local Ollama
+or DeepSeek identity into the registered Terra protocol, treating a ~93h
+start as a finished claim, lowering a frozen floor, or reusing the consumed
+V1 holdout. The contract, the protocol status, the candidate identities, the
+compact-schema amendment, the local-TRAINING CLI flag, and the consumed-
+holdout registry are written to make those moves visible. Keep them that way.

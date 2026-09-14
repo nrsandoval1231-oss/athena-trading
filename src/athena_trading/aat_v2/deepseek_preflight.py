@@ -96,6 +96,8 @@ _PROTECTED_ARTIFACTS = (
     "aat_v2_e_arm_compact_schema_amendment_v1.json",
     "aat_v2_deepseek_flash_actor_identity_v1.json",
     "aat_v2_actor_identity_v1.json",
+    "aat_v2_ollama_qwen_actor_identity_v1.json",
+    "aat_v2_ollama_local_training_authorization_v1.json",
 )
 
 
