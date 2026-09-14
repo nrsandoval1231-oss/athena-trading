@@ -1,12 +1,15 @@
 # AAT-V2 Progress, Status and Handoff
 
-Written 8 September 2026. Covers the work from the TradingAgents comparison
-through Phase 3 of `docs/AAT_V2_PLAN.md`.
+Written 8 September 2026. Status refreshed 14 September 2026 against current
+`main` (macro-only claim contract, `REGISTERED_NOT_AUTHORIZED` protocol,
+GDELT rejection, TRAINING dry-run plans, and model-execution options).
 
-**One-line status.** The V2 experiment is fully built and cannot run. Every
-piece of machinery exists and is tested; the comparison is blocked on
-acquiring exogenous data, which requires vendor decisions and credentials that
-no amount of further coding will produce.
+**One-line status.** The V2 experiment is built through a frozen macro-only
+claim contract and a `REGISTERED_NOT_AUTHORIZED` protocol.
+`execution_authority` is `ABSENT`. Adapters are not the blocker: the ALFRED
+macro adapter is built, GDELT was rejected for this run after a bounded
+coverage study, and news stays explicitly missing. TRAINING cannot run until
+a separate authorization supplies Actor credentials and spend.
 
 ---
 
@@ -316,97 +319,122 @@ deleted and redrawn under the fix.
 | Phase 2 sufficiency probe | Built, verified on the 249/300 case |
 | Phase 3 arms / packet / contract | Built, 49 tests |
 | Phase 3 dataset assignment | **Drawn and frozen** |
-| Macro ALFRED adapter | Built, fixture-tested. No data acquired. |
-| Phase 3 coverage measurement | **Blocked — no data** |
-| Phase 3 claim contract freeze | **Blocked — needs measured coverage** |
-| Phase 3 protocol registration | **Blocked — needs the contract** |
-| Phase 3 TRAINING run | **Blocked — needs data, credentials, spend** |
-| Phase 4 sealed holdout | Not started; needs Phase 3 and separate authorization |
-| AAT-V1 | Frozen and closed. Holdout consumed. Limitation stands. |
+| Macro ALFRED adapter | Built and fixture-tested (`exogenous/alfred.py`). Provenance in `docs/ALFRED_MACRO_SOURCE_PROVENANCE.md`. No dump is committed. |
+| GDELT news parser | Built and fixture-tested. Bounded coverage study complete. **Rejected for this run** (0.0778% `news_present` on the 16,705-opportunity TRAINING index). News stays explicitly missing. See `docs/GDELT_NEWS_SOURCE_PROVENANCE.md`. |
+| Phase 3 coverage / claim contract | **Frozen, macro-only.** Required source is `macro` at floor 0.90; frozen measured coverage is macro 1.0, news 0.0. `claim_authorized` is false. Do not freeze a new contract. |
+| Phase 3 protocol registration | **Registered as `REGISTERED_NOT_AUTHORIZED`.** `configs/aat_v2_registered_protocol_v1.json`. Actor identity remains OpenAI / `gpt-5.6-terra`. |
+| Phase 3 TRAINING dry-run plans | Present. `configs/aat_v2_training_plan_v2.json` supersedes v1: 16,705 opportunities, **116,935** planned calls, `dry_run: true`, `execution_authorized: false`. |
+| Model execution options | Documented in `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. DeepSeek Flash dry-run / fixture preflight planner exists; it does not authorize TRAINING. |
+| Phase 3 TRAINING run | **Blocked — needs authorized TRAINING execution, Actor credentials, and spend.** Not blocked on missing adapters. |
+| Phase 4 sealed holdout | Not started; needs a completed Phase 3 TRAINING run and separate authorization. The consumed AAT-V1 holdout must not be reused. |
+| AAT-V1 | Frozen and closed. Holdout consumed (`INVALID_EVIDENCE`). Limitation stands. |
 | Execution authority | `ABSENT` everywhere. No live-trading code exists. |
 
 ### Why the run is blocked
 
-Not on code. `freeze_claim_contract()` requires a **measured** exogenous
-coverage rate and refuses an intended one:
+Not on adapters, and not on an unfrozen contract. The macro-only claim contract
+is already frozen and the protocol is already registered. What remains is
+**authorization**: `registration_status` is `REGISTERED_NOT_AUTHORIZED`,
+`execution_authorized` is false on the TRAINING plans, and
+`execution_authority` is `ABSENT`. A full run also needs a priced Actor
+credential (DeepSeek Flash and hosted Qwen are planning options in
+`docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`) and an explicit spend ceiling.
+
+The earlier coverage refusal still exists as a guard, and it already fired for
+news: GDELT's 0.0778% measured coverage could not meet the floor, so news was
+dropped from `required_sources` rather than lowering the floor. Do not reverse
+that by treating a missing adapter as the next coding task.
 
 ```
-ContractError: measured coverage is required; a contract cannot be frozen
-against an intended coverage rate
+registration_status: REGISTERED_NOT_AUTHORIZED
+claim_authorized: false
+execution_authority: ABSENT
 ```
-
-Coverage decides whether the comparison has power at all. If most
-opportunities carry no exogenous evidence, arms B through E are the control arm
-with extra steps and a null result says nothing about adaptation. That number
-cannot exist until Tier-1 ingest runs, and the refusal is deliberate.
 
 ---
 
 ## 5. Handoff — what to do next
 
-### Immediate: acquire Tier-1 data
+### Immediate: authorized TRAINING execution, not more adapters
 
-The ALFRED macro adapter exists (`src/athena_trading/exogenous/alfred.py`,
-provenance in `docs/ALFRED_MACRO_SOURCE_PROVENANCE.md`). Data has not been
-acquired and coverage has not been measured. The remaining critical path is
-credentials and a news vendor, not a second record type.
+The ALFRED adapter exists. GDELT was evaluated and rejected for this run. The
+macro-only claim contract is frozen; the protocol is
+`REGISTERED_NOT_AUTHORIZED`; the corrected dry-run plan is 116,935 calls.
+Nothing below authorizes TRAINING, freezes a new contract, or touches the
+consumed AAT-V1 holdout.
 
-1. **Macro (grade A).** Pull ALFRED vintages with `FRED_API_KEY` through
-   `fetch_alfred_observations` (vintage window required; never the current-view
-   series). Map with `alfred_adapter`. Do not commit a dump.
-2. **News (grade A−).** Pick a source and enforce first-seen publication
-   timestamps at ingest. GDELT is free with real event timestamps and noisy; a
-   commercial wire archive is cleaner if budget allows. Whichever is chosen,
-   write a provenance document to the standard of
-   `docs/HISTORICAL_SOURCE_PROVENANCE.md` before Phase 3 registers anything.
-3. Remaining vendor adapters stay a pure per-row function
-   (`Adapter = Callable[[Mapping], ExogenousRecord]`). `passthrough_adapter` is
-   still the contract-shaped reference; `alfred_adapter` is the macro vendor.
+1. **Do not acquire a news dump for this run.** GDELT coverage was 0.0778%
+   under the frozen compressor window. News remains explicitly missing unless
+   a future provider supplies stable historical entity IDs and defensible
+   point-in-time coverage, and that would be a *new* required-source decision
+   — not a silent add to the frozen contract.
+2. **Do not freeze another claim contract.** The current one already binds
+   measured macro coverage 1.0 at a 0.90 floor. Lowering the floor because
+   coverage disappointed is the move the contract exists to prevent.
+3. **Obtain Actor credentials and an explicit spend ceiling.** The planner
+   `scripts/plan_aat_v2_deepseek_flash.py` estimates DeepSeek Flash cost from
+   the frozen prices in `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md` (~$32.68
+   off-peak / ~$65.35 peak cache-miss worst case). Plan-only needs no key.
+   `--preflight` fails closed without `DEEPSEEK_API_KEY` and dry-runs a tiny
+   N-call against `configs/fixtures/deepseek_flash_preflight_v1.json`. It does
+   not authorize TRAINING, does not register DeepSeek as the V2 Actor, and
+   does not consume a holdout. `execution_authority` stays `ABSENT`.
+4. **Treat DeepSeek Flash and hosted Qwen as candidate runtimes, not as the
+   registered Actor.** Changing off Terra changes identity. It needs a
+   provider adapter, a new provider-scoped identity, and a separately verified
+   pilot. The Terra protocol must not be silently reused.
 
 ### Then, in order
 
-4. Run ingest → `write_record_store()`.
-5. Run `scripts/measure_exogenous_coverage.py` over the TRAINING partition.
-6. **Decide the coverage floor before reading the report.** Choosing it
-   afterwards is exactly the move the contract exists to prevent. Get the
-   number on paper first.
-7. `freeze_claim_contract()` with the measured rates. It will refuse if a
-   required source is below the floor.
-8. Compile holdout opportunities, then run
-   `scripts/probe_holdout_sufficiency.py`. If it says INSUFFICIENT, redraw and
-   probe again — **before** any authorization is issued. Nothing is consumed.
-9. Register the V2 protocol binding the compressor identity hash, the
-   provider-scoped Actor identity and the arm definitions.
-10. Run the TRAINING comparison. Audit it. Label it in-sample evidence, because
-    that is what it is.
-11. Phase 4 sealed holdout requires separate, explicit authorization.
+5. Resolve the E-arm JSON truncation (redesign E, or a B/C/D-only protocol
+   amendment) before any full run. The local Qwen 100-opportunity pilot
+   accepted 0/400 E responses at 64 tokens. That is in the execution-options
+   note; it is not TRAINING evidence.
+6. Only after **explicit TRAINING authorization**: run the comparison. Audit
+   it. Label it in-sample evidence, because that is what it is.
+7. Compile holdout opportunities only under a future V2 authorization. If a
+   sufficiency question comes up first, use `scripts/probe_holdout_sufficiency.py`
+   — it takes no authorization and cannot consume one. Do not point it at the
+   consumed AAT-V1 holdout.
+8. Phase 4 sealed holdout requires separate, explicit authorization.
 
 ### Open decisions still outstanding
 
+- **Which hosted runtime to authorize, if any.** DeepSeek Flash API vs
+  RunPod-hosted Qwen vs staying on Terra. Cost and E-arm compatibility are in
+  `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. None of those options is authorized
+  by the dry-run planner.
+- **Whether arm E earns its cost.** It is the most interesting thing
+  TradingAgents does and the least likely to survive an equal-budget
+  comparison. The current 64-token turn truncates required JSON. It stays
+  optional until a protocol amendment says otherwise.
 - **Which Tier-2 sources to adopt at all.** Social has sound timestamps but
   awkward retrieval — Pushshift has no public API since losing privileged
   ingestion after Reddit's 2023 changes; historical access now runs through
   Arctic Shift, Academic Torrents, or Reddit's researcher program, all frozen
-  bulk archives. Fine for backtest, useless if this ever goes live.
-- **Whether arm E earns its cost.** It is the most interesting thing
-  TradingAgents does and the least likely to survive an equal-budget
-  comparison. It stays optional.
-- **The coverage floor value.** See step 6.
-- **A fundamentals vendor**, if fundamentals is adopted. Must serve
+  bulk archives. Fine for backtest, useless if this ever goes live. Not on
+  the critical path for the current macro-only run.
+- **A fundamentals vendor**, if fundamentals is adopted later. Must serve
   as-reported figures time-indexed to release date — Sharadar's as-reported
   dimensions, Calcbench's as-filed capture, LSEG's point-in-time product. A
   current-view REST API is disqualified regardless of price.
+
+The coverage floor for *this* run is already decided: 0.90 on macro, measured
+at 1.0. Do not reopen it after looking at a result.
 
 ### Known limitations carried forward
 
 - `session_windows` calendar-day fallback is wrong across weekends; always
   pass `prior_close`.
 - Compressor scoring semantics are frozen but unvalidated.
-- Only one Actor provider is registered.
+- Only one Actor provider is registered (`openai`). DeepSeek Flash is an
+  unregistered candidate probed by the dry-run planner.
 - `four_arm.py` is pinned to OpenAI by design.
 - Exogenous coverage is denser for large caps and for names that later moved.
   Coverage density is emitted as a feature so the effect stays measurable, but
   it is not eliminated.
+- GDELT is not adopted for the current run; news coverage is explicitly zero
+  in the frozen contract.
 
 ---
 
@@ -419,10 +447,14 @@ pinned as literals, its holdout stays consumed, its limitation stands, and the
 new contract refuses to freeze against a number nobody has measured.
 
 The honest summary of V2 so far is that it removed the ceiling on the
-experiment without yet running it. Whether adaptation helps is still unknown,
-and the machinery is now capable of producing a defensible answer either way —
-including "it did not help", which remains a perfectly good result.
+experiment, froze a macro-only contract, and registered a protocol that still
+cannot spend. Whether adaptation helps is still unknown. The machinery can
+produce a defensible answer either way — including "it did not help" — once
+TRAINING is separately authorized.
 
-The next real risk is not technical. It is the temptation, once coverage comes
-back thinner than hoped, to lower the floor rather than accept a weaker
-comparison. The contract is written to make that visible. Keep it that way.
+The next real risk is not a missing adapter. It is authorizing spend, or
+swapping Terra for DeepSeek/Qwen, without a new provider-scoped identity; and
+the temptation, once a full run is expensive or E truncates, to lower a frozen
+floor or reuse the consumed V1 holdout. The contract, the protocol status, and
+the consumed-holdout registry are written to make those moves visible. Keep
+them that way.
