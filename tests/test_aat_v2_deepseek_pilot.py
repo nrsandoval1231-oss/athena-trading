@@ -179,7 +179,14 @@ def test_pilot_refuses_training_sized_ceilings():
         run_deepseek_flash_pilot(
             fixture_path=FIXTURE, pricing_path=PRICING, protocol_path=PROTOCOL,
             identity_path=IDENTITY, amendment_path=AMENDMENT,
-            opportunity_count=1, call_ceiling=116935, spend_ceiling_usd=1.00,
+            opportunity_count=1,             call_ceiling=116935, spend_ceiling_usd=1.00,
+            api_key=FIXTURE_KEY, transport=_fixture_transport,
+        )
+    with pytest.raises(DeepSeekPilotError, match="call ceiling"):
+        run_deepseek_flash_pilot(
+            fixture_path=FIXTURE, pricing_path=PRICING, protocol_path=PROTOCOL,
+            identity_path=IDENTITY, amendment_path=AMENDMENT,
+            opportunity_count=1, call_ceiling=51, spend_ceiling_usd=5.00,
             api_key=FIXTURE_KEY, transport=_fixture_transport,
         )
     with pytest.raises(DeepSeekPilotError, match="spend ceiling"):
@@ -235,11 +242,11 @@ def test_recommended_knobs_stay_inside_hard_caps():
     assert DEFAULT_PILOT_OPPORTUNITIES == 1
     assert DEFAULT_PILOT_CALL_CEILING == 7
     assert DEFAULT_PILOT_SPEND_CEILING_USD == 1.00
-    assert RECOMMENDED_LIVE_OPPORTUNITIES == 10
-    assert RECOMMENDED_LIVE_CALL_CEILING == 70
-    assert RECOMMENDED_LIVE_SPEND_CEILING_USD == 2.00
+    assert RECOMMENDED_LIVE_OPPORTUNITIES == 7
+    assert RECOMMENDED_LIVE_CALL_CEILING == 50
+    assert RECOMMENDED_LIVE_SPEND_CEILING_USD == 5.00
     assert RECOMMENDED_LIVE_OPPORTUNITIES <= PILOT_OPPORTUNITY_CEILING == 20
-    assert RECOMMENDED_LIVE_CALL_CEILING <= PILOT_CALL_CEILING == 140
+    assert RECOMMENDED_LIVE_CALL_CEILING <= PILOT_CALL_CEILING == 50
     assert RECOMMENDED_LIVE_SPEND_CEILING_USD <= PILOT_SPEND_CEILING_USD == 5.00
     assert registered_providers() == ("openai",)
 

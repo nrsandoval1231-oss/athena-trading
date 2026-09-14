@@ -6,7 +6,8 @@ hard call and spend ceilings. It does not freeze a claim contract, rewrite the
 Terra protocol, consume a holdout, or raise ``execution_authority``.
 
 Default transport is fixture / dry. Live spend requires ``allow_live=True``,
-``DEEPSEEK_API_KEY``, and explicit ceilings at or below the hard caps.
+``DEEPSEEK_API_KEY``, and explicit ceilings at or below Nick's authorized
+pilot limits (about 50 calls, ``$5.00``). That is not TRAINING.
 """
 from __future__ import annotations
 
@@ -55,20 +56,21 @@ from .packet import build_packet
 PILOT_SCHEMA = "athena-aat-v2-deepseek-flash-pilot-v1"
 PILOT_STATUS = "PILOT_NOT_TRAINING"
 
-#: Hard fail-closed caps. Nick sets the live invocation below these.
+#: Hard fail-closed caps. Nick-authorized live pilot limits (not TRAINING).
 PILOT_OPPORTUNITY_CEILING = 20
-PILOT_CALL_CEILING = 140
+PILOT_CALL_CEILING = 50
 PILOT_SPEND_CEILING_USD = 5.00
 
-#: Dry / fixture defaults. Live spend is separately unauthorized.
+#: Dry / fixture defaults. Live still requires explicit flags and a key.
 DEFAULT_PILOT_OPPORTUNITIES = 1
 DEFAULT_PILOT_CALL_CEILING = 7
 DEFAULT_PILOT_SPEND_CEILING_USD = 1.00
 
-#: Recommended first live knobs. Do not treat as authorization.
-RECOMMENDED_LIVE_OPPORTUNITIES = 10
-RECOMMENDED_LIVE_CALL_CEILING = 70
-RECOMMENDED_LIVE_SPEND_CEILING_USD = 2.00
+#: Nick-authorized first live knobs. Still not TRAINING. Dry CLI stays below.
+#: Seven opportunities × (3 Actor + 4 E) = 49 calls, under the 50-call limit.
+RECOMMENDED_LIVE_OPPORTUNITIES = 7
+RECOMMENDED_LIVE_CALL_CEILING = 50
+RECOMMENDED_LIVE_SPEND_CEILING_USD = 5.00
 
 CALLS_PER_OPPORTUNITY_ACTOR = len(DEFAULT_PREFLIGHT_ARMS)
 CALLS_PER_OPPORTUNITY_WITH_E = CALLS_PER_OPPORTUNITY_ACTOR + DELIBERATION_TURNS

@@ -175,27 +175,28 @@ The library function is `run_deepseek_flash_pilot` in
   closed. Does not open a network transport.
 - **Live.** Requires `--allow-live`, `DEEPSEEK_API_KEY`, and explicit
   `--call-ceiling` plus `--spend-ceiling-usd`. Hard caps fail closed above
-  20 opportunities, 140 calls, or `$5.00`. CI must not pass `--allow-live`.
+  20 opportunities, 50 calls, or `$5.00`. CI must not pass `--allow-live`.
 - **Payload rules.** Thinking disabled. B/C/D use the Actor JSON schema at
   512 output tokens. E uses compact closed-enum turns at 64 tokens. Do not
   reintroduce five-field Actor JSON on E.
 
-### Recommended first live knobs (not authorization)
+### Nick-authorized live knobs (not TRAINING)
 
-Live spend is still Nick's to set. These are the documented starting values
-for a later authorized API run against synthetic fixture packets. They are
-not TRAINING, not a holdout sample, and not a protocol switch.
+Nick set the live pilot bounds at **about 50 calls** and **$5.00 USD**.
+Those are the documented example knobs and the fail-closed live limits.
+They are not TRAINING, not a holdout sample, and not a protocol switch.
+Dry CLI defaults stay below them. A later live run still needs the
+explicit flags and `DEEPSEEK_API_KEY`.
 
-| Knob | Dry default | Recommended first live | Hard ceiling |
+| Knob | Dry default | Nick-authorized live | Hard ceiling |
 | --- | ---: | ---: | ---: |
-| Opportunity sample | 1 | 10 | 20 |
-| Call ceiling | 7 | 70 (10 × (3 Actor + 4 E)) | 140 |
-| Spend ceiling (USD) | 1.00 | 2.00 | 5.00 |
+| Opportunity sample | 1 | 7 (7 × 7 = 49 with E) | 20 |
+| Call ceiling | 7 | 50 | 50 |
+| Spend ceiling (USD) | 1.00 | 5.00 | 5.00 |
 
-Peak cache-miss worst case for the recommended 10-opportunity / 70-call
-shape is well under $2 given Flash prices and the conservative byte/4 input
-proxy. Nick can raise or lower the invocation ceiling **inside the hard
-caps** when authorizing live spend. A TRAINING-sized ceiling is refused.
+Peak cache-miss worst case for the 7-opportunity / 49-call shape is well
+under $5 given Flash prices and the conservative byte/4 input proxy. A
+TRAINING-sized ceiling is refused.
 
 ## Decision boundary
 

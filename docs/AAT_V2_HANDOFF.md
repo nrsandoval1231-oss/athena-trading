@@ -340,7 +340,7 @@ deleted and redrawn under the fix.
 | Phase 3 coverage / claim contract | **Frozen, macro-only.** Required source is `macro` at floor 0.90; frozen measured coverage is macro 1.0, news 0.0. `claim_authorized` is false. Do not freeze a new contract. |
 | Phase 3 protocol registration | **Registered as `REGISTERED_NOT_AUTHORIZED`.** `configs/aat_v2_registered_protocol_v1.json`. Actor identity remains OpenAI / `gpt-5.6-terra`. DeepSeek Flash is a separate `CANDIDATE_PILOT` identity and does not rewrite this protocol. |
 | Phase 3 TRAINING dry-run plans | Present. `configs/aat_v2_training_plan_v2.json` supersedes v1: 16,705 opportunities, **116,935** planned calls, `dry_run: true`, `execution_authorized: false`. |
-| Model execution options | Documented in `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. DeepSeek Flash dry-run / fixture preflight planner exists; thinking is disabled and Actor JSON is required on the B/C/D path. Arm E uses the compact closed-enum schema. A bounded pilot entrypoint exists (`scripts/run_aat_v2_deepseek_flash_pilot.py`) and defaults to fixture/dry. Hard PREFLIGHT spend ceiling is $1.00; hard PILOT spend ceiling is $5.00. Neither authorizes TRAINING. |
+| Model execution options | Documented in `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. DeepSeek Flash dry-run / fixture preflight planner exists; thinking is disabled and Actor JSON is required on the B/C/D path. Arm E uses the compact closed-enum schema. A bounded pilot entrypoint exists (`scripts/run_aat_v2_deepseek_flash_pilot.py`) and defaults to fixture/dry. Nick-authorized live pilot limits are **50 calls** and **$5.00** (not TRAINING). Hard PREFLIGHT spend ceiling remains $1.00. |
 | Phase 3 TRAINING run | **Blocked — needs authorized TRAINING execution, Actor credentials, and spend.** Not blocked on missing adapters. |
 | Phase 4 sealed holdout | Not started; needs a completed Phase 3 TRAINING run and separate authorization. The consumed AAT-V1 holdout must not be reused. |
 | AAT-V1 | Frozen and closed. Holdout consumed (`INVALID_EVIDENCE`). Limitation stands. |
@@ -406,12 +406,13 @@ consumed AAT-V1 holdout.
    The hashed identity is `configs/aat_v2_deepseek_flash_actor_identity_v1.json`
    (`CANDIDATE_PILOT`). The Terra protocol is consulted and not reused.
    `scripts/run_aat_v2_deepseek_flash_pilot.py` defaults to fixture/dry.
-   Live spend still needs Nick's separate authorization plus explicit
-   `--allow-live`, `DEEPSEEK_API_KEY`, `--call-ceiling`, and
-   `--spend-ceiling-usd`. Recommended first live knobs: 10 synthetic
-   opportunities, 70 calls (B/C/D + four compact E turns), $2.00 spend
-   ceiling. Hard caps: 20 / 140 / $5.00. Hosted Qwen remains a separate
-   candidate. Do not silently reuse the Terra protocol.
+   Live still requires explicit `--allow-live`, `DEEPSEEK_API_KEY`,
+   `--call-ceiling`, and `--spend-ceiling-usd`. Nick-authorized live pilot
+   limits (not TRAINING): about 50 calls and $5.00, typically 7 synthetic
+   opportunities with B/C/D plus four compact E turns (49 calls). Dry
+   default stays 1 / 7 / $1.00. Fail-closed above 20 opportunities, 50
+   calls, or $5.00. Hosted Qwen remains a separate candidate. Do not
+   silently reuse the Terra protocol.
 
 ### Then, in order
 

@@ -8,9 +8,10 @@ Default is fixture / dry:
     python scripts/run_aat_v2_deepseek_flash_pilot.py
 
 Live spend is fail-closed. It requires ``--allow-live``, ``DEEPSEEK_API_KEY``,
-and explicit ``--call-ceiling`` plus ``--spend-ceiling-usd``. Recommended first
-live knobs (not authorization): 10 opportunities, 70 calls, $2.00. Hard caps
-are 20 opportunities, 140 calls, $5.00. See
+and explicit ``--call-ceiling`` plus ``--spend-ceiling-usd``. Nick-authorized
+live pilot limits (not TRAINING): about 50 calls and $5.00, typically 7
+synthetic opportunities with B/C/D plus four compact E turns (49 calls).
+Dry default stays 1 opportunity / 7 calls / $1.00. See
 ``docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md``.
 """
 from __future__ import annotations
@@ -53,19 +54,19 @@ def main(argv: list[str] | None = None) -> int:
         "--opportunities",
         type=int,
         default=DEFAULT_PILOT_OPPORTUNITIES,
-        help="synthetic fixture opportunities (hard cap 20)",
+        help="synthetic fixture opportunities (dry default 1; Nick-authorized live sample 7; hard cap 20)",
     )
     parser.add_argument(
         "--call-ceiling",
         type=int,
         default=None,
-        help="required with --allow-live; dry default is 7",
+        help="required with --allow-live; dry default is 7; Nick-authorized live limit is 50",
     )
     parser.add_argument(
         "--spend-ceiling-usd",
         type=float,
         default=None,
-        help="required with --allow-live; dry default is 1.00; hard cap 5.00",
+        help="required with --allow-live; dry default is 1.00; Nick-authorized live limit is 5.00",
     )
     parser.add_argument(
         "--include-deliberation",
