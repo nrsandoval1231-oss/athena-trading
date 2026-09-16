@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AstraDeskContract",
+  "type": "object",
+  "required": ["apiVersion", "kind", "capital", "agents", "gate", "kill_switch", "regime_classifier", "calibration", "rollout"],
+  "properties": {
+    "apiVersion": { "const": "desk/v1" },
+    "kind": { "const": "TradingDeskContract" },
+    "capital": {
+      "type": "object",
+      "required": ["currency", "starting_equity", "accounting_policy"],
+      "properties": {
+        "starting_equity": { "type": "number", "exclusiveMinimum": 0 },
+        "evaluation": {
+          "type": "object",
+          "properties": {
+            "min_sample_live_setups": { "type": "integer", "minimum": 50 }
+          }
+        }
+      }
+    },
+    "agents": {
+      "type": "array",
+      "minItems": 6,
+      "items": {
+        "type": "object",
+        "required": ["id", "role", "mandate", "output"],
+        "properties": {
+          "id": { "type": "string" },
+          "output": { "type": "object" },
+          "conviction_range": {
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 2,
+            "maxItems": 2
+          }
+        }
+      },
+      "uniqueItemProperties": ["id"]
+    },
+    "gate": {
+      "type": "object",
+      "required": ["type", "quorum_required", "deploy_rule"],
+      "properties": {
+        "quorum_required": { "type": "integer", "minimum": 1 },
+        "conviction_weights": {
+          "type": "object",
+          "additionalProperties": { "type": "number" }
+        }
+      }
+    },
+    "kill_switch": {
+      "type": "object",
+      "required": ["trigger", "action"],
+      "properties": {
+        "reenable": { "const": "manual_human_only" }
+      }
+    },
+    "regime_classifier": {
+      "type": "object",
+      "required": ["regimes", "agent_accuracy_tracked_per_regime"],
+      "properties": {
+        "agent_accuracy_tracked_per_regime": { "const": true }
+      }
+    },
+    "calibration": {
+      "type": "object",
+      "required": ["eviction_rule", "weights_update", "correlation_monitor"],
+      "properties": {
+        "eviction_rule": { "type": "string", "minLength": 1 },
+        "weights_update": { "const": "nightly_from_outcomes" },
+        "correlation_monitor": { "const": true }
+      }
+    },
+    "rollout": {
+      "type": "object",
+      "required": ["phase_0", "phase_1", "phase_2", "phase_3"]
+    }
+  }
+}
