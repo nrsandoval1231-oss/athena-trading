@@ -1,0 +1,393 @@
+{
+  "schema": "astra-desk/tape-v1",
+  "mode": "walk_forward_replay",
+  "description": "Shipped paper tape. OHLCV derives volume_z, volume_lead_bars, price_change_pct, spread_widen_pct, invalidation_price, structure_quality, and a failed_breakout proxy. cancel_rate, trade_to_quote_ratio, unique_participant_z, crowding_z, and take_profit_r_multiples must be supplied in explicit_features. Not live data. Not a track record.",
+  "setups": [
+    {
+      "setup_id": "tape-001-volume-lead",
+      "symbol": "PAPER-ES",
+      "regime": "trending",
+      "ev_estimate": 0.12,
+      "side": "long",
+      "correlation_group": "index-beta",
+      "broker": {
+        "size_units": 40.0,
+        "kelly_fraction": 0.2
+      },
+      "explicit_features": {
+        "cancel_rate": 0.0,
+        "trade_to_quote_ratio": 0.55,
+        "unique_participant_z": 1.8,
+        "crowding_z": 0.2,
+        "take_profit_r_multiples": [
+          1.0
+        ]
+      },
+      "bars": [
+        {
+          "ts": "2024-06-03T14:00:00Z",
+          "open": 100.0,
+          "high": 100.12,
+          "low": 99.9,
+          "close": 100.02,
+          "volume": 80
+        },
+        {
+          "ts": "2024-06-03T14:01:00Z",
+          "open": 100.02,
+          "high": 100.1,
+          "low": 99.92,
+          "close": 100.04,
+          "volume": 88
+        },
+        {
+          "ts": "2024-06-03T14:02:00Z",
+          "open": 100.04,
+          "high": 100.14,
+          "low": 99.94,
+          "close": 100.06,
+          "volume": 95
+        },
+        {
+          "ts": "2024-06-03T14:03:00Z",
+          "open": 100.01,
+          "high": 100.11,
+          "low": 99.91,
+          "close": 100.03,
+          "volume": 82
+        },
+        {
+          "ts": "2024-06-03T14:04:00Z",
+          "open": 100.03,
+          "high": 100.13,
+          "low": 99.93,
+          "close": 100.05,
+          "volume": 100
+        },
+        {
+          "ts": "2024-06-03T14:05:00Z",
+          "open": 100.05,
+          "high": 100.12,
+          "low": 99.95,
+          "close": 100.04,
+          "volume": 90
+        },
+        {
+          "ts": "2024-06-03T14:06:00Z",
+          "open": 100.04,
+          "high": 100.15,
+          "low": 99.94,
+          "close": 100.06,
+          "volume": 105
+        },
+        {
+          "ts": "2024-06-03T14:07:00Z",
+          "open": 100.06,
+          "high": 100.14,
+          "low": 99.68,
+          "close": 100.05,
+          "volume": 112
+        },
+        {
+          "ts": "2024-06-03T14:08:00Z",
+          "open": 100.04,
+          "high": 100.1,
+          "low": 99.62,
+          "close": 100.05,
+          "volume": 380
+        },
+        {
+          "ts": "2024-06-03T14:09:00Z",
+          "open": 100.05,
+          "high": 100.11,
+          "low": 99.6,
+          "close": 100.04,
+          "volume": 388
+        },
+        {
+          "ts": "2024-06-03T14:10:00Z",
+          "open": 100.04,
+          "high": 100.1,
+          "low": 99.58,
+          "close": 100.03,
+          "volume": 395
+        },
+        {
+          "ts": "2024-06-03T14:11:00Z",
+          "open": 100.0,
+          "high": 100.06,
+          "low": 99.96,
+          "close": 100.0,
+          "volume": 500
+        }
+      ],
+      "forward_bars": [
+        {
+          "ts": "2024-06-03T14:12:00Z",
+          "open": 100.1,
+          "high": 105.2,
+          "low": 99.8,
+          "close": 104.8,
+          "volume": 900
+        }
+      ],
+      "resolved_correct_by_agent": {
+        "456_scout": true,
+        "067_reader": true,
+        "240_exit": true,
+        "666_skeptic": false
+      }
+    },
+    {
+      "setup_id": "tape-002-no-volume-lead",
+      "symbol": "PAPER-ES",
+      "regime": "mean_reverting",
+      "ev_estimate": 0.08,
+      "side": "long",
+      "correlation_group": "index-beta",
+      "broker": {
+        "size_units": 40.0,
+        "kelly_fraction": 0.2
+      },
+      "explicit_features": {
+        "cancel_rate": 0.0,
+        "trade_to_quote_ratio": 0.55,
+        "unique_participant_z": 1.8,
+        "crowding_z": 0.2,
+        "take_profit_r_multiples": [
+          1.0
+        ]
+      },
+      "bars": [
+        {
+          "ts": "2024-06-04T14:00:00Z",
+          "open": 100.0,
+          "high": 100.12,
+          "low": 99.9,
+          "close": 100.04,
+          "volume": 80
+        },
+        {
+          "ts": "2024-06-04T14:01:00Z",
+          "open": 100.0,
+          "high": 100.12,
+          "low": 99.9,
+          "close": 100.04,
+          "volume": 88
+        },
+        {
+          "ts": "2024-06-04T14:02:00Z",
+          "open": 100.0,
+          "high": 100.12,
+          "low": 99.9,
+          "close": 100.04,
+          "volume": 95
+        },
+        {
+          "ts": "2024-06-04T14:03:00Z",
+          "open": 100.0,
+          "high": 100.12,
+          "low": 99.9,
+          "close": 100.04,
+          "volume": 82
+        },
+        {
+          "ts": "2024-06-04T14:04:00Z",
+          "open": 100.0,
+          "high": 100.12,
+          "low": 99.9,
+          "close": 100.04,
+          "volume": 100
+        },
+        {
+          "ts": "2024-06-04T14:05:00Z",
+          "open": 100.0,
+          "high": 100.12,
+          "low": 99.9,
+          "close": 100.04,
+          "volume": 90
+        },
+        {
+          "ts": "2024-06-04T14:06:00Z",
+          "open": 100.0,
+          "high": 100.12,
+          "low": 99.9,
+          "close": 100.04,
+          "volume": 105
+        },
+        {
+          "ts": "2024-06-04T14:07:00Z",
+          "open": 100.0,
+          "high": 100.12,
+          "low": 99.9,
+          "close": 100.04,
+          "volume": 112
+        },
+        {
+          "ts": "2024-06-04T14:08:00Z",
+          "open": 100.0,
+          "high": 100.12,
+          "low": 99.9,
+          "close": 100.04,
+          "volume": 98
+        },
+        {
+          "ts": "2024-06-04T14:09:00Z",
+          "open": 100.0,
+          "high": 100.12,
+          "low": 99.9,
+          "close": 100.04,
+          "volume": 91
+        },
+        {
+          "ts": "2024-06-04T14:10:00Z",
+          "open": 100.0,
+          "high": 100.12,
+          "low": 99.9,
+          "close": 100.04,
+          "volume": 87
+        },
+        {
+          "ts": "2024-06-04T14:11:00Z",
+          "open": 100.0,
+          "high": 104.2,
+          "low": 99.9,
+          "close": 104.0,
+          "volume": 104
+        }
+      ],
+      "resolved_correct_by_agent": {
+        "456_scout": true,
+        "067_reader": true,
+        "240_exit": true,
+        "666_skeptic": true
+      }
+    },
+    {
+      "setup_id": "tape-003-skeptic-blocks",
+      "symbol": "PAPER-ES",
+      "regime": "high_vol",
+      "ev_estimate": 0.05,
+      "side": "long",
+      "correlation_group": "index-beta",
+      "broker": {
+        "size_units": 40.0,
+        "kelly_fraction": 0.2
+      },
+      "explicit_features": {
+        "cancel_rate": 0.0,
+        "trade_to_quote_ratio": 0.55,
+        "unique_participant_z": 1.8,
+        "crowding_z": 1.8,
+        "take_profit_r_multiples": [
+          1.0
+        ],
+        "failed_breakout": true
+      },
+      "bars": [
+        {
+          "ts": "2024-06-05T14:00:00Z",
+          "open": 100.0,
+          "high": 100.12,
+          "low": 99.9,
+          "close": 100.02,
+          "volume": 80
+        },
+        {
+          "ts": "2024-06-05T14:01:00Z",
+          "open": 100.02,
+          "high": 100.1,
+          "low": 99.92,
+          "close": 100.04,
+          "volume": 88
+        },
+        {
+          "ts": "2024-06-05T14:02:00Z",
+          "open": 100.04,
+          "high": 100.14,
+          "low": 99.94,
+          "close": 100.06,
+          "volume": 95
+        },
+        {
+          "ts": "2024-06-05T14:03:00Z",
+          "open": 100.01,
+          "high": 100.11,
+          "low": 99.91,
+          "close": 100.03,
+          "volume": 82
+        },
+        {
+          "ts": "2024-06-05T14:04:00Z",
+          "open": 100.03,
+          "high": 100.13,
+          "low": 99.93,
+          "close": 100.05,
+          "volume": 100
+        },
+        {
+          "ts": "2024-06-05T14:05:00Z",
+          "open": 100.05,
+          "high": 100.12,
+          "low": 99.95,
+          "close": 100.04,
+          "volume": 90
+        },
+        {
+          "ts": "2024-06-05T14:06:00Z",
+          "open": 100.04,
+          "high": 100.15,
+          "low": 99.94,
+          "close": 100.06,
+          "volume": 105
+        },
+        {
+          "ts": "2024-06-05T14:07:00Z",
+          "open": 100.06,
+          "high": 100.14,
+          "low": 99.68,
+          "close": 100.05,
+          "volume": 112
+        },
+        {
+          "ts": "2024-06-05T14:08:00Z",
+          "open": 100.04,
+          "high": 100.1,
+          "low": 99.62,
+          "close": 100.05,
+          "volume": 380
+        },
+        {
+          "ts": "2024-06-05T14:09:00Z",
+          "open": 100.05,
+          "high": 100.11,
+          "low": 99.6,
+          "close": 100.04,
+          "volume": 388
+        },
+        {
+          "ts": "2024-06-05T14:10:00Z",
+          "open": 100.04,
+          "high": 100.1,
+          "low": 99.58,
+          "close": 100.03,
+          "volume": 395
+        },
+        {
+          "ts": "2024-06-05T14:11:00Z",
+          "open": 100.0,
+          "high": 100.06,
+          "low": 99.96,
+          "close": 100.0,
+          "volume": 500
+        }
+      ],
+      "resolved_correct_by_agent": {
+        "456_scout": true,
+        "067_reader": true,
+        "240_exit": true,
+        "666_skeptic": true
+      }
+    }
+  ]
+}

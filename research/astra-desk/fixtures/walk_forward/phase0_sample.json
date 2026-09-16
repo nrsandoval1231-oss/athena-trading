@@ -1,0 +1,143 @@
+{
+  "schema": "astra-desk/walk-forward-v1",
+  "mode": "walk_forward_replay",
+  "description": "Shipped Phase 0 fixture. Feature-driven rule agents. Not live data.",
+  "setups": [
+    {
+      "setup_id": "wf-001-volume-lead",
+      "symbol": "PAPER-ES",
+      "regime": "trending",
+      "ev_estimate": 0.12,
+      "price": 100.0,
+      "side": "long",
+      "correlation_group": "index-beta",
+      "broker": {"size_units": 40.0, "kelly_fraction": 0.2},
+      "features": {
+        "volume_z": 2.4,
+        "volume_lead_bars": 3.0,
+        "price_change_pct": 0.0,
+        "cancel_rate": 0.0,
+        "trade_to_quote_ratio": 0.55,
+        "unique_participant_z": 1.8,
+        "spread_widen_pct": 0.0,
+        "invalidation_price": 95.0,
+        "structure_quality": 1.0,
+        "take_profit_r_multiples": [1.0],
+        "failed_breakout": false,
+        "crowding_z": 0.2
+      },
+      "bars": [
+        {
+          "ts": "2024-01-02T14:30:00Z",
+          "open": 100.2,
+          "high": 105.4,
+          "low": 99.8,
+          "close": 105.1,
+          "volume": 1500
+        }
+      ]
+    },
+    {
+      "setup_id": "wf-002-skeptic-blocks",
+      "symbol": "PAPER-ES",
+      "regime": "high_vol",
+      "ev_estimate": 0.05,
+      "price": 105.0,
+      "side": "long",
+      "correlation_group": "index-beta",
+      "broker": {"size_units": 40.0, "kelly_fraction": 0.2},
+      "features": {
+        "volume_z": 2.4,
+        "volume_lead_bars": 3.0,
+        "price_change_pct": 0.0,
+        "cancel_rate": 0.0,
+        "trade_to_quote_ratio": 0.55,
+        "unique_participant_z": 1.8,
+        "spread_widen_pct": 0.0,
+        "invalidation_price": 100.0,
+        "structure_quality": 1.0,
+        "take_profit_r_multiples": [1.0],
+        "failed_breakout": true,
+        "crowding_z": 1.8
+      },
+      "bars": [
+        {
+          "ts": "2024-01-02T15:00:00Z",
+          "open": 105.1,
+          "high": 105.6,
+          "low": 103.2,
+          "close": 103.8,
+          "volume": 900
+        }
+      ]
+    },
+    {
+      "setup_id": "wf-003-mean-revert-tp",
+      "symbol": "PAPER-ES",
+      "regime": "mean_reverting",
+      "ev_estimate": 0.09,
+      "price": 100.0,
+      "side": "long",
+      "correlation_group": "index-beta",
+      "broker": {"size_units": 40.0, "kelly_fraction": 0.2},
+      "features": {
+        "volume_z": 2.4,
+        "volume_lead_bars": 3.0,
+        "price_change_pct": 0.0,
+        "cancel_rate": 0.0,
+        "trade_to_quote_ratio": 0.55,
+        "unique_participant_z": 1.8,
+        "spread_widen_pct": 0.0,
+        "invalidation_price": 95.0,
+        "structure_quality": 1.0,
+        "take_profit_r_multiples": [1.0],
+        "failed_breakout": false,
+        "crowding_z": 0.2
+      },
+      "bars": [
+        {
+          "ts": "2024-01-03T14:30:00Z",
+          "open": 100.0,
+          "high": 105.2,
+          "low": 99.6,
+          "close": 104.8,
+          "volume": 1100
+        }
+      ]
+    },
+    {
+      "setup_id": "wf-004-stopped",
+      "symbol": "PAPER-ES",
+      "regime": "news_event",
+      "ev_estimate": 0.04,
+      "price": 100.0,
+      "side": "long",
+      "correlation_group": "index-beta",
+      "broker": {"size_units": 40.0, "kelly_fraction": 0.2},
+      "features": {
+        "volume_z": 2.4,
+        "volume_lead_bars": 3.0,
+        "price_change_pct": 0.0,
+        "cancel_rate": 0.0,
+        "trade_to_quote_ratio": 0.55,
+        "unique_participant_z": 1.8,
+        "spread_widen_pct": 0.0,
+        "invalidation_price": 95.0,
+        "structure_quality": 1.0,
+        "take_profit_r_multiples": [1.0],
+        "failed_breakout": false,
+        "crowding_z": 0.2
+      },
+      "bars": [
+        {
+          "ts": "2024-01-04T14:30:00Z",
+          "open": 99.4,
+          "high": 100.1,
+          "low": 94.5,
+          "close": 94.8,
+          "volume": 1800
+        }
+      ]
+    }
+  ]
+}

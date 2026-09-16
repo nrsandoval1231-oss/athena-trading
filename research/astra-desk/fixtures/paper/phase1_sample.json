@@ -1,0 +1,43 @@
+{
+  "schema": "astra-desk/paper-period-v1",
+  "mode": "paper_trading",
+  "description": "Shipped Phase 1 paper-period template. Fixture/sim only. Not a brokerage.",
+  "start_date": "2024-03-04",
+  "session_days": 21,
+  "daily_setups": [
+    {
+      "setup_id": "paper-session-setup",
+      "symbol": "PAPER-ES",
+      "regime": "trending",
+      "ev_estimate": 0.12,
+      "price": 100.0,
+      "side": "long",
+      "correlation_group": "index-beta",
+      "broker": {"size_units": 40.0, "kelly_fraction": 0.2},
+      "features": {
+        "volume_z": 2.4,
+        "volume_lead_bars": 3.0,
+        "price_change_pct": 0.0,
+        "cancel_rate": 0.0,
+        "trade_to_quote_ratio": 0.55,
+        "unique_participant_z": 1.8,
+        "spread_widen_pct": 0.0,
+        "invalidation_price": 95.0,
+        "structure_quality": 1.0,
+        "take_profit_r_multiples": [1.0],
+        "failed_breakout": false,
+        "crowding_z": 0.2
+      },
+      "bars": [
+        {
+          "ts": "session",
+          "open": 100.2,
+          "high": 105.4,
+          "low": 99.8,
+          "close": 105.1,
+          "volume": 1500
+        }
+      ]
+    }
+  ]
+}

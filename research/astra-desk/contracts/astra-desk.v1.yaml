@@ -1,0 +1,95 @@
+apiVersion: desk/v1
+kind: TradingDeskContract
+metadata:
+  name: astra-desk
+  version: 1.0.0
+
+capital:
+  currency: USD
+  starting_equity: 500.0
+  accounting_policy:
+    track_unrealized_pnl: true
+    ledger_fields: [equity, realized_pnl, unrealized_pnl, max_drawdown_pct,
+                    exposure_pct, sharpe, sortino, win_rate, expectancy_per_setup]
+  evaluation:
+    min_sample_live_setups: 200
+    paper_trading_period_days: 21
+    human_checkpoint_trades: 25
+
+agents:
+  - id: "456_scout"
+    role: volume_lead_detection
+    mandate: "flag contracts where volume precedes price"
+    output: {conviction: float, rationale: string}
+    conviction_range: [0.0, 1.0]
+    requires_context: [market_regime]
+  - id: "067_reader"
+    role: demand_authenticity
+    mandate: "score probability the spike is organic vs manufactured"
+    output: {conviction: float, rationale: string, p_organic: float}
+  - id: "218_broker"
+    role: position_sizing
+    mandate: "size position given surviving setup and portfolio state"
+    output: {size_units: float, kelly_fraction: float}
+    constraints: {max_kelly_fraction: 0.25, never_full_kelly: true}
+  - id: "240_exit"
+    role: invalidation
+    mandate: "define exact price where thesis is wrong"
+    output: {stop_price: float, take_profit_levels: [float]}
+  - id: "001_ledger"
+    role: memory_outcomes
+    mandate: "immutable log of every round; per-agent, per-regime accuracy"
+    output: {agent_accuracy: map, regime_stats: map}
+    immutability: append_only
+  - id: "666_skeptic"
+    role: adversarial_debate
+    mandate: "steelman the case AGAINST the trade before gating"
+    output: {counterarguments: [string], failure_scenarios: [string],
+             strongest_opposing_case: string}
+  - id: "risk_officer"
+    role: portfolio_risk
+    mandate: "aggregate exposure, correlation, drawdown; global veto"
+    output: {approved: bool, exposure_after: float}
+    hard_limits:
+      max_total_exposure_pct: 40.0
+      max_correlated_positions: 2
+      max_single_position_pct: 10.0
+      daily_loss_limit_pct: 5.0
+
+gate:
+  type: weighted_threshold
+  quorum_required: 5
+  conviction_weights:
+    "456_scout": 1.0
+    "067_reader": 1.5
+    "240_exit": 1.0
+    "666_skeptic": -1.0
+  deploy_rule: "total_weighted_conviction >= 3.5 AND ev_estimate > 0"
+  sizing_rule: "fractional: size scales with conviction band"
+  conviction_bands:
+    - {min: 4.5, size_multiplier: 1.0}
+    - {min: 3.5, size_multiplier: 0.5}
+  front_man:
+    role: executor
+    must_log: [decision, gate_inputs, rationale_hash]
+
+kill_switch:
+  trigger: "drawdown_pct >= 8.0 OR daily_loss_limit_breach"
+  action: flatten_all_and_halt
+  reenable: manual_human_only
+
+regime_classifier:
+  regimes: [trending, mean_reverting, high_vol, news_event]
+  output_feeds_all_agents: true
+  agent_accuracy_tracked_per_regime: true
+
+calibration:
+  eviction_rule: "lowest per-regime-calibrated accuracy over rolling 50 setups"
+  weights_update: nightly_from_outcomes
+  correlation_monitor: true
+
+rollout:
+  phase_0: {mode: walk_forward_replay, exit_criteria: "positive expectancy, max_dd < 15%"}
+  phase_1: {mode: paper_trading, duration_days: 21}
+  phase_2: {mode: live_with_human_checkpoint, trades: 25}
+  phase_3: {mode: autonomous, requires: [kill_switch_armed, ledger_verified]}
