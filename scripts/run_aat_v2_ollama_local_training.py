@@ -2,45 +2,57 @@
 
 Defaults to a tiny dry-run smoke against the TRAINING-shaped fixture index.
 Does not contact DeepSeek or RunPod. Does not start the 116,935-call run.
+The recommended live plan is 8b volume (1,000 opportunities) plus 14b gold
+(100 overlapping opportunities), not the full 16,705.
 
 Desktop smoke (offline, default ``qwen3.5:9b``)::
 
     python scripts/run_aat_v2_ollama_local_training.py
 
-RunPod / remote-Ollama smoke (offline mocked ``qwen2.5:14b``)::
+Volume 8b smoke (offline mocked ``qwen2.5:8b``)::
+
+    python scripts/run_aat_v2_ollama_local_training.py \\
+      --identity configs/aat_v2_ollama_qwen_8b_volume_actor_identity_v1.json \\
+      --authorization configs/aat_v2_ollama_volume_training_authorization_v1.json \\
+      --base-url http://127.0.0.1:11434
+
+Gold 14b smoke (offline mocked ``qwen2.5:14b``)::
 
     python scripts/run_aat_v2_ollama_local_training.py \\
       --identity configs/aat_v2_ollama_qwen_14b_runpod_actor_identity_v1.json \\
       --authorization configs/aat_v2_ollama_runpod_training_authorization_v1.json \\
       --base-url http://127.0.0.1:11434
 
-Live RunPod warmup (14 calls). Direct pod Ollama is ``http://<pod>:11434``.
-A RunPod HTTPS proxy is ``https://<id>-11434.proxy.runpod.net`` (do not
-append ``:11434``; TLS is 443). An SSH tunnel to loopback also works::
+Authorized volume subsample (1,000 opportunities, still ABSENT; not Terra)::
+
+    python scripts/run_aat_v2_ollama_local_training.py \\
+      --identity configs/aat_v2_ollama_qwen_8b_volume_actor_identity_v1.json \\
+      --authorization configs/aat_v2_ollama_volume_training_authorization_v1.json \\
+      --authorize-volume-training --allow-live-ollama \\
+      --base-url http://<pod>:11434 \\
+      --opportunity-index <TRAINING or volume JSONL> \\
+      --snapshot <macro snapshot JSONL> \\
+      --subsample-receipt <volume_1000.receipt.json> \\
+      --output-dir artifacts/aat_v2_ollama_volume_8b
+
+Authorized gold slice (100 opportunities, full arms including E)::
 
     python scripts/run_aat_v2_ollama_local_training.py \\
       --identity configs/aat_v2_ollama_qwen_14b_runpod_actor_identity_v1.json \\
       --authorization configs/aat_v2_ollama_runpod_training_authorization_v1.json \\
-      --allow-live-ollama --limit-opportunities 2 \\
+      --authorize-runpod-training --allow-live-ollama --limit-opportunities 100 \\
       --base-url http://<pod>:11434 \\
-      --opportunity-index <TRAINING JSONL> --snapshot <macro snapshot JSONL>
+      --opportunity-index <TRAINING or gold JSONL> \\
+      --snapshot <macro snapshot JSONL> \\
+      --subsample-receipt <gold_100.receipt.json> \\
+      --output-dir artifacts/aat_v2_ollama_gold_14b
 
-Overnight full in-sample TRAINING on RunPod (still ABSENT; not Terra)::
+Optional volume thin-E (BCD only): same volume command plus
+``--no-include-deliberation``. Gold keeps E.
 
-    python scripts/run_aat_v2_ollama_local_training.py \\
-      --identity configs/aat_v2_ollama_qwen_14b_runpod_actor_identity_v1.json \\
-      --authorization configs/aat_v2_ollama_runpod_training_authorization_v1.json \\
-      --authorize-runpod-training --allow-live-ollama \\
-      --base-url http://<pod>:11434 \\
-      --opportunity-index <TRAINING JSONL> --snapshot <macro snapshot JSONL> \\
-      --opportunity-receipt <receipt> --snapshot-receipt <receipt> \\
-      --output-dir artifacts/aat_v2_ollama_runpod_training
-
-Resume with the same flags plus ``--resume``. Download artifacts before
-terminating the pod. Chunked ``ledger.jsonl`` is the durable record.
-
-``--authorize-runpod-training`` does not authorize Terra or desktop
-``qwen3.5:9b``. ``execution_authority`` stays ``ABSENT``. Holdout stays unused.
+``--authorize-volume-training`` does not authorize Terra, desktop
+``qwen3.5:9b``, or gold ``qwen2.5:14b``. ``execution_authority`` stays
+``ABSENT``. Holdout stays unused.
 """
 from __future__ import annotations
 
@@ -53,6 +65,8 @@ from athena_trading.aat_v2.ollama_identity import (
     DEFAULT_MODEL_ID,
     RUNPOD_CLI_AUTHORIZATION_FLAG,
     RUNPOD_MODEL_ID,
+    VOLUME_CLI_AUTHORIZATION_FLAG,
+    VOLUME_MODEL_ID,
     AuthorizationError,
     IdentityError,
 )
@@ -75,6 +89,7 @@ DEFAULT_AMENDMENT = ROOT / "configs" / "aat_v2_e_arm_compact_schema_amendment_v1
 DEFAULT_IDENTITY = ROOT / "configs" / "aat_v2_ollama_qwen_actor_identity_v1.json"
 DEFAULT_FIXTURE = ROOT / "configs" / "fixtures" / "ollama_qwen_training_v1.json"
 RUNPOD_FIXTURE = ROOT / "configs" / "fixtures" / "ollama_qwen_14b_runpod_training_v1.json"
+VOLUME_FIXTURE = ROOT / "configs" / "fixtures" / "ollama_qwen_8b_volume_training_v1.json"
 DEFAULT_INDEX = ROOT / "configs" / "fixtures" / "aat_v2_training_opportunities_smoke_v1.jsonl"
 DEFAULT_SNAPSHOT = ROOT / "configs" / "fixtures" / "aat_v2_training_snapshot_smoke_v1.jsonl"
 DEFAULT_OUTPUT = ROOT / "artifacts" / "aat_v2_ollama_local_training_smoke"
@@ -97,19 +112,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--snapshot", type=Path, default=DEFAULT_SNAPSHOT)
     parser.add_argument("--opportunity-receipt", type=Path)
     parser.add_argument("--snapshot-receipt", type=Path)
+    parser.add_argument(
+        "--subsample-receipt",
+        type=Path,
+        help="hashed volume (1,000) or gold (100) subsample receipt",
+    )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--fixture", type=Path, default=None)
     parser.add_argument(
         "--model-id",
         default=None,
         help="must match the hashed identity (desktop default qwen3.5:9b; "
-        "RunPod identity default qwen2.5:14b)",
+        "volume identity default qwen2.5:8b; gold identity default qwen2.5:14b)",
     )
     parser.add_argument(
         "--limit-opportunities",
         type=int,
         default=None,
-        help="smoke/warmup cap; omit with the matching authorize flag for the full 16,705",
+        help="smoke/warmup cap; omit with --authorize-volume-training for the "
+        "1,000-opportunity volume subsample, or with --authorize-runpod-training "
+        "for the frozen 16,705 (not recommended)",
     )
     parser.add_argument(
         "--authorize-local-training",
@@ -119,7 +141,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--authorize-runpod-training",
         action="store_true",
-        help="Nick's explicit RunPod qwen2.5:14b TRAINING flag; does not authorize Terra or 9b",
+        help="Nick's explicit RunPod qwen2.5:14b gold flag; does not authorize Terra, 9b, or 8b",
+    )
+    parser.add_argument(
+        "--authorize-volume-training",
+        action="store_true",
+        help="Nick's explicit qwen2.5:8b volume-subsample flag; does not authorize Terra, 9b, or 14b",
     )
     parser.add_argument(
         "--allow-live-ollama",
@@ -131,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
         "--include-deliberation",
         action=argparse.BooleanOptionalAction,
         default=True,
+        help="volume default is full arms; --no-include-deliberation is thin-E (BCD only). Gold keeps E.",
     )
     parser.add_argument(
         "--base-url",
@@ -153,9 +181,12 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         forbid_output_path(args.output_dir)
-        if (
-            args.authorize_local_training or args.authorize_runpod_training
-        ) and args.limit_opportunities is None:
+        authorized = (
+            args.authorize_local_training
+            or args.authorize_runpod_training
+            or args.authorize_volume_training
+        )
+        if authorized and args.limit_opportunities is None:
             limit = None
         elif args.limit_opportunities is not None:
             limit = args.limit_opportunities
@@ -168,7 +199,12 @@ def main(argv: list[str] | None = None) -> int:
         else:
             fixture = args.fixture
             if fixture is None:
-                fixture = RUNPOD_FIXTURE if identity_model == RUNPOD_MODEL_ID else DEFAULT_FIXTURE
+                if identity_model == VOLUME_MODEL_ID:
+                    fixture = VOLUME_FIXTURE
+                elif identity_model == RUNPOD_MODEL_ID:
+                    fixture = RUNPOD_FIXTURE
+                else:
+                    fixture = DEFAULT_FIXTURE
             transport = fixture_transport(fixture, model_id=identity_model)
         result = run_ollama_local_training(
             training_plan_path=args.training_plan,
@@ -181,10 +217,12 @@ def main(argv: list[str] | None = None) -> int:
             authorization_path=args.authorization,
             opportunity_receipt_path=args.opportunity_receipt,
             snapshot_receipt_path=args.snapshot_receipt,
+            subsample_receipt_path=args.subsample_receipt,
             output_dir=args.output_dir,
             limit_opportunities=limit,
             authorize_local_training=args.authorize_local_training,
             authorize_runpod_training=args.authorize_runpod_training,
+            authorize_volume_training=args.authorize_volume_training,
             allow_live=args.allow_live_ollama,
             transport=transport,
             model_id=model_id,
@@ -228,6 +266,7 @@ def _error_payload(exc: BaseException) -> dict[str, object]:
         "status": getattr(exc, "status", "LOCAL_TRAINING_SMOKE"),
         "authorization_cli_flag": CLI_AUTHORIZATION_FLAG,
         "runpod_authorization_cli_flag": RUNPOD_CLI_AUTHORIZATION_FLAG,
+        "volume_authorization_cli_flag": VOLUME_CLI_AUTHORIZATION_FLAG,
         "registration_status": "REGISTERED_NOT_AUTHORIZED",
     }
 

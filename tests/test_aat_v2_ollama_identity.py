@@ -18,6 +18,7 @@ from athena_trading.aat_v2.ollama_identity import (
     AUTHORIZATION_STATUS,
     CLI_AUTHORIZATION_FLAG,
     DEFAULT_MODEL_ID,
+    GOLD_SUBSAMPLE_OPPORTUNITIES,
     IDENTITY_STATUS,
     PROVIDER,
     RUNPOD_CLI_AUTHORIZATION_FLAG,
@@ -27,17 +28,26 @@ from athena_trading.aat_v2.ollama_identity import (
     RUNPOD_TRAINING_PROMPT,
     TRAINING_INFERENCE,
     TRAINING_PROMPT,
+    VOLUME_CLI_AUTHORIZATION_FLAG,
+    VOLUME_IDENTITY_STATUS,
+    VOLUME_MODEL_ID,
+    VOLUME_SUBSAMPLE_OPPORTUNITIES,
+    VOLUME_TRAINING_PROMPT,
     AuthorizationError,
     IdentityError,
     assert_full_run_authorized,
     declared_local_training_authorization,
     declared_ollama_qwen_identity,
     declared_ollama_runpod_identity,
+    declared_ollama_volume_identity,
     declared_runpod_training_authorization,
+    declared_volume_training_authorization,
     load_local_training_authorization,
     load_ollama_qwen_identity,
     load_ollama_runpod_identity,
+    load_ollama_volume_identity,
     load_runpod_training_authorization,
+    load_volume_training_authorization,
 )
 from athena_trading.athena_adapter.contracts import canonical_hash
 
@@ -47,6 +57,8 @@ IDENTITY = ROOT / "configs/aat_v2_ollama_qwen_actor_identity_v1.json"
 AUTHORIZATION = ROOT / "configs/aat_v2_ollama_local_training_authorization_v1.json"
 RUNPOD_IDENTITY = ROOT / "configs/aat_v2_ollama_qwen_14b_runpod_actor_identity_v1.json"
 RUNPOD_AUTHORIZATION = ROOT / "configs/aat_v2_ollama_runpod_training_authorization_v1.json"
+VOLUME_IDENTITY = ROOT / "configs/aat_v2_ollama_qwen_8b_volume_actor_identity_v1.json"
+VOLUME_AUTHORIZATION = ROOT / "configs/aat_v2_ollama_volume_training_authorization_v1.json"
 PROTOCOL = ROOT / "configs/aat_v2_registered_protocol_v1.json"
 TERRA_IDENTITY = ROOT / "configs/aat_v2_actor_identity_v1.json"
 DEEPSEEK_IDENTITY = ROOT / "configs/aat_v2_deepseek_flash_actor_identity_v1.json"
@@ -61,6 +73,11 @@ RUNPOD_PROMPT_HASH = "107876a12794b1314d5d7dd87a65d1e35f88462abc11b7554708864ba7
 RUNPOD_INFERENCE_HASH = "2929d0e27a92d85bae12aa4731203bebc2f9cd1ad31035a88ae99bcfaf3ef2f1"
 RUNPOD_IDENTITY_HASH = "4f9178080ae3d0cf04ff296d6e2f5e259233c36e75ce79448b751d249af6966f"
 RUNPOD_AUTHORIZATION_HASH = "6af1733ef877658ee8b9227312f1c9724aa673a0642fd8e7a908342f308251a4"
+VOLUME_MODEL_HASH = "02b8cc10e5c4318fb87b90afb7f457b29d71aaebe1e673327ab4922349293d58"
+VOLUME_PROMPT_HASH = "f1a063c20b8d108dfb9b23e640a2d2d6aab634f7f987f1d12652de54d4c9dd7a"
+VOLUME_INFERENCE_HASH = "2929d0e27a92d85bae12aa4731203bebc2f9cd1ad31035a88ae99bcfaf3ef2f1"
+VOLUME_IDENTITY_HASH = "78403cd01e7e8b151c086a66a97dfa93dd95664bcddef9873e2af566fb8edad7"
+VOLUME_AUTHORIZATION_HASH = "80032851e41f43a5777afcb094e33f8a4b81371aa7574e5cd44296f56532c435"
 SHARED_ACTION_SCHEMA_HASH = "852c32a80b5f4187ea6629270bfaf14162779e1a742690716a337eb107a26b3c"
 
 
@@ -291,7 +308,7 @@ def test_runpod_flag_does_not_authorize_local_9b_and_local_flag_does_not_authori
         assert_full_run_authorized(
             authorization=runpod_auth, authorize_local_training=True,
         )
-    with pytest.raises(AuthorizationError, match="cannot both"):
+    with pytest.raises(AuthorizationError, match="cannot be combined"):
         assert_full_run_authorized(
             authorization=runpod_auth,
             authorize_local_training=True,
@@ -300,3 +317,142 @@ def test_runpod_flag_does_not_authorize_local_9b_and_local_flag_does_not_authori
     assert_full_run_authorized(
         authorization=runpod_auth, authorize_runpod_training=True,
     )
+
+
+def test_volume_8b_identity_is_a_different_actor_from_9b_14b_deepseek_and_terra():
+    identity = declared_ollama_volume_identity()
+    local = declared_ollama_qwen_identity()
+    gold = declared_ollama_runpod_identity()
+    terra = json.loads(TERRA_IDENTITY.read_text(encoding="utf-8"))
+    deepseek = json.loads(DEEPSEEK_IDENTITY.read_text(encoding="utf-8"))
+    assert identity["provider"] == PROVIDER == "ollama"
+    assert identity["model_id"] == VOLUME_MODEL_ID == "qwen2.5:8b"
+    assert identity["identity_status"] == VOLUME_IDENTITY_STATUS == "VOLUME_TRAINING_CANDIDATE"
+    assert identity["volume_training_candidate"] is True
+    assert identity["runpod_training_candidate"] is False
+    assert identity["local_training_candidate"] is False
+    assert identity["local_9b_identity_not_reused"] is True
+    assert identity["runpod_14b_identity_not_reused"] is True
+    assert identity["runtime_base_url_not_identity"] is True
+    assert identity["authorization_cli_flag"] == VOLUME_CLI_AUTHORIZATION_FLAG
+    assert identity["execution_authority"] == "ABSENT"
+    assert identity["execution_authorized"] is False
+    assert identity["authorizes_full_16705_plan"] is False
+    assert identity["volume_subsample_opportunities"] == VOLUME_SUBSAMPLE_OPPORTUNITIES == 1000
+    assert identity["gold_subsample_opportunities"] == GOLD_SUBSAMPLE_OPPORTUNITIES == 100
+    assert identity["inference"] == RUNPOD_TRAINING_INFERENCE
+    assert identity["prompt"] == VOLUME_TRAINING_PROMPT
+    assert identity["model_hash"] == VOLUME_MODEL_HASH
+    assert identity["prompt_hash"] == VOLUME_PROMPT_HASH
+    assert identity["inference_hash"] == VOLUME_INFERENCE_HASH == RUNPOD_INFERENCE_HASH
+    assert identity["identity_hash"] == VOLUME_IDENTITY_HASH
+    assert identity["identity_hash"] != local["identity_hash"] == OLLAMA_IDENTITY_HASH
+    assert identity["identity_hash"] != gold["identity_hash"] == RUNPOD_IDENTITY_HASH
+    assert identity["model_hash"] != local["model_hash"]
+    assert identity["model_hash"] != gold["model_hash"]
+    assert identity["model_id"] not in {DEFAULT_MODEL_ID, RUNPOD_MODEL_ID}
+    assert identity["model_hash"] != terra["model_hash"]
+    assert identity["identity_hash"] != deepseek["identity_hash"]
+    assert identity["action_schema_hash"] == SHARED_ACTION_SCHEMA_HASH
+    assert "Admin_i" not in identity["prompt"]
+    assert "ENTER_HIGH_CONVICTION" in identity["prompt"]
+    assert identity["inference"]["path"] == "/api/chat"
+    assert identity["inference"]["base_url"] == "runtime"
+
+
+def test_committed_volume_identity_matches_declaration():
+    loaded = load_ollama_volume_identity(VOLUME_IDENTITY, protocol_path=PROTOCOL)
+    assert loaded == declared_ollama_volume_identity()
+    protocol = json.loads(PROTOCOL.read_text(encoding="utf-8"))
+    assert protocol["protocol"]["registration_status"] == "REGISTERED_NOT_AUTHORIZED"
+    assert loaded["consulted_terra_protocol_hash"] == TERRA_PROTOCOL_HASH
+
+
+def test_volume_authorization_does_not_authorize_terra_9b_or_14b():
+    identity = load_ollama_volume_identity(VOLUME_IDENTITY, protocol_path=PROTOCOL)
+    auth = load_volume_training_authorization(
+        VOLUME_AUTHORIZATION, identity=identity, protocol_path=PROTOCOL,
+    )
+    assert auth == declared_volume_training_authorization(identity)
+    assert auth["authorization_hash"] == VOLUME_AUTHORIZATION_HASH
+    assert auth["authorization_status"] == AUTHORIZATION_STATUS
+    assert auth["nick_authorized_volume_training_execution"] is True
+    assert auth["nick_authorized_runpod_training_execution"] is False
+    assert auth["nick_authorized_local_training_execution"] is False
+    assert auth["authorizes_terra_protocol"] is False
+    assert auth["authorizes_local_9b_identity"] is False
+    assert auth["authorizes_runpod_14b_identity"] is False
+    assert auth["authorizes_full_16705_plan"] is False
+    assert auth["execution_authorized"] is False
+    assert auth["execution_authority"] == "ABSENT"
+    assert auth["authorization_cli_flag"] == VOLUME_CLI_AUTHORIZATION_FLAG
+    assert auth["actor_identity_hash"] == VOLUME_IDENTITY_HASH
+    assert auth["volume_subsample_opportunities"] == 1000
+    assert auth["gold_subsample_opportunities"] == 100
+
+
+def test_volume_flag_does_not_authorize_9b_or_14b_and_those_flags_do_not_authorize_8b():
+    local_auth = load_local_training_authorization(
+        AUTHORIZATION,
+        identity=load_ollama_qwen_identity(IDENTITY, protocol_path=PROTOCOL),
+        protocol_path=PROTOCOL,
+    )
+    runpod_auth = load_runpod_training_authorization(
+        RUNPOD_AUTHORIZATION,
+        identity=load_ollama_runpod_identity(RUNPOD_IDENTITY, protocol_path=PROTOCOL),
+        protocol_path=PROTOCOL,
+    )
+    volume_auth = load_volume_training_authorization(
+        VOLUME_AUTHORIZATION,
+        identity=load_ollama_volume_identity(VOLUME_IDENTITY, protocol_path=PROTOCOL),
+        protocol_path=PROTOCOL,
+    )
+    with pytest.raises(AuthorizationError, match="volume TRAINING flag"):
+        assert_full_run_authorized(
+            authorization=local_auth, authorize_volume_training=True,
+        )
+    with pytest.raises(AuthorizationError, match="volume TRAINING flag"):
+        assert_full_run_authorized(
+            authorization=runpod_auth, authorize_volume_training=True,
+        )
+    with pytest.raises(AuthorizationError, match="RunPod TRAINING flag"):
+        assert_full_run_authorized(
+            authorization=volume_auth, authorize_runpod_training=True,
+        )
+    with pytest.raises(AuthorizationError, match="local TRAINING flag"):
+        assert_full_run_authorized(
+            authorization=volume_auth, authorize_local_training=True,
+        )
+    with pytest.raises(AuthorizationError, match="cannot be combined"):
+        assert_full_run_authorized(
+            authorization=volume_auth,
+            authorize_volume_training=True,
+            authorize_runpod_training=True,
+        )
+    assert_full_run_authorized(
+        authorization=volume_auth, authorize_volume_training=True,
+    )
+
+
+def test_swapping_8b_tag_without_matching_identity_fails_closed():
+    with pytest.raises(IdentityError, match="model id"):
+        load_ollama_volume_identity(
+            VOLUME_IDENTITY, protocol_path=PROTOCOL, expected_model_id="qwen2.5:14b",
+        )
+    with pytest.raises(IdentityError, match="model id"):
+        load_ollama_volume_identity(
+            VOLUME_IDENTITY, protocol_path=PROTOCOL, expected_model_id="qwen3.5:9b",
+        )
+    other = declared_ollama_volume_identity(model_id="qwen3:8b")
+    current = declared_ollama_volume_identity()
+    assert other["identity_hash"] != current["identity_hash"] == VOLUME_IDENTITY_HASH
+    assert other["model_id"] == "qwen3:8b"
+
+
+def test_volume_identity_hash_tamper_is_refused(tmp_path):
+    payload = json.loads(VOLUME_IDENTITY.read_text(encoding="utf-8"))
+    payload["prompt"] = "not the declared volume prompt"
+    path = tmp_path / "identity.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(IdentityError, match="identity_hash"):
+        load_ollama_volume_identity(path, protocol_path=PROTOCOL)
