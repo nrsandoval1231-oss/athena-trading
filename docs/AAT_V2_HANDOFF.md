@@ -1,17 +1,22 @@
 # AAT-V2 Progress, Status and Handoff
 
-Written 8 September 2026. Status refreshed 14 September 2026 against current
+Written 8 September 2026. Status refreshed 16 September 2026 against current
 `main` (macro-only claim contract, `REGISTERED_NOT_AUTHORIZED` protocol,
 GDELT rejection, TRAINING dry-run plans, model-execution options, the
 non-authorizing E-arm compact-schema amendment, a DeepSeek Flash
 **candidate / pilot** identity, a **local Ollama / Qwen TRAINING
-candidate** identity on `qwen3.5:9b`, and a **RunPod / remote Ollama
-`qwen2.5:14b` TRAINING candidate**). The Terra protocol is unchanged. Nick
-authorized a **bigger live Flash pilot** at $50 / ~500 calls / ~71
-opportunities; that is still not TRAINING. DeepSeek API overload (503)
-blocked that sample; Nick then authorized a pivot to a fail-closed local
-Ollama TRAINING path, and separately authorized RunPod remote-Ollama
-plumbing. Neither path silently flips Terra to authorized.
+candidate** identity on `qwen3.5:9b`, a **RunPod / remote Ollama
+`qwen2.5:14b` gold TRAINING candidate**, and an **7b volume
+`qwen2.5:7b` TRAINING candidate**). The Terra protocol is unchanged. The
+recommended next TRAINING step is **7b volume (1,000 stratified
+opportunities) + 14b gold (100 overlapping opportunities)**, not the full
+16,705 / 116,935 overnight. Nick authorized a **bigger live Flash pilot**
+at $50 / ~500 calls / ~71 opportunities; that is still not TRAINING.
+DeepSeek API overload (503) blocked that sample; Nick then authorized a
+pivot to a fail-closed local Ollama TRAINING path, and separately
+authorized RunPod remote-Ollama plumbing. The 14b Community 4090 smoke
+(~35.4 s/call → ~48 days / ~$400 for the full plan) rejected that full
+plan as the default. None of these paths silently flips Terra to authorized.
 
 **One-line status.** The V2 experiment is built through a frozen macro-only
 claim contract and a `REGISTERED_NOT_AUTHORIZED` protocol.
@@ -27,12 +32,14 @@ macro adapter is built, GDELT was rejected for this run after a bounded
 coverage study, and news stays explicitly missing. DeepSeek Flash remains a
 provider-scoped **candidate / pilot** identity. Local Ollama
 `qwen3.5:9b` is a separate hashed `LOCAL_TRAINING_CANDIDATE`. RunPod Ollama
-`qwen2.5:14b` is a separate hashed `RUNPOD_TRAINING_CANDIDATE`. Full
-in-sample TRAINING against the desktop Actor requires Nick's authorization
-artifact **and** `--authorize-local-training`. Full in-sample TRAINING
-against the RunPod Actor requires the RunPod authorization artifact **and**
-`--authorize-runpod-training`. That RunPod flag does not authorize Terra or
-the desktop 9b Actor. Astra Desk stays isolated. Holdout stays untouched.
+`qwen2.5:14b` is a separate hashed `RUNPOD_TRAINING_CANDIDATE` (gold).
+Volume Ollama `qwen2.5:7b` is a separate hashed `VOLUME_TRAINING_CANDIDATE`.
+Recommended in-sample TRAINING is the stratified 1,000-opportunity 7b
+volume sample (`--authorize-volume-training`) plus the 100-opportunity 14b
+gold slice (`--authorize-runpod-training`). That volume flag does not
+authorize Terra, desktop 9b, or gold 14b. The full 16,705 / 116,935 plan is
+plumbing, not the recommended next step. Astra Desk stays isolated. Holdout
+stays untouched.
 
 ---
 
@@ -361,33 +368,32 @@ deleted and redrawn under the fix.
 | Phase 3 coverage / claim contract | **Frozen, macro-only.** Required source is `macro` at floor 0.90; frozen measured coverage is macro 1.0, news 0.0. `claim_authorized` is false. Do not freeze a new contract. |
 | Phase 3 protocol registration | **Registered as `REGISTERED_NOT_AUTHORIZED`.** `configs/aat_v2_registered_protocol_v1.json`. Actor identity remains OpenAI / `gpt-5.6-terra`. DeepSeek Flash is a separate `CANDIDATE_PILOT` identity and does not rewrite this protocol. |
 | Phase 3 TRAINING dry-run plans | Present. `configs/aat_v2_training_plan_v2.json` supersedes v1: 16,705 opportunities, **116,935** planned calls, `dry_run: true`, `execution_authorized: false`. |
-| Model execution options | Documented in `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. DeepSeek Flash dry-run / fixture preflight planner exists; thinking is disabled and Actor JSON is required on the B/C/D path. Arm E uses the compact closed-enum schema with per-turn example json after the live Flash E mismatch. A bounded pilot entrypoint exists (`scripts/run_aat_v2_deepseek_flash_pilot.py`) and defaults to fixture/dry. Nick-authorized **bigger live Flash pilot** (not TRAINING): **500 calls**, **$50.00**, **71 opportunities** (71 × 7 = 497 with E). Hard fail-closed caps are 80 opportunities / 500 calls / $50.00. Dry default stays 1 / 7 / $1.00. Hard PREFLIGHT spend ceiling remains $1.00. DeepSeek API 503 blocked that bigger sample. **Tonight's path is local Ollama.** |
-| Local Ollama TRAINING plumbing | Present. Hashed identity `configs/aat_v2_ollama_qwen_actor_identity_v1.json` (`LOCAL_TRAINING_CANDIDATE`, default model `qwen3.5:9b`). Authorization artifact `configs/aat_v2_ollama_local_training_authorization_v1.json` records Nick's local-TRAINING direction but still requires `--authorize-local-training` and does **not** rewrite Terra. Runner: `scripts/run_aat_v2_ollama_local_training.py`. Defaults to dry smoke (tiny N, mocked transport). Live loopback HTTP is `--allow-live-ollama`. Full 16,705 / 116,935 requires the flag plus frozen receipts. Resume/checkpoint is supported. Status `LOCAL_TRAINING_IN_SAMPLE` or `LOCAL_TRAINING_SMOKE`; `execution_authority` `ABSENT`. |
-| RunPod / remote Ollama TRAINING plumbing | Present. Separate hashed identity `configs/aat_v2_ollama_qwen_14b_runpod_actor_identity_v1.json` (`RUNPOD_TRAINING_CANDIDATE`, `qwen2.5:14b`). Authorization `configs/aat_v2_ollama_runpod_training_authorization_v1.json` requires `--authorize-runpod-training` and does **not** authorize Terra or desktop 9b. Same runner; `--base-url http://<pod>:11434` (native `/api/chat`). Live still needs `--allow-live-ollama`. Concurrency default 1, max 4; 64-wide blasts refused. Frozen TRAINING receipt hashes still gate the full plan. Offline tests mock the remote transport. The 116,935-call run is **not** started in-repo. `execution_authority` `ABSENT`. |
-| Phase 3 TRAINING run | **Local 9b and RunPod 14b plumbing are ready; the 116,935-call run is not started in-repo.** Nick can smoke then start overnight on desktop or a RunPod GPU. Prior local evidence was `qwen3-coder:30b` at ~0.348 calls/s → **~93h**; that tag is a different Actor. Compact E-arm schema now applies; re-benchmark after a 2-opportunity live warmup. DeepSeek remains blocked on API overload. |
+| Model execution options | Documented in `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. DeepSeek Flash dry-run / fixture preflight planner exists; thinking is disabled and Actor JSON is required on the B/C/D path. Arm E uses the compact closed-enum schema with per-turn example json after the live Flash E mismatch. A bounded pilot entrypoint exists (`scripts/run_aat_v2_deepseek_flash_pilot.py`) and defaults to fixture/dry. Nick-authorized **bigger live Flash pilot** (not TRAINING): **500 calls**, **$50.00**, **71 opportunities** (71 × 7 = 497 with E). Hard fail-closed caps are 80 opportunities / 500 calls / $50.00. Dry default stays 1 / 7 / $1.00. Hard PREFLIGHT spend ceiling remains $1.00. DeepSeek API 503 blocked that bigger sample. **Recommended TRAINING is 7b volume + 14b gold**, not the full 16,705 overnight. |
+| Local Ollama TRAINING plumbing | Present. Hashed identity `configs/aat_v2_ollama_qwen_actor_identity_v1.json` (`LOCAL_TRAINING_CANDIDATE`, default model `qwen3.5:9b`). Authorization artifact `configs/aat_v2_ollama_local_training_authorization_v1.json` records Nick's local-TRAINING direction but still requires `--authorize-local-training` and does **not** rewrite Terra. Runner: `scripts/run_aat_v2_ollama_local_training.py`. Defaults to dry smoke (tiny N, mocked transport). Live loopback HTTP is `--allow-live-ollama`. Full 16,705 / 116,935 remains plumbing and still requires the flag plus frozen receipts. Resume/checkpoint is supported. Status `LOCAL_TRAINING_IN_SAMPLE` or `LOCAL_TRAINING_SMOKE`; `execution_authority` `ABSENT`. |
+| RunPod / remote Ollama 14b gold plumbing | Present. Separate hashed identity `configs/aat_v2_ollama_qwen_14b_runpod_actor_identity_v1.json` (`RUNPOD_TRAINING_CANDIDATE`, `qwen2.5:14b`). Authorization `configs/aat_v2_ollama_runpod_training_authorization_v1.json` requires `--authorize-runpod-training` and does **not** authorize Terra, desktop 9b, or volume 7b. Same runner; `--base-url` native `/api/chat`. Recommended live use is the **100-opportunity gold slice** overlapping the 7b volume sample, full arms including E. The frozen 16,705 / 116,935 14b overnight is plumbing, not the recommended next step (measured ~35.4 s/call → ~48 days). `execution_authority` `ABSENT`. |
+| RunPod / remote Ollama 7b volume plumbing | Present. Separate hashed identity `configs/aat_v2_ollama_qwen_7b_volume_actor_identity_v1.json` (`VOLUME_TRAINING_CANDIDATE`, `qwen2.5:7b`). Authorization `configs/aat_v2_ollama_volume_training_authorization_v1.json` requires `--authorize-volume-training` and does **not** authorize Terra, 9b, or 14b. Documented volume plan is a **stratified 1,000-opportunity** TRAINING subsample (`configs/aat_v2_training_subsample_plan_v1.json`, draw script `scripts/draw_aat_v2_training_subsample.py`). Default volume arms are full B/C/D+E; `--no-include-deliberation` is optional thin-E. Same native `/api/chat` runner. `execution_authority` `ABSENT`. |
+| Phase 3 TRAINING run | **7b volume + 14b gold plumbing is ready; the 116,935-call run is not started in-repo and is not the recommended next step.** Nick can draw the subsample, then run volume 7b (1,000) and gold 14b (100) on a RunPod GPU. Prior local evidence was `qwen3-coder:30b` at ~0.348 calls/s → **~93h**; that tag is a different Actor. Compact E-arm schema now applies. DeepSeek remains blocked on API overload. |
 | Phase 4 sealed holdout | Not started; needs a completed Phase 3 TRAINING run and separate authorization. The consumed AAT-V1 holdout must not be reused. V2 holdout symbols must not appear in the TRAINING index. |
 | AAT-V1 | Frozen and closed. Holdout consumed (`INVALID_EVIDENCE`). Limitation stands. |
 | Execution authority | `ABSENT` everywhere. No live-trading code exists. Astra Desk stays isolated. |
 
-### Why the run was blocked, and what tonight changes
+### Why the run was blocked, and what this dual-Actor plan changes
 
 Not on adapters, and not on an unfrozen contract. The macro-only claim contract
 is already frozen and the protocol is already registered as
 `REGISTERED_NOT_AUTHORIZED`. DeepSeek Flash was the hosted candidate; a
 bounded live pilot ran, then API 503 blocked the bigger Flash sample. Nick
-authorized a pivot to **local Ollama** on his desktop (`qwen3.5:9b`,
-RTX 5060 8 GB + ~33.8 GB RAM). The earlier local 100-opportunity evidence
-used `qwen3-coder:30b`; that tag is a different Actor and is refused unless
-a matching identity is minted.
+authorized a pivot to **local Ollama** on his desktop (`qwen3.5:9b`), then
+RunPod remote Ollama `qwen2.5:14b`. A Community 4090 14b smoke of ~35.4
+s/call made the full 16,705 / 116,935 overnight (~48 days / ~$400) the
+wrong default. The dual-Actor plan is 7b volume (1,000) plus 14b gold (100).
 
-That pivot ships execution *plumbing*. It does not rewrite
+That plumbing does not rewrite
 `configs/aat_v2_registered_protocol_v1.json`, does not grant broker
-`execution_authority`, and does not consume V1 or V2 holdout. Full TRAINING
-still needs Nick's `--authorize-local-training` flag on the machine that
-hosts Ollama. A prior 100-opportunity local pilot was ~93 hours at 0.348
-calls/s with E truncated under the old five-field schema. Compact E JSON now
-applies; wall-clock must be re-benchmarked. Do not expect the 116,935-call
-run to finish in one night.
+`execution_authority`, and does not consume V1 or V2 holdout. Volume still
+needs `--authorize-volume-training`. Gold still needs
+`--authorize-runpod-training`. Compact E JSON applies. Do not treat the
+116,935-call plan as the next step.
 
 ```
 registration_status: REGISTERED_NOT_AUTHORIZED
@@ -399,13 +405,15 @@ execution_authority: ABSENT
 
 ## 5. Handoff — what to do next
 
-### Immediate: local Ollama TRAINING on Nick's desktop
+### Immediate: 7b volume + 14b gold on the existing Ollama harness
 
 The ALFRED adapter exists. GDELT was evaluated and rejected for this run. The
 macro-only claim contract is frozen; the protocol is
-`REGISTERED_NOT_AUTHORIZED`; the corrected dry-run plan is 116,935 calls.
-Nothing below authorizes broker execution, freezes a new contract, or touches
-the consumed AAT-V1 holdout. Astra Desk stays isolated.
+`REGISTERED_NOT_AUTHORIZED`; the corrected dry-run plan is 116,935 calls
+and is **no longer the recommended next step**. Recommended TRAINING is the
+stratified 1,000-opportunity 7b volume sample plus the 100-opportunity 14b
+gold slice. Nothing below authorizes broker execution, freezes a new
+contract, or touches the consumed AAT-V1 holdout. Astra Desk stays isolated.
 
 1. **Do not acquire a news dump for this run.** GDELT coverage was 0.0778%
    under the frozen compressor window. News remains explicitly missing unless
@@ -415,28 +423,25 @@ the consumed AAT-V1 holdout. Astra Desk stays isolated.
 2. **Do not freeze another claim contract.** The current one already binds
    measured macro coverage 1.0 at a 0.90 floor. Lowering the floor because
    coverage disappointed is the move the contract exists to prevent.
-3. **Desktop local Ollama or RunPod remote Ollama, not DeepSeek API.** Flash
-   remains a `CANDIDATE_PILOT`. Nick authorized a bigger live Flash sample
-   at 500 calls / $50 / 71 opportunities; API 503 blocked it. Do not retry a
-   TRAINING-sized DeepSeek spend while 503s persist. Desktop identity:
+3. **7b volume + 14b gold on RunPod, not a 16,705 overnight and not DeepSeek
+   API.** Flash remains a `CANDIDATE_PILOT`. Desktop identity:
    `configs/aat_v2_ollama_qwen_actor_identity_v1.json`, default model
-   `qwen3.5:9b` (loopback only). RunPod identity:
+   `qwen3.5:9b` (loopback only). Volume identity:
+   `configs/aat_v2_ollama_qwen_7b_volume_actor_identity_v1.json`, model
+   `qwen2.5:7b`. Gold identity:
    `configs/aat_v2_ollama_qwen_14b_runpod_actor_identity_v1.json`, model
-   `qwen2.5:14b` (pod `--base-url` or SSH tunnel). A different Ollama tag,
-   including `qwen3:14b` or the earlier `qwen3-coder:30b` local-pilot tag,
-   is a new hashed identity, not a runtime swap. Transport is native
-   `/api/chat` with `think: false`. Compact E-arm schema applies.
-4. **Smoke, then optional 2-opportunity live warmup, then overnight full
-   start.** Exact commands — including RunPod `--base-url` — are in
-   `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. Default CLI is mocked smoke.
-   Live needs `--allow-live-ollama`. The full 16,705-opportunity desktop run
-   needs `--authorize-local-training`. The full RunPod run needs
-   `--authorize-runpod-training`. Both still need frozen TRAINING
-   index/snapshot receipts (`179e6f21…` / `3240a4fa…`). `--resume` is
-   required after a hitch. Download RunPod artifacts before terminating the
-   pod. Prior local estimate ~93 hours: do not assume a finish in one
-   sitting. Re-benchmark E accept rate under the compact schema before
-   treating throughput as known.
+   `qwen2.5:14b`. A different Ollama tag is a new hashed identity, not a
+   runtime swap. Transport is native `/api/chat` with `think: false`. Compact
+   E-arm schema applies. Volume default is full arms; thin-E is
+   `--no-include-deliberation`. Gold keeps E.
+4. **Draw the stratified subsample, then volume, then gold.** Exact commands
+   are in `docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md`. Default CLI is mocked
+   smoke. Live needs `--allow-live-ollama`. Volume 1,000 needs
+   `--authorize-volume-training` and the hashed volume subsample receipt.
+   Gold 100 needs `--authorize-runpod-training` and the gold receipt.
+   `--resume` is required after a hitch. Download RunPod artifacts before
+   terminating the pod. Measured 14b pace was ~35.4 s/call; 7b wall-clock is
+   unmeasured (hypotheses are labelled in the execution-options doc).
 5. **DeepSeek Flash identity and bounded pilot remain in-tree and are not
    TRAINING.** The bigger-pilot command is still
    `python scripts/run_aat_v2_deepseek_flash_pilot.py --allow-live --opportunities 71 --call-ceiling 500 --spend-ceiling-usd 50.00`
@@ -472,11 +477,10 @@ wait on a completed in-sample run and separate holdout authorization.
 
 ### Open decisions still outstanding
 
-- **Whether a local 9b or RunPod 14b TRAINING start finishes, and at what
+- **Whether 7b volume and 14b gold TRAINING starts finish, and at what
   E accept rate.** Compact E JSON is bound; the old 0/400 E result is stale.
-  A 2-opportunity live warmup should precede a full start. Hosted Flash
-  remains blocked on API 503. Declaring either Ollama identity does not
-  rewrite Terra.
+  The recommended plan is 1,000 / 100, not 16,705. Hosted Flash remains
+  blocked on API 503. Declaring either Ollama identity does not rewrite Terra.
 - **Whether arm E earns its cost.** It is the most interesting thing
   TradingAgents does and the least likely to survive an equal-budget
   comparison. The 64-token turn no longer requires unbounded Actor JSON; the
@@ -503,8 +507,9 @@ at 1.0. Do not reopen it after looking at a result.
 - Only one Actor provider is registered in V1 (`openai`). DeepSeek Flash is a
   V2 `CANDIDATE_PILOT` identity with a bounded fixture pilot. Local Ollama
   `qwen3.5:9b` is a V2 `LOCAL_TRAINING_CANDIDATE`. RunPod Ollama
-  `qwen2.5:14b` is a V2 `RUNPOD_TRAINING_CANDIDATE`. Neither is the
-  registered Terra Actor. TRAINING receipts are in-sample and still
+  `qwen2.5:14b` is a V2 `RUNPOD_TRAINING_CANDIDATE`. Volume Ollama
+  `qwen2.5:7b` is a V2 `VOLUME_TRAINING_CANDIDATE`. None is the registered
+  Terra Actor. TRAINING receipts are in-sample and still
   `execution_authority: ABSENT`.
 - `four_arm.py` is pinned to OpenAI by design.
 - Exogenous coverage is denser for large caps and for names that later moved.
@@ -530,9 +535,10 @@ produce a defensible answer either way — including "it did not help" — once
 TRAINING is separately authorized.
 
 The next real risk is not a missing adapter. It is promoting the local Ollama,
-RunPod Ollama, or DeepSeek identity into the registered Terra protocol,
-treating a ~93h start as a finished claim, lowering a frozen floor, or reusing
-the consumed V1 holdout. The contract, the protocol status, the candidate
-identities, the compact-schema amendment, the local-TRAINING and
-RunPod-TRAINING CLI flags, and the consumed-holdout registry are written to
-make those moves visible. Keep them that way.
+RunPod Ollama, volume Ollama, or DeepSeek identity into the registered Terra
+protocol, treating a ~93h or ~48-day start as a finished claim, lowering a
+frozen floor, or reusing the consumed V1 holdout. The contract, the protocol
+status, the candidate identities, the compact-schema amendment, the
+local-TRAINING / RunPod-TRAINING / volume-TRAINING CLI flags, and the
+consumed-holdout registry are written to make those moves visible. Keep them
+that way.

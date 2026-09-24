@@ -2,16 +2,20 @@
 
 Reads the frozen macro-only V2 TRAINING plan and a real opportunity index /
 macro snapshot. Defaults to a tiny dry-run smoke against the desktop
-``qwen3.5:9b`` identity. The full 16,705-opportunity / 116,935-call run
-requires Nick's matching authorization artifact *and* either
-``--authorize-local-training`` (desktop 9b) or ``--authorize-runpod-training``
-(RunPod / remote ``qwen2.5:14b``). Neither flag rewrites the Terra protocol,
-raises ``execution_authority`` above ``ABSENT``, or consumes a holdout.
+``qwen3.5:9b`` identity. Recommended live TRAINING is the dual-Actor plan:
+stratified 1,000-opportunity volume on ``qwen2.5:7b`` plus a 100-opportunity
+gold slice on ``qwen2.5:14b``. Those runs require the matching authorization
+artifact *and* either ``--authorize-volume-training`` (7b volume subsample)
+or ``--authorize-runpod-training`` (14b gold). Desktop 9b still uses
+``--authorize-local-training``. None of those flags rewrite the Terra
+protocol, raise ``execution_authority`` above ``ABSENT``, or consume a
+holdout. The frozen 16,705-opportunity / 116,935-call plan remains plumbing,
+not the recommended next step.
 
 Live HTTP is a separate opt-in (``allow_live=True``). Non-loopback
-``base_url`` is allowed only for the RunPod 14b identity (pod IP or an SSH
-tunnel to loopback). Tests inject a mocked transport and never contact
-DeepSeek, RunPod, or Ollama.
+``base_url`` is allowed for the RunPod 14b gold identity and the volume 7b
+identity (pod IP, HTTPS proxy, or an SSH tunnel to loopback). Tests inject a
+mocked transport and never contact DeepSeek, RunPod, or Ollama.
 """
 from __future__ import annotations
 
@@ -40,14 +44,21 @@ from .ollama_identity import (
     COMMITTED_AUTHORIZATION_PATH,
     COMMITTED_IDENTITY_PATH,
     COMMITTED_RUNPOD_AUTHORIZATION_PATH,
+    COMMITTED_VOLUME_AUTHORIZATION_PATH,
     DEFAULT_MODEL_ID,
+    GOLD_SUBSAMPLE_OPPORTUNITIES,
     IDENTITY_STATUS,
     RUNPOD_CLI_AUTHORIZATION_FLAG,
     RUNPOD_IDENTITY_STATUS,
+    VOLUME_CLI_AUTHORIZATION_FLAG,
+    VOLUME_IDENTITY_STATUS,
+    VOLUME_SUBSAMPLE_OPPORTUNITIES,
     AuthorizationError,
+    allows_remote_ollama,
     assert_full_run_authorized,
     identity_digest,
     is_runpod_identity,
+    is_volume_identity,
     load_committed_ollama_training_authorization,
     load_committed_ollama_training_identity,
 )
@@ -67,6 +78,17 @@ from .ollama_transport import (
     transport_host_scope,
 )
 from .packet import build_packet, packet_hash
+from .training_subsample import (
+    GOLD_KIND,
+    VOLUME_KIND,
+    SubsampleError,
+    load_subsample_receipt,
+    load_training_subsample_plan,
+    COMMITTED_SUBSAMPLE_PLAN_PATH,
+    select_opportunities_for_receipt,
+    verify_committed_subsample,
+    verify_opportunity_index_receipt,
+)
 
 TRAINING_PLAN_SCHEMA = "athena-aat-v2-training-plan-v2"
 PROTOCOL_SCHEMA = "athena-aat-v2-registered-protocol-v1"
@@ -100,6 +122,9 @@ _PROTECTED_ARTIFACTS = (
     "aat_v2_ollama_local_training_authorization_v1.json",
     "aat_v2_ollama_qwen_14b_runpod_actor_identity_v1.json",
     "aat_v2_ollama_runpod_training_authorization_v1.json",
+    "aat_v2_ollama_qwen_7b_volume_actor_identity_v1.json",
+    "aat_v2_ollama_volume_training_authorization_v1.json",
+    "aat_v2_training_subsample_plan_v1.json",
     "aat_v2_dataset_assignment_v1.json",
     "aat_v2_training_plan_v2.json",
 )
@@ -305,10 +330,12 @@ def run_ollama_local_training(
     authorization_path: str | Path | None = None,
     opportunity_receipt_path: str | Path | None = None,
     snapshot_receipt_path: str | Path | None = None,
+    subsample_receipt_path: str | Path | None = None,
     output_dir: str | Path,
     limit_opportunities: int | None = DEFAULT_SMOKE_LIMIT,
     authorize_local_training: bool = False,
     authorize_runpod_training: bool = False,
+    authorize_volume_training: bool = False,
     allow_live: bool = False,
     transport: Transport | None = None,
     model_id: str | None = None,
@@ -329,11 +356,12 @@ def run_ollama_local_training(
             identity_file, protocol_path=protocol_path, expected_model_id=model_id,
         )
         if authorization_path is None:
-            authorization_file = (
-                COMMITTED_RUNPOD_AUTHORIZATION_PATH
-                if is_runpod_identity(identity)
-                else COMMITTED_AUTHORIZATION_PATH
-            )
+            if is_volume_identity(identity):
+                authorization_file = COMMITTED_VOLUME_AUTHORIZATION_PATH
+            elif is_runpod_identity(identity):
+                authorization_file = COMMITTED_RUNPOD_AUTHORIZATION_PATH
+            else:
+                authorization_file = COMMITTED_AUTHORIZATION_PATH
         else:
             authorization_file = authorization_path
         authorization = load_committed_ollama_training_authorization(
@@ -343,6 +371,7 @@ def run_ollama_local_training(
         raise OllamaTrainingError(str(exc)) from exc
     actor_id = identity_digest(identity)
     runpod = is_runpod_identity(identity)
+    volume = is_volume_identity(identity)
     _assert_base_url_matches_identity(identity, base_url)
     if not isinstance(max_concurrent_calls, int) or max_concurrent_calls < 1:
         raise OllamaTrainingError("max-concurrent-calls must be a positive integer")
@@ -356,14 +385,21 @@ def run_ollama_local_training(
     except DeliberationError as exc:
         raise OllamaTrainingError(str(exc)) from exc
 
-    full_plan = limit_opportunities is None
-    using_auth_flag = authorize_local_training or authorize_runpod_training
-    if full_plan or using_auth_flag:
+    volume_plan = volume and (
+        limit_opportunities is None
+        or limit_opportunities >= VOLUME_SUBSAMPLE_OPPORTUNITIES
+    )
+    full_plan = limit_opportunities is None and not volume
+    using_auth_flag = (
+        authorize_local_training or authorize_runpod_training or authorize_volume_training
+    )
+    if full_plan or volume_plan or using_auth_flag:
         try:
             assert_full_run_authorized(
                 authorization=authorization,
                 authorize_local_training=authorize_local_training,
                 authorize_runpod_training=authorize_runpod_training,
+                authorize_volume_training=authorize_volume_training,
             )
         except AuthorizationError as exc:
             raise OllamaTrainingError(str(exc)) from exc
@@ -374,7 +410,70 @@ def run_ollama_local_training(
         load_training_opportunities(opportunity_index_path), assignment,
     )
     snapshot_rows = load_training_snapshot_rows(snapshot_path)
-    selected = opportunities if full_plan else opportunities[:limit_opportunities]
+    subsample_receipt = None
+    if full_plan and subsample_receipt_path is not None:
+        raise OllamaTrainingError(
+            "full 16,705-opportunity plan cannot mix a volume/gold subsample receipt"
+        )
+    if volume_plan and subsample_receipt_path is None:
+        raise OllamaTrainingError(
+            "volume subsample TRAINING requires a hashed subsample receipt; "
+            "taking the first 1,000 index rows is not the stratified sample"
+        )
+    if subsample_receipt_path is not None:
+        try:
+            subsample_receipt = load_subsample_receipt(subsample_receipt_path)
+        except SubsampleError as exc:
+            raise OllamaTrainingError(str(exc)) from exc
+        expected_kind = VOLUME_KIND if volume else GOLD_KIND if runpod else None
+        if expected_kind is None:
+            raise OllamaTrainingError(
+                "desktop qwen3.5:9b identity does not consume a volume/gold subsample receipt"
+            )
+        if subsample_receipt.get("subsample_kind") != expected_kind:
+            raise OllamaTrainingError(
+                "subsample receipt kind does not match this Actor: "
+                f"volume 7b requires {VOLUME_KIND}, gold 14b requires {GOLD_KIND}"
+            )
+        try:
+            committed_plan = load_training_subsample_plan(COMMITTED_SUBSAMPLE_PLAN_PATH)
+            if opportunity_receipt_path is None:
+                raise SubsampleError("subsample runs require the frozen opportunity receipt")
+            verify_opportunity_index_receipt(
+                opportunity_index_path, opportunity_receipt_path,
+                expected_hash=plan["dataset_hash"],
+            )
+            verify_committed_subsample(
+                subsample_receipt, opportunities, assignment, plan=committed_plan,
+            )
+        except SubsampleError as exc:
+            raise OllamaTrainingError(str(exc)) from exc
+        if volume_plan and subsample_receipt.get("target_count") != VOLUME_SUBSAMPLE_OPPORTUNITIES:
+            raise OllamaTrainingError(
+                "volume subsample receipt must pin the documented 1,000-opportunity sample"
+            )
+        gold_plan = (
+            runpod
+            and subsample_receipt.get("subsample_kind") == GOLD_KIND
+            and (
+                limit_opportunities is None
+                or limit_opportunities >= GOLD_SUBSAMPLE_OPPORTUNITIES
+            )
+        )
+        if gold_plan and subsample_receipt.get("target_count") != GOLD_SUBSAMPLE_OPPORTUNITIES:
+            raise OllamaTrainingError(
+                "gold subsample receipt must pin the documented 100-opportunity slice"
+            )
+        try:
+            selected = select_opportunities_for_receipt(
+                opportunities, subsample_receipt, limit=limit_opportunities,
+            )
+        except SubsampleError as exc:
+            raise OllamaTrainingError(str(exc)) from exc
+    elif full_plan:
+        selected = opportunities
+    else:
+        selected = opportunities[:limit_opportunities]
     if not selected:
         raise OllamaTrainingError("no TRAINING opportunities selected")
     if full_plan:
@@ -400,8 +499,15 @@ def run_ollama_local_training(
     live_calls = allow_live and transport is None
     host_scope = transport_host_scope(base_url)
     status = IN_SAMPLE_STATUS if using_auth_flag else SMOKE_STATUS
-    actor_status = RUNPOD_IDENTITY_STATUS if runpod else IDENTITY_STATUS
-    auth_flag = RUNPOD_CLI_AUTHORIZATION_FLAG if runpod else CLI_AUTHORIZATION_FLAG
+    if volume:
+        actor_status = VOLUME_IDENTITY_STATUS
+        auth_flag = VOLUME_CLI_AUTHORIZATION_FLAG
+    elif runpod:
+        actor_status = RUNPOD_IDENTITY_STATUS
+        auth_flag = RUNPOD_CLI_AUTHORIZATION_FLAG
+    else:
+        actor_status = IDENTITY_STATUS
+        auth_flag = CLI_AUTHORIZATION_FLAG
 
     output = Path(output_dir)
     _forbid_holdout_path(output)
@@ -516,6 +622,7 @@ def run_ollama_local_training(
                     status=INCOMPLETE_STATUS,
                     authorize_local_training=authorize_local_training,
                     authorize_runpod_training=authorize_runpod_training,
+                    authorize_volume_training=authorize_volume_training,
                 )
             if item["arm"] == E_DELIBERATION and rejection is None and decision:
                 prior_turns.append(decision)
@@ -542,11 +649,14 @@ def run_ollama_local_training(
                 estimated_rows=estimated_rows, live_calls=live_calls, allow_live=allow_live,
                 authorize_local_training=authorize_local_training,
                 authorize_runpod_training=authorize_runpod_training,
-                full_plan=full_plan, include_deliberation=include_deliberation,
+                authorize_volume_training=authorize_volume_training,
+                full_plan=full_plan, volume_plan=volume_plan,
+                include_deliberation=include_deliberation,
                 status=INCOMPLETE_STATUS, limit_opportunities=limit_opportunities,
                 actor_id=actor_id, actor_status=actor_status, auth_flag=auth_flag,
                 host_scope=host_scope, base_url=base_url,
                 max_concurrent_calls=max_concurrent_calls, runpod=runpod,
+                volume=volume, subsample_receipt=subsample_receipt,
             ),
             resume=True,
         )
@@ -560,11 +670,14 @@ def run_ollama_local_training(
         estimated_rows=estimated_rows, live_calls=live_calls, allow_live=allow_live,
         authorize_local_training=authorize_local_training,
         authorize_runpod_training=authorize_runpod_training,
-        full_plan=full_plan, include_deliberation=include_deliberation,
+        authorize_volume_training=authorize_volume_training,
+        full_plan=full_plan, volume_plan=volume_plan,
+        include_deliberation=include_deliberation,
         status=result_status, limit_opportunities=limit_opportunities,
         actor_id=actor_id, actor_status=actor_status, auth_flag=auth_flag,
         host_scope=host_scope, base_url=base_url,
         max_concurrent_calls=max_concurrent_calls, runpod=runpod,
+        volume=volume, subsample_receipt=subsample_receipt,
     )
     _write_receipt(receipt_path, result, resume=resume or receipt_path.exists())
     if result_status != INCOMPLETE_STATUS:
@@ -580,6 +693,7 @@ def run_ollama_local_training(
             status=result_status,
             authorize_local_training=authorize_local_training,
             authorize_runpod_training=authorize_runpod_training,
+            authorize_volume_training=authorize_volume_training,
         )
     return result
 
@@ -637,11 +751,13 @@ def _resolve_transport(
 
 
 def _assert_base_url_matches_identity(identity: Mapping[str, Any], base_url: str) -> None:
-    """Desktop 9b is loopback-only. RunPod 14b may use a pod IP or an SSH tunnel."""
-    if is_runpod_identity(identity):
+    """Desktop 9b is loopback-only. Volume 7b and gold 14b may use a remote host."""
+    if allows_remote_ollama(identity):
         inference = identity.get("inference")
         if not isinstance(inference, Mapping) or inference.get("base_url_policy") != "explicit_cli":
-            raise OllamaTrainingError("RunPod identity must declare an explicit CLI base-url policy")
+            raise OllamaTrainingError(
+                "remote Ollama identity must declare an explicit CLI base-url policy"
+            )
         try:
             ollama_chat_url(base_url, allow_remote=True)
         except OllamaTransportError as exc:
@@ -652,7 +768,7 @@ def _assert_base_url_matches_identity(identity: Mapping[str, Any], base_url: str
     except OllamaTransportError as exc:
         raise OllamaTrainingError(
             "local qwen3.5:9b identity cannot target a non-loopback Ollama host; "
-            "use the RunPod qwen2.5:14b identity and --authorize-runpod-training"
+            "use the volume qwen2.5:7b identity or the gold qwen2.5:14b identity"
         ) from exc
 
 
@@ -740,6 +856,7 @@ def _write_checkpoint(
     status: str,
     authorize_local_training: bool,
     authorize_runpod_training: bool = False,
+    authorize_volume_training: bool = False,
 ) -> None:
     payload = {
         "schema_version": CHECKPOINT_SCHEMA,
@@ -754,6 +871,7 @@ def _write_checkpoint(
         "last_turn": last_turn,
         "authorize_local_training": authorize_local_training,
         "authorize_runpod_training": authorize_runpod_training,
+        "authorize_volume_training": authorize_volume_training,
         "partition": "TRAINING",
         "terra_protocol_not_reused": True,
     }
@@ -784,7 +902,9 @@ def _result_body(
     allow_live: bool,
     authorize_local_training: bool,
     authorize_runpod_training: bool,
+    authorize_volume_training: bool,
     full_plan: bool,
+    volume_plan: bool,
     include_deliberation: bool,
     status: str,
     limit_opportunities: int | None,
@@ -795,6 +915,8 @@ def _result_body(
     base_url: str,
     max_concurrent_calls: int,
     runpod: bool,
+    volume: bool,
+    subsample_receipt: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     result = {
         "schema_version": RUN_SCHEMA,
@@ -807,8 +929,11 @@ def _result_body(
         "registration_status": "REGISTERED_NOT_AUTHORIZED",
         "terra_protocol_not_reused": True,
         "deepseek_identity_not_reused": True,
-        "local_9b_identity_not_reused": runpod,
+        "local_9b_identity_not_reused": runpod or volume,
+        "runpod_14b_identity_not_reused": volume,
         "runpod_training": runpod,
+        "volume_training": volume,
+        "volume_plan": volume_plan,
         "candidate_provider": identity["provider"],
         "candidate_model_id": identity["model_id"],
         "actor_identity_status": actor_status,
@@ -818,10 +943,13 @@ def _result_body(
         "authorization_cli_flag": auth_flag,
         "authorize_local_training": authorize_local_training,
         "authorize_runpod_training": authorize_runpod_training,
+        "authorize_volume_training": authorize_volume_training,
         "full_plan": full_plan,
         "protocol_hash": protocol["protocol_hash"],
         "training_plan_hash": plan["plan_hash"],
         "assignment_hash": assignment["assignment_hash"],
+        "subsample_hash": None if subsample_receipt is None else subsample_receipt.get("subsample_hash"),
+        "subsample_kind": None if subsample_receipt is None else subsample_receipt.get("subsample_kind"),
         "source_document": "docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md",
         "partition": "TRAINING",
         "opportunity_count": len(selected),
