@@ -57,7 +57,7 @@ IDENTITY = ROOT / "configs/aat_v2_ollama_qwen_actor_identity_v1.json"
 AUTHORIZATION = ROOT / "configs/aat_v2_ollama_local_training_authorization_v1.json"
 RUNPOD_IDENTITY = ROOT / "configs/aat_v2_ollama_qwen_14b_runpod_actor_identity_v1.json"
 RUNPOD_AUTHORIZATION = ROOT / "configs/aat_v2_ollama_runpod_training_authorization_v1.json"
-VOLUME_IDENTITY = ROOT / "configs/aat_v2_ollama_qwen_8b_volume_actor_identity_v1.json"
+VOLUME_IDENTITY = ROOT / "configs/aat_v2_ollama_qwen_7b_volume_actor_identity_v1.json"
 VOLUME_AUTHORIZATION = ROOT / "configs/aat_v2_ollama_volume_training_authorization_v1.json"
 PROTOCOL = ROOT / "configs/aat_v2_registered_protocol_v1.json"
 TERRA_IDENTITY = ROOT / "configs/aat_v2_actor_identity_v1.json"
@@ -73,11 +73,11 @@ RUNPOD_PROMPT_HASH = "107876a12794b1314d5d7dd87a65d1e35f88462abc11b7554708864ba7
 RUNPOD_INFERENCE_HASH = "2929d0e27a92d85bae12aa4731203bebc2f9cd1ad31035a88ae99bcfaf3ef2f1"
 RUNPOD_IDENTITY_HASH = "4f9178080ae3d0cf04ff296d6e2f5e259233c36e75ce79448b751d249af6966f"
 RUNPOD_AUTHORIZATION_HASH = "6af1733ef877658ee8b9227312f1c9724aa673a0642fd8e7a908342f308251a4"
-VOLUME_MODEL_HASH = "02b8cc10e5c4318fb87b90afb7f457b29d71aaebe1e673327ab4922349293d58"
-VOLUME_PROMPT_HASH = "f1a063c20b8d108dfb9b23e640a2d2d6aab634f7f987f1d12652de54d4c9dd7a"
+VOLUME_MODEL_HASH = "4e95c7805da35b91df6f215102fbb3367d7b52c601eb2fca5ae1678a50198edd"
+VOLUME_PROMPT_HASH = "dbb1fca88620823ec2dde3faf007c4463ab2e05fcf78d1a2f0ecacdfeb4ff7dd"
 VOLUME_INFERENCE_HASH = "2929d0e27a92d85bae12aa4731203bebc2f9cd1ad31035a88ae99bcfaf3ef2f1"
-VOLUME_IDENTITY_HASH = "78403cd01e7e8b151c086a66a97dfa93dd95664bcddef9873e2af566fb8edad7"
-VOLUME_AUTHORIZATION_HASH = "80032851e41f43a5777afcb094e33f8a4b81371aa7574e5cd44296f56532c435"
+VOLUME_IDENTITY_HASH = "c5efaa0a89729c0cabfb7aacb4080fdfcab5bca8c598541fd9f7c074d9c89416"
+VOLUME_AUTHORIZATION_HASH = "dffa02c4ca42ad8ea813b30c372e631b43cc5aaec13908999c542435f1f2ccde"
 SHARED_ACTION_SCHEMA_HASH = "852c32a80b5f4187ea6629270bfaf14162779e1a742690716a337eb107a26b3c"
 
 
@@ -319,14 +319,14 @@ def test_runpod_flag_does_not_authorize_local_9b_and_local_flag_does_not_authori
     )
 
 
-def test_volume_8b_identity_is_a_different_actor_from_9b_14b_deepseek_and_terra():
+def test_volume_7b_identity_is_a_different_actor_from_9b_14b_deepseek_and_terra():
     identity = declared_ollama_volume_identity()
     local = declared_ollama_qwen_identity()
     gold = declared_ollama_runpod_identity()
     terra = json.loads(TERRA_IDENTITY.read_text(encoding="utf-8"))
     deepseek = json.loads(DEEPSEEK_IDENTITY.read_text(encoding="utf-8"))
     assert identity["provider"] == PROVIDER == "ollama"
-    assert identity["model_id"] == VOLUME_MODEL_ID == "qwen2.5:8b"
+    assert identity["model_id"] == VOLUME_MODEL_ID == "qwen2.5:7b"
     assert identity["identity_status"] == VOLUME_IDENTITY_STATUS == "VOLUME_TRAINING_CANDIDATE"
     assert identity["volume_training_candidate"] is True
     assert identity["runpod_training_candidate"] is False

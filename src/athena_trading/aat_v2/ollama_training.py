@@ -3,9 +3,9 @@
 Reads the frozen macro-only V2 TRAINING plan and a real opportunity index /
 macro snapshot. Defaults to a tiny dry-run smoke against the desktop
 ``qwen3.5:9b`` identity. Recommended live TRAINING is the dual-Actor plan:
-stratified 1,000-opportunity volume on ``qwen2.5:8b`` plus a 100-opportunity
+stratified 1,000-opportunity volume on ``qwen2.5:7b`` plus a 100-opportunity
 gold slice on ``qwen2.5:14b``. Those runs require the matching authorization
-artifact *and* either ``--authorize-volume-training`` (8b volume subsample)
+artifact *and* either ``--authorize-volume-training`` (7b volume subsample)
 or ``--authorize-runpod-training`` (14b gold). Desktop 9b still uses
 ``--authorize-local-training``. None of those flags rewrite the Terra
 protocol, raise ``execution_authority`` above ``ABSENT``, or consume a
@@ -13,7 +13,7 @@ holdout. The frozen 16,705-opportunity / 116,935-call plan remains plumbing,
 not the recommended next step.
 
 Live HTTP is a separate opt-in (``allow_live=True``). Non-loopback
-``base_url`` is allowed for the RunPod 14b gold identity and the volume 8b
+``base_url`` is allowed for the RunPod 14b gold identity and the volume 7b
 identity (pod IP, HTTPS proxy, or an SSH tunnel to loopback). Tests inject a
 mocked transport and never contact DeepSeek, RunPod, or Ollama.
 """
@@ -83,7 +83,11 @@ from .training_subsample import (
     VOLUME_KIND,
     SubsampleError,
     load_subsample_receipt,
+    load_training_subsample_plan,
+    COMMITTED_SUBSAMPLE_PLAN_PATH,
     select_opportunities_for_receipt,
+    verify_committed_subsample,
+    verify_opportunity_index_receipt,
 )
 
 TRAINING_PLAN_SCHEMA = "athena-aat-v2-training-plan-v2"
@@ -118,7 +122,7 @@ _PROTECTED_ARTIFACTS = (
     "aat_v2_ollama_local_training_authorization_v1.json",
     "aat_v2_ollama_qwen_14b_runpod_actor_identity_v1.json",
     "aat_v2_ollama_runpod_training_authorization_v1.json",
-    "aat_v2_ollama_qwen_8b_volume_actor_identity_v1.json",
+    "aat_v2_ollama_qwen_7b_volume_actor_identity_v1.json",
     "aat_v2_ollama_volume_training_authorization_v1.json",
     "aat_v2_training_subsample_plan_v1.json",
     "aat_v2_dataset_assignment_v1.json",
@@ -429,8 +433,21 @@ def run_ollama_local_training(
         if subsample_receipt.get("subsample_kind") != expected_kind:
             raise OllamaTrainingError(
                 "subsample receipt kind does not match this Actor: "
-                f"volume 8b requires {VOLUME_KIND}, gold 14b requires {GOLD_KIND}"
+                f"volume 7b requires {VOLUME_KIND}, gold 14b requires {GOLD_KIND}"
             )
+        try:
+            committed_plan = load_training_subsample_plan(COMMITTED_SUBSAMPLE_PLAN_PATH)
+            if opportunity_receipt_path is None:
+                raise SubsampleError("subsample runs require the frozen opportunity receipt")
+            verify_opportunity_index_receipt(
+                opportunity_index_path, opportunity_receipt_path,
+                expected_hash=plan["dataset_hash"],
+            )
+            verify_committed_subsample(
+                subsample_receipt, opportunities, assignment, plan=committed_plan,
+            )
+        except SubsampleError as exc:
+            raise OllamaTrainingError(str(exc)) from exc
         if volume_plan and subsample_receipt.get("target_count") != VOLUME_SUBSAMPLE_OPPORTUNITIES:
             raise OllamaTrainingError(
                 "volume subsample receipt must pin the documented 1,000-opportunity sample"
@@ -734,7 +751,7 @@ def _resolve_transport(
 
 
 def _assert_base_url_matches_identity(identity: Mapping[str, Any], base_url: str) -> None:
-    """Desktop 9b is loopback-only. Volume 8b and gold 14b may use a remote host."""
+    """Desktop 9b is loopback-only. Volume 7b and gold 14b may use a remote host."""
     if allows_remote_ollama(identity):
         inference = identity.get("inference")
         if not isinstance(inference, Mapping) or inference.get("base_url_policy") != "explicit_cli":
@@ -751,7 +768,7 @@ def _assert_base_url_matches_identity(identity: Mapping[str, Any], base_url: str
     except OllamaTransportError as exc:
         raise OllamaTrainingError(
             "local qwen3.5:9b identity cannot target a non-loopback Ollama host; "
-            "use the volume qwen2.5:8b identity or the gold qwen2.5:14b identity"
+            "use the volume qwen2.5:7b identity or the gold qwen2.5:14b identity"
         ) from exc
 
 

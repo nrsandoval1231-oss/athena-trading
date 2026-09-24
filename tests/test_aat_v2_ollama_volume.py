@@ -1,4 +1,4 @@
-"""Offline 8b volume Ollama TRAINING path: mocked transport, no live GPU."""
+"""Offline 7b volume Ollama TRAINING path: mocked transport, no live GPU."""
 import json
 from pathlib import Path
 
@@ -34,13 +34,13 @@ LOCAL_IDENTITY = ROOT / "configs/aat_v2_ollama_qwen_actor_identity_v1.json"
 LOCAL_AUTHORIZATION = ROOT / "configs/aat_v2_ollama_local_training_authorization_v1.json"
 RUNPOD_IDENTITY = ROOT / "configs/aat_v2_ollama_qwen_14b_runpod_actor_identity_v1.json"
 RUNPOD_AUTHORIZATION = ROOT / "configs/aat_v2_ollama_runpod_training_authorization_v1.json"
-VOLUME_IDENTITY = ROOT / "configs/aat_v2_ollama_qwen_8b_volume_actor_identity_v1.json"
+VOLUME_IDENTITY = ROOT / "configs/aat_v2_ollama_qwen_7b_volume_actor_identity_v1.json"
 VOLUME_AUTHORIZATION = ROOT / "configs/aat_v2_ollama_volume_training_authorization_v1.json"
 INDEX = ROOT / "configs/fixtures/aat_v2_training_opportunities_smoke_v1.jsonl"
 SNAPSHOT = ROOT / "configs/fixtures/aat_v2_training_snapshot_smoke_v1.jsonl"
 LOCAL_FIXTURE = ROOT / "configs/fixtures/ollama_qwen_training_v1.json"
 RUNPOD_FIXTURE = ROOT / "configs/fixtures/ollama_qwen_14b_runpod_training_v1.json"
-VOLUME_FIXTURE = ROOT / "configs/fixtures/ollama_qwen_8b_volume_training_v1.json"
+VOLUME_FIXTURE = ROOT / "configs/fixtures/ollama_qwen_7b_volume_training_v1.json"
 SCRIPT = ROOT / "scripts/run_aat_v2_ollama_local_training.py"
 ASSIGNMENT_HASH = "46f25ba0f64c5088add6d37a72752d6fbe156de6c33e8b8d7d4415e160f5e731"
 VOLUME_IDENTITY_HASH = declared_ollama_volume_identity()["identity_hash"]
@@ -98,7 +98,7 @@ def _run(tmp_path, **kwargs):
         authorize_runpod_training=False,
         authorize_volume_training=False,
         allow_live=False,
-        transport=fixture_transport(VOLUME_FIXTURE, model_id="qwen2.5:8b"),
+        transport=fixture_transport(VOLUME_FIXTURE, model_id="qwen2.5:7b"),
         include_deliberation=True,
         base_url=REMOTE_BASE_URL,
     )
@@ -120,7 +120,7 @@ def test_volume_smoke_uses_mocked_remote_transport_and_stays_absent(tmp_path):
     assert result["runpod_training"] is False
     assert result["local_9b_identity_not_reused"] is True
     assert result["runpod_14b_identity_not_reused"] is True
-    assert result["candidate_model_id"] == "qwen2.5:8b"
+    assert result["candidate_model_id"] == "qwen2.5:7b"
     assert result["actor_identity_hash"] == VOLUME_IDENTITY_HASH
     assert result["actor_identity_status"] == "VOLUME_TRAINING_CANDIDATE"
     assert result["authorization_cli_flag"] == VOLUME_CLI_AUTHORIZATION_FLAG
@@ -138,7 +138,7 @@ def test_volume_smoke_uses_mocked_remote_transport_and_stays_absent(tmp_path):
 def test_volume_ssh_tunnel_loopback_is_allowed_for_8b(tmp_path):
     result = _run(tmp_path, base_url="http://127.0.0.1:11434")
     assert result["transport_host_scope"] == "loopback"
-    assert result["candidate_model_id"] == "qwen2.5:8b"
+    assert result["candidate_model_id"] == "qwen2.5:7b"
     assert result["execution_authority"] == "ABSENT"
 
 
@@ -152,7 +152,7 @@ def test_volume_plan_without_subsample_receipt_is_refused(tmp_path):
         _run(tmp_path, limit_opportunities=None, authorize_volume_training=True)
 
 
-def test_runpod_flag_does_not_authorize_volume_8b(tmp_path):
+def test_runpod_flag_does_not_authorize_volume_7b(tmp_path):
     with pytest.raises(OllamaTrainingError, match="RunPod TRAINING flag"):
         _run(tmp_path, authorize_runpod_training=True, limit_opportunities=2)
 
@@ -169,7 +169,7 @@ def test_volume_flag_does_not_authorize_gold_14b(tmp_path):
         )
 
 
-def test_local_training_flag_does_not_authorize_volume_8b(tmp_path):
+def test_local_training_flag_does_not_authorize_volume_7b(tmp_path):
     with pytest.raises(OllamaTrainingError, match="local TRAINING flag"):
         _run(tmp_path, authorize_local_training=True, limit_opportunities=2)
 
@@ -202,7 +202,7 @@ def test_authorized_volume_warmup_is_in_sample_not_a_terra_flip(tmp_path):
     assert result["registration_status"] == "REGISTERED_NOT_AUTHORIZED"
 
 
-def test_volume_thin_e_skips_deliberation_on_the_same_8b_actor(tmp_path):
+def test_volume_thin_e_skips_deliberation_on_the_same_7b_actor(tmp_path):
     result = _run(
         tmp_path,
         authorize_volume_training=True,
@@ -211,56 +211,41 @@ def test_volume_thin_e_skips_deliberation_on_the_same_8b_actor(tmp_path):
     )
     assert result["include_deliberation"] is False
     assert result["request_count"] == 6
-    assert result["candidate_model_id"] == "qwen2.5:8b"
+    assert result["candidate_model_id"] == "qwen2.5:7b"
     assert result["actor_identity_hash"] == VOLUME_IDENTITY_HASH
     assert all(row["arm"] != "E_DELIBERATION" for row in result["records"])
     assert result["execution_authority"] == "ABSENT"
 
 
 def test_volume_subsample_receipt_selects_pinned_ids(tmp_path):
-    receipt = _write_receipt(
+    _write_receipt(
         tmp_path / "volume.receipt.json",
         VOLUME_KIND,
         [SMOKE_IDS[1]],
         parent_kind="TRAINING",
     )
-    result = _run(
-        tmp_path,
-        authorize_volume_training=True,
-        limit_opportunities=2,
-        subsample_receipt_path=tmp_path / "volume.receipt.json",
-    )
-    assert result["opportunity_count"] == 1
-    assert result["subsample_hash"] == receipt["subsample_hash"]
-    assert result["subsample_kind"] == VOLUME_KIND
-    assert {row["opportunity_id"] for row in result["records"]} == {SMOKE_IDS[1]}
+    with pytest.raises(OllamaTrainingError, match="frozen opportunity receipt"):
+        _run(
+            tmp_path, authorize_volume_training=True, limit_opportunities=2,
+            subsample_receipt_path=tmp_path / "volume.receipt.json",
+        )
 
 
-def test_gold_14b_keeps_e_and_does_not_reuse_the_8b_identity(tmp_path):
-    receipt = _write_receipt(
+def test_gold_14b_keeps_e_and_does_not_reuse_the_7b_identity(tmp_path):
+    _write_receipt(
         tmp_path / "gold.receipt.json",
         GOLD_KIND,
         list(SMOKE_IDS),
         parent_kind=VOLUME_KIND,
     )
-    result = _run(
-        tmp_path,
-        identity_path=RUNPOD_IDENTITY,
-        authorization_path=RUNPOD_AUTHORIZATION,
-        transport=fixture_transport(RUNPOD_FIXTURE, model_id="qwen2.5:14b"),
-        authorize_runpod_training=True,
-        limit_opportunities=2,
-        subsample_receipt_path=tmp_path / "gold.receipt.json",
-        include_deliberation=True,
-    )
-    assert result["candidate_model_id"] == "qwen2.5:14b"
-    assert result["volume_training"] is False
-    assert result["runpod_training"] is True
-    assert result["include_deliberation"] is True
-    assert result["request_count"] == 14
-    assert result["subsample_kind"] == GOLD_KIND
-    assert result["subsample_hash"] == receipt["subsample_hash"]
-    assert result["actor_identity_hash"] != VOLUME_IDENTITY_HASH
+    with pytest.raises(OllamaTrainingError, match="frozen opportunity receipt"):
+        _run(
+            tmp_path, identity_path=RUNPOD_IDENTITY,
+            authorization_path=RUNPOD_AUTHORIZATION,
+            transport=fixture_transport(RUNPOD_FIXTURE, model_id="qwen2.5:14b"),
+            authorize_runpod_training=True, limit_opportunities=2,
+            subsample_receipt_path=tmp_path / "gold.receipt.json",
+        )
 
 
 def test_volume_identity_refuses_a_gold_receipt(tmp_path):
@@ -304,7 +289,7 @@ def test_cli_volume_smoke_prints_ok_without_live_http(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
     assert payload["live_calls"] is False
-    assert payload["candidate_model_id"] == "qwen2.5:8b"
+    assert payload["candidate_model_id"] == "qwen2.5:7b"
     assert payload["execution_authority"] == "ABSENT"
     assert payload["volume_training"] is True
     assert payload["runpod_training"] is False

@@ -1,4 +1,4 @@
-"""Stratified TRAINING subsample for the 8b volume + 14b gold plan.
+"""Stratified TRAINING subsample for the 7b volume + 14b gold plan.
 
 The frozen macro-only TRAINING index is 16,705 opportunities. That full plan
 is no longer the recommended next step. This module pins a reproducible
@@ -16,6 +16,7 @@ sample. Outcomes are not consulted. ``execution_authority`` stays ``ABSENT``.
 from __future__ import annotations
 
 import json
+import hashlib
 import random
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
@@ -207,11 +208,51 @@ def load_subsample_receipt(path: str | Path) -> dict[str, Any]:
     target = payload.get("target_count")
     if not isinstance(target, int) or isinstance(target, bool) or target < 1:
         raise SubsampleError("TRAINING subsample target_count is unusable")
+    if payload.get("selected_count") != target:
+        raise SubsampleError("TRAINING subsample selected_count must equal target_count")
     if kind == GOLD_KIND and payload.get("parent_kind") != VOLUME_KIND:
         raise SubsampleError("gold subsample must name the volume sample as parent")
     if kind == VOLUME_KIND and payload.get("parent_kind") != "TRAINING":
         raise SubsampleError("volume subsample must name TRAINING as parent")
     return payload
+
+
+def verify_opportunity_index_receipt(
+    index_path: str | Path, receipt_path: str | Path, *, expected_hash: str,
+) -> dict[str, Any]:
+    """Bind the frozen receipt to the exact bytes consumed by the draw or runner."""
+    _forbid_holdout_path(Path(index_path))
+    receipt = _load_json(receipt_path)
+    body = dict(receipt)
+    claimed = body.pop("index_hash", None)
+    if claimed != canonical_hash(body) or claimed != expected_hash:
+        raise SubsampleError("opportunity receipt hash does not match the frozen TRAINING plan")
+    try:
+        raw = Path(index_path).read_bytes()
+        rows = [json.loads(line) for line in raw.splitlines() if line.strip()]
+    except (OSError, ValueError, UnicodeError) as exc:
+        raise SubsampleError("opportunity index is unreadable") from exc
+    if (receipt.get("row_count") != len(rows)
+            or receipt.get("rows_sha256") != hashlib.sha256(raw).hexdigest()
+            or receipt.get("contains_outcomes") is not False
+            or receipt.get("contains_sealed_holdout") is not False
+            or receipt.get("execution_authority") != "ABSENT"):
+        raise SubsampleError("opportunity index does not match its frozen receipt")
+    return receipt
+
+
+def verify_committed_subsample(
+    receipt: Mapping[str, Any], opportunities: Sequence[Mapping[str, Any]],
+    assignment: Mapping[str, Any], *, plan: Mapping[str, Any],
+) -> None:
+    """Check the complete deterministic draw, not just self-hashed metadata."""
+    kind = receipt["subsample_kind"]
+    expected = draw_training_subsample(
+        opportunities, plan=plan, assignment=assignment,
+        parent_dataset_hash=plan["parent_dataset_hash"],
+    )["volume_receipt" if kind == VOLUME_KIND else "gold_receipt"]
+    if dict(receipt) != expected:
+        raise SubsampleError("subsample receipt does not match the frozen draw plan")
 
 
 def select_opportunities_for_receipt(

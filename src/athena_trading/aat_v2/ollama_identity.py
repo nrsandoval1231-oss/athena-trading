@@ -10,12 +10,12 @@ Three committed TRAINING candidates exist:
   in-sample TRAINING requires Nick's local authorization artifact **and**
   ``--authorize-local-training``.
 * RunPod / remote gold ``qwen2.5:14b`` (``RUNPOD_TRAINING_CANDIDATE``). The
-  recommended gold slice is 100 opportunities overlapping the 8b volume
+  recommended gold slice is 100 opportunities overlapping the 7b volume
   sample, full arms including E. That path still uses
   ``--authorize-runpod-training``. The flag does not authorize Terra, the
-  desktop 9b Actor, or the 8b volume Actor. The frozen 16,705-opportunity
+  desktop 9b Actor, or the 7b volume Actor. The frozen 16,705-opportunity
   plan remains plumbing, not the recommended next step.
-* RunPod / remote volume ``qwen2.5:8b`` (``VOLUME_TRAINING_CANDIDATE``). The
+* RunPod / remote volume ``qwen2.5:7b`` (``VOLUME_TRAINING_CANDIDATE``). The
   documented volume plan is a stratified 1,000-opportunity TRAINING
   subsample, native ``/api/chat``. Full volume-subsample runs require the
   volume authorization artifact **and** ``--authorize-volume-training``.
@@ -54,7 +54,7 @@ IDENTITY_SCHEMA = "athena-aat-v2-ollama-qwen-actor-identity-v1"
 AUTHORIZATION_SCHEMA = "athena-aat-v2-ollama-local-training-authorization-v1"
 RUNPOD_IDENTITY_SCHEMA = "athena-aat-v2-ollama-qwen-14b-runpod-actor-identity-v1"
 RUNPOD_AUTHORIZATION_SCHEMA = "athena-aat-v2-ollama-runpod-training-authorization-v1"
-VOLUME_IDENTITY_SCHEMA = "athena-aat-v2-ollama-qwen-8b-volume-actor-identity-v1"
+VOLUME_IDENTITY_SCHEMA = "athena-aat-v2-ollama-qwen-7b-volume-actor-identity-v1"
 VOLUME_AUTHORIZATION_SCHEMA = "athena-aat-v2-ollama-volume-training-authorization-v1"
 PROTOCOL_SCHEMA = "athena-aat-v2-registered-protocol-v1"
 IDENTITY_STATUS = "LOCAL_TRAINING_CANDIDATE"
@@ -66,7 +66,7 @@ PROVIDER = OLLAMA.provider
 DEFAULT_MODEL_ID = "qwen3.5:9b"
 MODEL_ID = DEFAULT_MODEL_ID
 RUNPOD_MODEL_ID = "qwen2.5:14b"
-VOLUME_MODEL_ID = "qwen2.5:8b"
+VOLUME_MODEL_ID = "qwen2.5:7b"
 DEFAULT_BASE_URL = "http://127.0.0.1:11434"
 CHAT_PATH = "/api/chat"
 RUNTIME_BASE_URL = "runtime"
@@ -124,7 +124,7 @@ RUNPOD_TRAINING_PROMPT = (
 )
 
 VOLUME_TRAINING_PROMPT = (
-    "You are a fail-closed AAT-V2 volume Ollama Qwen 8b Actor. Use only the "
+    "You are a fail-closed AAT-V2 volume Ollama Qwen 7b Actor. Use only the "
     "supplied opaque features. Return exactly one JSON object and nothing else: "
     "no markdown, no code fences, no commentary, no extra keys. Required keys: "
     "action, confidence, horizon, invalidation, rationale. action must be one "
@@ -158,7 +158,7 @@ COMMITTED_RUNPOD_AUTHORIZATION_PATH = (
 COMMITTED_VOLUME_IDENTITY_PATH = (
     Path(__file__).resolve().parents[3]
     / "configs"
-    / "aat_v2_ollama_qwen_8b_volume_actor_identity_v1.json"
+    / "aat_v2_ollama_qwen_7b_volume_actor_identity_v1.json"
 )
 COMMITTED_VOLUME_AUTHORIZATION_PATH = (
     Path(__file__).resolve().parents[3]
@@ -422,7 +422,7 @@ def load_ollama_runpod_identity(
 
 
 def declared_ollama_volume_identity(*, model_id: str = VOLUME_MODEL_ID) -> dict[str, Any]:
-    """Hashed volume / remote Ollama 8b candidate. Does not write the protocol."""
+    """Hashed volume / remote Ollama 7b candidate. Does not write the protocol."""
     if not isinstance(model_id, str) or not model_id.strip():
         raise IdentityError("Ollama model id is unusable")
     axes = provider_identity(
@@ -481,8 +481,8 @@ def declared_ollama_volume_identity(*, model_id: str = VOLUME_MODEL_ID) -> dict[
         "deliberation_hash": deliberation["deliberation_hash"],
         "source_document": "docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md",
         "model_tag_choice": (
-            "qwen2.5:8b is the committed volume tag because it is the widely "
-            "available 8b-class Ollama model that fits a Community RTX 4090 "
+            "qwen2.5:7b is the committed volume tag because it is the widely "
+            "available 7b-class Ollama model that fits a Community RTX 4090 "
             "and cannot be confused with desktop qwen3.5:9b or gold "
             "qwen2.5:14b. A different tag is a different hashed Actor."
         ),
@@ -501,7 +501,7 @@ def load_ollama_volume_identity(
     protocol_path: str | Path,
     expected_model_id: str | None = None,
 ) -> dict[str, Any]:
-    """Load the committed volume 8b identity. Refuses a silent 9b/14b/Terra swap."""
+    """Load the committed volume 7b identity. Refuses a silent 9b/14b/Terra swap."""
     payload = _load_json(path)
     protocol = _load_json(protocol_path)
     model_id = payload.get("model_id")
@@ -579,7 +579,7 @@ def load_committed_ollama_training_identity(
     protocol_path: str | Path,
     expected_model_id: str | None = None,
 ) -> dict[str, Any]:
-    """Load the desktop 9b, RunPod 14b, or volume 8b identity. Fail closed otherwise."""
+    """Load the desktop 9b, RunPod 14b, or volume 7b identity. Fail closed otherwise."""
     payload = _load_json(path)
     schema = payload.get("schema_version")
     if schema == IDENTITY_SCHEMA:
@@ -606,7 +606,7 @@ def is_volume_identity(identity: Mapping[str, Any]) -> bool:
 
 
 def allows_remote_ollama(identity: Mapping[str, Any]) -> bool:
-    """RunPod gold 14b and volume 8b may use a pod IP, HTTPS proxy, or tunnel."""
+    """RunPod gold 14b and volume 7b may use a pod IP, HTTPS proxy, or tunnel."""
     return is_runpod_identity(identity) or is_volume_identity(identity)
 
 
@@ -774,9 +774,9 @@ def load_runpod_training_authorization(
 
 
 def declared_volume_training_authorization(identity: Mapping[str, Any]) -> dict[str, Any]:
-    """Nick-authorized 8b volume Ollama TRAINING plumbing. Not Terra, 9b, or 14b."""
+    """Nick-authorized 7b volume Ollama TRAINING plumbing. Not Terra, 9b, or 14b."""
     if not is_volume_identity(identity):
-        raise AuthorizationError("volume authorization requires the volume 8b identity")
+        raise AuthorizationError("volume authorization requires the volume 7b identity")
     digest = identity_digest(identity)
     authorization = {
         "schema_version": VOLUME_AUTHORIZATION_SCHEMA,
@@ -808,7 +808,7 @@ def declared_volume_training_authorization(identity: Mapping[str, Any]) -> dict[
         "consulted_terra_protocol_hash": TERRA_PROTOCOL_HASH,
         "source_document": "docs/AAT_V2_MODEL_EXECUTION_OPTIONS.md",
         "notes": (
-            "Authorizes RunPod / remote Ollama 8b volume TRAINING plumbing under "
+            "Authorizes RunPod / remote Ollama 7b volume TRAINING plumbing under "
             "Nick's direction. The documented volume plan is the stratified "
             f"{VOLUME_SUBSAMPLE_OPPORTUNITIES}-opportunity subsample, not the "
             f"full 16,705. That run still requires {VOLUME_CLI_AUTHORIZATION_FLAG}. "
@@ -887,7 +887,7 @@ def load_committed_ollama_training_authorization(
             )
         if is_volume_identity(identity):
             raise AuthorizationError(
-                "local TRAINING authorization does not cover the volume 8b Actor"
+                "local TRAINING authorization does not cover the volume 7b Actor"
             )
         return load_local_training_authorization(
             path, identity=identity, protocol_path=protocol_path,
@@ -895,7 +895,7 @@ def load_committed_ollama_training_authorization(
     if schema == RUNPOD_AUTHORIZATION_SCHEMA:
         if is_volume_identity(identity):
             raise AuthorizationError(
-                "RunPod TRAINING authorization does not cover the volume 8b Actor"
+                "RunPod TRAINING authorization does not cover the volume 7b Actor"
             )
         if not is_runpod_identity(identity):
             raise AuthorizationError(
@@ -975,11 +975,11 @@ def assert_full_run_authorized(
     if required == VOLUME_CLI_AUTHORIZATION_FLAG:
         if authorize_local_training:
             raise AuthorizationError(
-                "local TRAINING flag does not authorize the volume 8b Actor"
+                "local TRAINING flag does not authorize the volume 7b Actor"
             )
         if authorize_runpod_training:
             raise AuthorizationError(
-                "RunPod TRAINING flag does not authorize the volume 8b Actor"
+                "RunPod TRAINING flag does not authorize the volume 7b Actor"
             )
         if not authorize_volume_training:
             raise AuthorizationError(

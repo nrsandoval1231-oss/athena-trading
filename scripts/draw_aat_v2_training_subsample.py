@@ -1,4 +1,4 @@
-"""Draw the AAT-V2 8b-volume / 14b-gold TRAINING subsample.
+"""Draw the AAT-V2 7b-volume / 14b-gold TRAINING subsample.
 
 Reads the frozen TRAINING opportunity index (not holdout) and the committed
 subsample plan. Writes a hashed 1,000-opportunity volume receipt plus JSONL
@@ -24,6 +24,7 @@ from athena_trading.aat_v2.training_subsample import (
     SubsampleError,
     draw_training_subsample,
     load_training_subsample_plan,
+    verify_opportunity_index_receipt,
     write_subsample_index,
     write_subsample_receipt,
 )
@@ -48,12 +49,11 @@ def main(argv: list[str] | None = None) -> int:
         assignment = load_training_assignment(args.assignment)
         plan = load_training_subsample_plan(args.subsample_plan)
         opportunities = load_training_opportunities(args.opportunity_index)
-        receipt = json.loads(args.opportunity_receipt.read_text(encoding="utf-8"))
-        parent_hash = receipt.get("index_hash")
-        if not isinstance(parent_hash, str) or not parent_hash:
-            raise SubsampleError("opportunity receipt is missing index_hash")
-        if parent_hash != training_plan.get("dataset_hash"):
-            raise SubsampleError("opportunity receipt does not match the frozen TRAINING plan")
+        receipt = verify_opportunity_index_receipt(
+            args.opportunity_index, args.opportunity_receipt,
+            expected_hash=training_plan["dataset_hash"],
+        )
+        parent_hash = receipt["index_hash"]
         drawn = draw_training_subsample(
             opportunities,
             plan=plan,

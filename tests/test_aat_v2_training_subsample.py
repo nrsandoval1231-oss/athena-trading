@@ -1,11 +1,13 @@
-"""Stratified TRAINING subsample pins 8b volume and 14b gold without live GPU."""
+"""Stratified TRAINING subsample pins 7b volume and 14b gold without live GPU."""
 import json
+import hashlib
 from pathlib import Path
 
 import pytest
 
 from athena_trading.aat_v2.assignment import partition_for
 from athena_trading.aat_v2.identity import TERRA_PROTOCOL_HASH
+from athena_trading.athena_adapter.contracts import canonical_hash
 from athena_trading.aat_v2.training_subsample import (
     DEFAULT_SEED,
     FROZEN_ASSIGNMENT_HASH,
@@ -19,7 +21,61 @@ from athena_trading.aat_v2.training_subsample import (
     load_training_subsample_plan,
     select_opportunities_for_receipt,
     write_subsample_receipt,
+    verify_committed_subsample,
+    verify_opportunity_index_receipt,
 )
+
+
+def test_frozen_index_receipt_binds_hash_count_and_actual_bytes(tmp_path):
+    index = tmp_path / "training.jsonl"
+    raw = b'{"opportunity_id":"a","symbol":"AAPL"}\n'
+    index.write_bytes(raw)
+    receipt = {
+        "row_count": 1, "rows_sha256": hashlib.sha256(raw).hexdigest(),
+        "contains_outcomes": False, "contains_sealed_holdout": False,
+        "execution_authority": "ABSENT",
+    }
+    receipt["index_hash"] = canonical_hash(receipt)
+    path = tmp_path / "index.receipt.json"
+    path.write_text(json.dumps(receipt))
+    verify_opportunity_index_receipt(index, path, expected_hash=receipt["index_hash"])
+    index.write_bytes(raw + b'{"opportunity_id":"b","symbol":"AAPL"}\n')
+    with pytest.raises(SubsampleError, match="does not match its frozen receipt"):
+        verify_opportunity_index_receipt(index, path, expected_hash=receipt["index_hash"])
+    index.write_bytes(raw)
+    receipt["row_count"] = 2
+    receipt["index_hash"] = canonical_hash({k:v for k,v in receipt.items() if k != "index_hash"})
+    path.write_text(json.dumps(receipt))
+    with pytest.raises(SubsampleError, match="does not match its frozen receipt"):
+        verify_opportunity_index_receipt(index, path, expected_hash=receipt["index_hash"])
+
+
+def test_self_hashed_subsample_cannot_substitute_ids_or_shorten_target(tmp_path):
+    assignment = _assignment()
+    plan = load_training_subsample_plan(PLAN)
+    rows = _rows(_training_symbols()[:10], n_each=110)
+    genuine = draw_training_subsample(
+        rows, plan=plan, assignment=assignment,
+        parent_dataset_hash=FROZEN_DATASET_HASH,
+    )["volume_receipt"]
+    verify_committed_subsample(genuine, rows, assignment, plan=plan)
+    changed = dict(genuine)
+    changed["opportunity_ids"] = list(genuine["opportunity_ids"])
+    alternative = next(row["opportunity_id"] for row in rows
+                       if row["opportunity_id"] not in changed["opportunity_ids"])
+    changed["opportunity_ids"][0] = alternative
+    changed["subsample_hash"] = canonical_hash({k:v for k,v in changed.items() if k != "subsample_hash"})
+    path = tmp_path / "volume.receipt.json"
+    path.write_text(json.dumps(changed))
+    accepted = load_subsample_receipt(path)
+    with pytest.raises(SubsampleError, match="frozen draw plan"):
+        verify_committed_subsample(accepted, rows, assignment, plan=plan)
+    changed["opportunity_ids"] = changed["opportunity_ids"][:-1]
+    changed["selected_count"] = 999
+    changed["subsample_hash"] = canonical_hash({k:v for k,v in changed.items() if k != "subsample_hash"})
+    path.write_text(json.dumps(changed))
+    with pytest.raises(SubsampleError, match="selected_count must equal target_count"):
+        load_subsample_receipt(path)
 
 
 ROOT = Path(__file__).parents[1]

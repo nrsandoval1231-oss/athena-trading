@@ -2,17 +2,17 @@
 
 Defaults to a tiny dry-run smoke against the TRAINING-shaped fixture index.
 Does not contact DeepSeek or RunPod. Does not start the 116,935-call run.
-The recommended live plan is 8b volume (1,000 opportunities) plus 14b gold
+The recommended live plan is 7b volume (1,000 opportunities) plus 14b gold
 (100 overlapping opportunities), not the full 16,705.
 
 Desktop smoke (offline, default ``qwen3.5:9b``)::
 
     python scripts/run_aat_v2_ollama_local_training.py
 
-Volume 8b smoke (offline mocked ``qwen2.5:8b``)::
+Volume 7b smoke (offline mocked ``qwen2.5:7b``)::
 
     python scripts/run_aat_v2_ollama_local_training.py \\
-      --identity configs/aat_v2_ollama_qwen_8b_volume_actor_identity_v1.json \\
+      --identity configs/aat_v2_ollama_qwen_7b_volume_actor_identity_v1.json \\
       --authorization configs/aat_v2_ollama_volume_training_authorization_v1.json \\
       --base-url http://127.0.0.1:11434
 
@@ -26,14 +26,14 @@ Gold 14b smoke (offline mocked ``qwen2.5:14b``)::
 Authorized volume subsample (1,000 opportunities, still ABSENT; not Terra)::
 
     python scripts/run_aat_v2_ollama_local_training.py \\
-      --identity configs/aat_v2_ollama_qwen_8b_volume_actor_identity_v1.json \\
+      --identity configs/aat_v2_ollama_qwen_7b_volume_actor_identity_v1.json \\
       --authorization configs/aat_v2_ollama_volume_training_authorization_v1.json \\
       --authorize-volume-training --allow-live-ollama \\
       --base-url http://<pod>:11434 \\
       --opportunity-index <TRAINING or volume JSONL> \\
       --snapshot <macro snapshot JSONL> \\
       --subsample-receipt <volume_1000.receipt.json> \\
-      --output-dir artifacts/aat_v2_ollama_volume_8b
+      --output-dir artifacts/aat_v2_ollama_volume_7b
 
 Authorized gold slice (100 opportunities, full arms including E)::
 
@@ -89,7 +89,7 @@ DEFAULT_AMENDMENT = ROOT / "configs" / "aat_v2_e_arm_compact_schema_amendment_v1
 DEFAULT_IDENTITY = ROOT / "configs" / "aat_v2_ollama_qwen_actor_identity_v1.json"
 DEFAULT_FIXTURE = ROOT / "configs" / "fixtures" / "ollama_qwen_training_v1.json"
 RUNPOD_FIXTURE = ROOT / "configs" / "fixtures" / "ollama_qwen_14b_runpod_training_v1.json"
-VOLUME_FIXTURE = ROOT / "configs" / "fixtures" / "ollama_qwen_8b_volume_training_v1.json"
+VOLUME_FIXTURE = ROOT / "configs" / "fixtures" / "ollama_qwen_7b_volume_training_v1.json"
 DEFAULT_INDEX = ROOT / "configs" / "fixtures" / "aat_v2_training_opportunities_smoke_v1.jsonl"
 DEFAULT_SNAPSHOT = ROOT / "configs" / "fixtures" / "aat_v2_training_snapshot_smoke_v1.jsonl"
 DEFAULT_OUTPUT = ROOT / "artifacts" / "aat_v2_ollama_local_training_smoke"
@@ -123,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
         "--model-id",
         default=None,
         help="must match the hashed identity (desktop default qwen3.5:9b; "
-        "volume identity default qwen2.5:8b; gold identity default qwen2.5:14b)",
+        "volume identity default qwen2.5:7b; gold identity default qwen2.5:14b)",
     )
     parser.add_argument(
         "--limit-opportunities",
@@ -146,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--authorize-volume-training",
         action="store_true",
-        help="Nick's explicit qwen2.5:8b volume-subsample flag; does not authorize Terra, 9b, or 14b",
+        help="Nick's explicit qwen2.5:7b volume-subsample flag; does not authorize Terra, 9b, or 14b",
     )
     parser.add_argument(
         "--allow-live-ollama",

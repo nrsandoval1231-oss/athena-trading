@@ -2,8 +2,8 @@
 
 Status: local Ollama TRAINING plumbing is in-tree, and a **RunPod / remote-Ollama
 path** now exists for Nick-directed TRAINING. The recommended next step is
-the dual-Actor plan **8b volume + 14b gold** on the existing harness: a
-stratified **1,000-opportunity** `qwen2.5:8b` volume sample plus a **100-
+the dual-Actor plan **7b volume + 14b gold** on the existing harness: a
+stratified **1,000-opportunity** `qwen2.5:7b` volume sample plus a **100-
 opportunity** overlapping `qwen2.5:14b` gold slice. The implied default of
 a full **16,705-opportunity / 116,935-call overnight on one 14b GPU is no
 longer the recommended next step** (measured Community 4090 `qwen2.5:14b`
@@ -43,9 +43,9 @@ that number is superseded by the corrected total above.
 The **documented volume plan** is not that full table. It is a stratified
 1,000-opportunity subsample (7,000 calls with E, or 3,000 without) plus a
 100-opportunity gold slice on 14b (700 calls with E). Commands are in
-**8b volume + 14b gold** below.
+**7b volume + 14b gold** below.
 
-## Recommended: 8b volume + 14b gold
+## Recommended: 7b volume + 14b gold
 
 Nick rejected the full 16,705-opportunity / 116,935-call overnight on one
 14b GPU after a Community RTX 4090 `qwen2.5:14b` smoke of **~35.4 s/call**
@@ -58,7 +58,7 @@ This section is the dual-Actor plan that replaces that implied default.
 
 | Actor | Identity | Status | Default N | Arms | Authorize flag |
 | --- | --- | --- | ---: | --- | --- |
-| Volume | `configs/aat_v2_ollama_qwen_8b_volume_actor_identity_v1.json` (`qwen2.5:8b`) | `VOLUME_TRAINING_CANDIDATE` | 1,000 | full arms (B/C/D + E) first; thin-E optional | `--authorize-volume-training` |
+| Volume | `configs/aat_v2_ollama_qwen_7b_volume_actor_identity_v1.json` (`qwen2.5:7b`) | `VOLUME_TRAINING_CANDIDATE` | 1,000 | full arms (B/C/D + E) first; thin-E optional | `--authorize-volume-training` |
 | Gold | `configs/aat_v2_ollama_qwen_14b_runpod_actor_identity_v1.json` (`qwen2.5:14b`) | `RUNPOD_TRAINING_CANDIDATE` | 100, subset of volume | full arms including E | `--authorize-runpod-training` |
 
 Neither flag authorizes Terra, desktop `qwen3.5:9b`, or the other Ollama
@@ -67,7 +67,7 @@ volume flag does **not** authorize the frozen 16,705-opportunity plan.
 
 **E policy.** Volume may run full arms or thin-E (BCD only, `--no-include-deliberation`).
 The default recommendation is **full arms for volume first**; thin-E is an
-optional wall-clock lever on the same hashed 8b Actor, recorded on the
+optional wall-clock lever on the same hashed 7b Actor, recorded on the
 receipt as `include_deliberation: false`. Gold keeps E. Thin-E is not a
 new identity and is not a protocol rewrite.
 
@@ -98,16 +98,16 @@ runner requires the hashed receipt for the 1,000-opportunity plan.
 | Gold 100, full arms | 700 | ~6.9 h | ~$2.30 |
 | Full 16,705, full arms | 116,935 | ~1,150 h (~48 days) | ~$390 |
 
-**Hypotheses (8b, unmeasured — do not treat as observed).** Same GPU, same
+**Hypotheses (7b, unmeasured — do not treat as observed).** Same GPU, same
 native `/api/chat`. Labelled hypotheses only:
 
-| Hypothesis | Implied 8b s/call | Volume 1,000 full arms (7,000) | Volume 1,000 thin-E (3,000) |
+| Hypothesis | Implied 7b s/call | Volume 1,000 full arms (7,000) | Volume 1,000 thin-E (3,000) |
 | --- | ---: | ---: | ---: |
 | A — ~2× 14b throughput | ~17.7 | ~34 h / ~$12 | ~15 h / ~$5 |
 | B — ~3× 14b throughput | ~11.8 | ~23 h / ~$8 | ~10 h / ~$3 |
 | C — conservative, same as 14b | 35.4 | ~69 h / ~$23 | ~30 h / ~$10 |
 
-8b throughput is unknown until Nick runs the volume sample. These figures
+7b throughput is unknown until Nick runs the volume sample. These figures
 exclude storage and setup. Compact E JSON still applies; a faster GPU does
 not by itself fix E-arm schema misses.
 
@@ -116,14 +116,14 @@ not by itself fix E-arm schema misses.
 No live pod is started from this repository. When Nick stands one up:
 
 1. Start a Community RTX 4090 (or similar 24 GB) pod.
-2. Install Ollama and pull the tags you will serve: `ollama pull qwen2.5:8b`
+2. Install Ollama and pull the tags you will serve: `ollama pull qwen2.5:7b`
    for volume and `ollama pull qwen2.5:14b` for gold. A different tag is a
    different Actor.
 3. Expose native Ollama on port 11434, **or** SSH-tunnel it to
    `http://127.0.0.1:11434`, **or** use the RunPod HTTPS proxy
    (`https://<id>-11434.proxy.runpod.net`) without appending `:11434`.
 4. Draw the stratified subsample (offline; no GPU) with the command above.
-5. Run volume 8b against the volume receipt (full arms first). Optional
+5. Run volume 7b against the volume receipt (full arms first). Optional
    `--no-include-deliberation` only if wall-clock requires it.
 6. Run gold 14b against the gold receipt, full arms including E.
 7. Download `ledger.jsonl`, `checkpoint.json`, and `receipt.json` **before
@@ -134,16 +134,16 @@ RunPod's HTTPS proxy returns HTTP 403 for urllib's default `Python-urllib/3.x`.
 Concurrency default is 1, max 4; Semaphore-64-style blasts are refused. Arm E
 turns stay sequential inside each opportunity. OpenAI-compat `/v1` is refused.
 
-### Exact volume commands (`qwen2.5:8b`)
+### Exact volume commands (`qwen2.5:7b`)
 
 Offline smoke (mocked transport; safe in this repo):
 
 ```
 python scripts/run_aat_v2_ollama_local_training.py \
-  --identity configs/aat_v2_ollama_qwen_8b_volume_actor_identity_v1.json \
+  --identity configs/aat_v2_ollama_qwen_7b_volume_actor_identity_v1.json \
   --authorization configs/aat_v2_ollama_volume_training_authorization_v1.json \
   --base-url http://<pod>:11434 \
-  --output-dir artifacts/aat_v2_ollama_volume_8b_smoke
+  --output-dir artifacts/aat_v2_ollama_volume_7b_smoke
 ```
 
 Live volume subsample (1,000 opportunities / 7,000 calls with E). Still ABSENT.
@@ -151,15 +151,16 @@ Terra stays `REGISTERED_NOT_AUTHORIZED`. Holdout untouched:
 
 ```
 python scripts/run_aat_v2_ollama_local_training.py \
-  --identity configs/aat_v2_ollama_qwen_8b_volume_actor_identity_v1.json \
+  --identity configs/aat_v2_ollama_qwen_7b_volume_actor_identity_v1.json \
   --authorization configs/aat_v2_ollama_volume_training_authorization_v1.json \
   --authorize-volume-training \
   --allow-live-ollama \
   --base-url http://<pod>:11434 \
-  --opportunity-index <TRAINING or volume_1000 JSONL> \
+  --opportunity-index <full frozen TRAINING JSONL> \
+  --opportunity-receipt <matching frozen opportunity receipt> \
   --snapshot <macro snapshot JSONL> \
   --subsample-receipt artifacts/aat_v2_training_subsample/volume_1000.receipt.json \
-  --output-dir artifacts/aat_v2_ollama_volume_8b
+  --output-dir artifacts/aat_v2_ollama_volume_7b
 ```
 
 HTTPS proxy form (do **not** append `:11434`):
@@ -189,7 +190,8 @@ python scripts/run_aat_v2_ollama_local_training.py \
   --allow-live-ollama \
   --limit-opportunities 100 \
   --base-url http://<pod>:11434 \
-  --opportunity-index <TRAINING or gold_100 JSONL> \
+  --opportunity-index <full frozen TRAINING JSONL> \
+  --opportunity-receipt <matching frozen opportunity receipt> \
   --snapshot <macro snapshot JSONL> \
   --subsample-receipt artifacts/aat_v2_training_subsample/gold_100.receipt.json \
   --output-dir artifacts/aat_v2_ollama_gold_14b
@@ -485,7 +487,7 @@ python scripts/run_aat_v2_ollama_local_training.py \
 
 Overnight full in-sample start (16,705 opportunities / 116,935 calls) remains
 plumbing for the desktop 9b Actor. It is **not** the recommended next step;
-see **8b volume + 14b gold** above. Prior local estimate ~93h:
+see **7b volume + 14b gold** above. Prior local estimate ~93h:
 
 ```
 python scripts/run_aat_v2_ollama_local_training.py \
@@ -578,8 +580,8 @@ python scripts/run_aat_v2_ollama_local_training.py \
 ```
 
 7. For 14b, the recommended live run is the **100-opportunity gold slice**
-   (subset of the 8b volume sample), full arms including E. Exact gold
-   command is in **8b volume + 14b gold** above. Do not start the 116k run
+   (subset of the 7b volume sample), full arms including E. Exact gold
+   command is in **7b volume + 14b gold** above. Do not start the 116k run
    from an agent. The frozen 16,705 command below is plumbing, not the
    recommended next step.
 
@@ -653,7 +655,7 @@ pod before copying the ledger.
 
 ## Decision boundary
 
-The recommended TRAINING plan is **8b volume (1,000) + 14b gold (100)** on
+The recommended TRAINING plan is **7b volume (1,000) + 14b gold (100)** on
 the existing Ollama harness. Desktop `qwen3.5:9b` and the frozen 16,705 /
 116,935 plumbing remain in-tree and still ABSENT. None of these paths flip
 the registered Terra protocol to authorized, grant broker
