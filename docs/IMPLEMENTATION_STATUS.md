@@ -38,7 +38,7 @@ AAT-V1/V2 source, frozen config/data identities, original source illustration an
 
 The baseline for this update is remote PR #18 commit `2476e6b5dee38f9ac7ce5b65c9a2e6d7a702362f`. Initial repository inventory: 303 tracked files, 205 Python files parsed. New learning/runtime tests are added in this revision.
 
-Tested revision: recorded in the publication evidence follow-up.
+Tested revision: `733a1c441dbed15799397192cf6470b46c370d45`, tree `017e42988162fe612e98572901052c08e474e4a9`. The publication follow-up changes only this evidence line; tested runtime, deployment, research maintenance and test files are identical.
 
 Observed local checks:
 
