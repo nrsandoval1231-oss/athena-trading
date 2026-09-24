@@ -1,5 +1,5 @@
 # Athena Trading Canon
-Version: 2.0 — owner-directed restoration, 24 September 2026.
+Version: 2.1 — owner-directed Jev and active paper amendment, 24 September 2026.
 Status: **AUTHORITATIVE PRODUCT ARCHITECTURE**.
 Owner: Nick Sandoval.
 
@@ -37,6 +37,8 @@ This document transcribes and operationalizes Nick's supplied architecture diagr
 24. **Performance principles and intended outcomes.** Probability over prediction, expectancy over win rate, risk first, continuous adaptation, and disciplined use of data. Seek stronger risk management, better decisions, consistent process, and accumulated validated knowledge. Returns and improvement are objectives to measure, not promises.
 25. **Core ownership.** Athena Core remains domain-neutral and owns general episode/context/lesson/validation concepts. Athena Trading owns both strategies, market/broker semantics, APDE policy, trading risk, and trading outcomes. Integrate through athena_adapter; do not copy another independent Core into this repo.
 26. **Keep one product workflow.** Share contracts, state, risk, execution, replay integration, and reporting across both arms. Provider choice, research ablations, and deployment vendors are implementation choices, not additional product architectures.
+27. **Jev adjudicates the Actor's proposal.** Nick selected TypeSafe Jev as the shared adjudicator. It assesses bounded questions about evidence support and proposal consistency after the Actor and before deterministic risk. Record the exact model, question version, frozen inputs, full answer distributions, confidence, verdict, and policy. The Actor proposes; Jev accepts or vetoes the proposal under code-owned policy; deterministic risk remains final execution authority. Jev does not calculate position sizes, establish broker reality, or promote lessons without validation. Its answer probabilities are not probabilities of profitable trades.
+28. **Active paper is the immediate operating target.** Nick explicitly requested current market data and actual broker paper orders, with Jev in the active entry path; a shadow stage is not required. Missing, malformed, uncertain, contradictory, or unavailable adjudication cannot approve new exposure. Protective management and emergency/session exits do not depend on Jev or the Actor being available. Real-money LIVE authority remains disabled. Start with the bounded intraday paper slice described in implementation status, then extend through the same workflow.
 
 ## Shared decision flow
 
@@ -45,15 +47,16 @@ This document transcribes and operationalizes Nick's supplied architecture diagr
 | World state | Assemble only available evidence and reconciled account state | Frozen state reference |
 | Athena context | Retrieve relevant validated knowledge | Versioned context reference |
 | Strategy + Decision Actor | Earnings thesis or intraday prediction and management reasoning | Structured proposed action |
+| Jev adjudicator | Assess evidence support and proposal consistency under versioned policy | Recorded acceptance or veto; no execution authority |
 | Deterministic risk | Authorize, constrain, or refuse under policy | Exact authorized intent or refusal |
 | Execution + APDE | Route and manage, then reconcile broker events | Observed execution/management events |
 | Outcome + Core learning | Attribute, replay, extract, validate, and promote | Decision Episode and versioned knowledge |
 
-The Actor decides what to propose; the risk engine decides what can be executed. Both strategy arms share this boundary.
+The Actor proposes, Jev adjudicates, and the risk engine decides what can be executed. Both strategy arms share this boundary. The original visual is preserved; requirements 27–28 record Nick's subsequent explicit amendment.
 
 ## Present scope and change control
 
-This reset restores the intended architecture. It does not assert complete implementation, grant broker or model-spend authority, reopen an experiment, or alter a frozen research artifact. The existing PAPER/ABSENT behavior remains the operational boundary until a separately implemented and authorized change.
+The restoration itself did not grant operational authority. Nick's subsequent instruction authorizes implementing and starting active broker paper trading with Jev adjudication. The first pilot bounds exposure and inference calls explicitly. This does not authorize real-money trading, reopen an experiment, or alter frozen research evidence. Actual activation still requires configured paper/model credentials and a running process; code and test fixtures are not proof of a launched session.
 
 Use the implementation map to reuse useful code. AAT-V1/V2, ORB-M campaign documents, provider runbooks, and Astra Desk retain their historical evidence and restrictions. Their old next-step instructions are superseded for product planning by BUILD_PLAN.md.
 

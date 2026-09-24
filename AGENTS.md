@@ -10,7 +10,7 @@ Read, in order:
 ## Architecture rules
 
 - Build Earnings Adaptive and Athena Predictive Intraday on one shared decision/context/risk/execution/APDE/outcome workflow.
-- The LLM proposes decisions. Deterministic risk controls authorize execution. Broker events establish observed state.
+- The LLM proposes, TypeSafe Jev actively adjudicates, deterministic risk authorizes execution, and broker events establish observed state. Model failures may block new exposure but must not block protective exits.
 - ORB-M is an intraday component and baseline. AAT-V1/V2 and Astra Desk are research references, not competing product architectures.
 - Athena Core remains domain-neutral. Reuse its contracts through athena_adapter; do not create a second Core or generic orchestration framework here.
 - Preserve the canonical APDE states: EXPLORE, PROTECT, HARVEST, DEFEND, EXIT.
@@ -25,6 +25,7 @@ Read, in order:
 - Do not rename or move frozen research code, manifests, datasets, identities, receipts, or referenced paths solely to make the tree cleaner. Any later retirement requires a dependency/reference check and preserved provenance.
 - Preserve consumed-holdout status and frozen hashes. Canon restoration does not authorize changing historical evidence.
 - Current execution authority remains PAPER/ABSENT. Existing spend and external-action boundaries still apply.
+- Nick explicitly requested active live-data paper trading, with no mandatory shadow stage. Follow the bounded pilot policy and LIVE_PAPER.md. This is permission for paper operation, not real-money LIVE authority or a frozen research rerun.
 
 ## Verification and handoff
 

@@ -2,7 +2,7 @@
 
 **Two Arms. One Mind. Continuous Wisdom.**
 
-Athena Trading combines **Earnings Adaptive** and **Athena Predictive Intraday** through a shared LLM Decision Actor, Athena Core context and learning, Adaptive Position Defense (APDE), deterministic risk controls, and broker-confirmed execution.
+Athena Trading combines **Earnings Adaptive** and **Athena Predictive Intraday** through a shared LLM Decision Actor, active TypeSafe Jev adjudication, Athena Core context and learning, Adaptive Position Defense (APDE), deterministic risk controls, and broker-confirmed execution.
 
 [Read the canonical architecture](docs/ATHENA_TRADING_CANON.md) · [Current implementation](docs/IMPLEMENTATION_STATUS.md) · [Build sequence](docs/BUILD_PLAN.md)
 
@@ -13,6 +13,7 @@ Athena Trading combines **Earnings Adaptive** and **Athena Predictive Intraday**
 | Question | Source |
 |---|---|
 | What are we building? | [ATHENA_TRADING_CANON.md](docs/ATHENA_TRADING_CANON.md) |
+| How do I start active paper trading? | [LIVE_PAPER.md](docs/LIVE_PAPER.md) |
 | What works and what is missing? | [IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) |
 | What should the builder do next? | [BUILD_PLAN.md](docs/BUILD_PLAN.md) |
 | Which existing code can be reused? | [Repository map](docs/IMPLEMENTATION_STATUS.md#repository-map) |
@@ -21,7 +22,9 @@ Athena Trading combines **Earnings Adaptive** and **Athena Predictive Intraday**
 
 ## Current reality
 
-The strategy/simulation and research infrastructure is substantial. The two canonical strategy arms and shared learning workflow are **not complete**. The current paper path submits entries but still lacks a reconciled broker position lifecycle.
+The first active intraday paper pilot now connects current Alpaca data → local LLM proposal → Jev acceptance/veto → deterministic risk → protected paper order and broker-confirmed exit. See [active paper launch](docs/LIVE_PAPER.md). It is implemented and fixture-tested, but **not launched**: account/model credentials and an operating host are still needed.
+
+The complete two-strategy product, full APDE, and shared learning loop remain incomplete. Historical fixture walkers retain their documented limitations.
 
 ORB-M is a reusable intraday component and baseline. AAT experiments are research history. The existing Ollama B/C/D runner uses identical empty-memory requests; it does not yet demonstrate Athena learning.
 
