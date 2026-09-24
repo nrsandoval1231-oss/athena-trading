@@ -2,7 +2,7 @@
 
 **Two Arms. One Mind. Continuous Wisdom.**
 
-Athena Trading combines **Earnings Adaptive** and **Athena Predictive Intraday** through a shared LLM Decision Actor, Athena Core context and learning, Adaptive Position Defense (APDE), deterministic risk controls, and broker-confirmed execution.
+Athena Trading combines **Earnings Adaptive** and **Athena Predictive Intraday** through a shared TypeSafe Jev decision model, Athena Core context and learning, Adaptive Position Defense (APDE), deterministic risk controls, and broker-confirmed execution.
 
 [Read the canonical architecture](docs/ATHENA_TRADING_CANON.md) · [Current implementation](docs/IMPLEMENTATION_STATUS.md) · [Build sequence](docs/BUILD_PLAN.md)
 
@@ -13,6 +13,9 @@ Athena Trading combines **Earnings Adaptive** and **Athena Predictive Intraday**
 | Question | Source |
 |---|---|
 | What are we building? | [ATHENA_TRADING_CANON.md](docs/ATHENA_TRADING_CANON.md) |
+| How does it stay online in the cloud? | [CLOUD_DEPLOYMENT.md](docs/CLOUD_DEPLOYMENT.md) |
+| How does it learn from trades? | [LEARNING.md](docs/LEARNING.md) |
+| How do I start active paper trading? | [LIVE_PAPER.md](docs/LIVE_PAPER.md) |
 | What works and what is missing? | [IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) |
 | What should the builder do next? | [BUILD_PLAN.md](docs/BUILD_PLAN.md) |
 | Which existing code can be reused? | [Repository map](docs/IMPLEMENTATION_STATUS.md#repository-map) |
@@ -21,7 +24,11 @@ Athena Trading combines **Earnings Adaptive** and **Athena Predictive Intraday**
 
 ## Current reality
 
-The strategy/simulation and research infrastructure is substantial. The two canonical strategy arms and shared learning workflow are **not complete**. The current paper path submits entries but still lacks a reconciled broker position lifecycle.
+The bounded intraday paper path connects current Alpaca data → strategy candidate → **Jev decision** → deterministic risk → protected paper order and broker-confirmed exit. Jev is the only active model; Terra and Ollama are removed from this path.
+
+Completed trades become verified experience available to later decisions. The cloud supervisor reviews each day after 20:15 Eastern; only prospectively validated, temporary abstention rules can be promoted. See [learning](docs/LEARNING.md) and [cloud deployment](docs/CLOUD_DEPLOYMENT.md).
+
+The implementation is locally verified but **not deployed**: cloud access and server-side Alpaca/TypeSafe credentials remain unavailable. The complete Earnings arm, full APDE, comprehensive forecasting and general Athena Core integration are incomplete. Learning from observations is implemented; improved trading performance is not established.
 
 ORB-M is a reusable intraday component and baseline. AAT experiments are research history. The existing Ollama B/C/D runner uses identical empty-memory requests; it does not yet demonstrate Athena learning.
 
@@ -39,4 +46,4 @@ python scripts/run_orb_m_paper.py --walk-bars
 
 The bar walk is a fixture demonstration. It is not the completed dual-strategy bot.
 
-The root suite does not cover the separately packaged Astra Desk tests. Current lint and imported-suite failures are recorded in [implementation status](docs/IMPLEMENTATION_STATUS.md#verification-baseline); a passing root count is not a complete repository gate.
+The root suite does not cover the separately packaged Astra Desk tests. The repaired consolidated gate and historical findings are recorded in [implementation status](docs/IMPLEMENTATION_STATUS.md#verification); run both packages for a complete local gate.

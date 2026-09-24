@@ -6,7 +6,8 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from astra_desk.accounting import CapitalBooks
 from astra_desk.contract import EXIT_ID, load_contract

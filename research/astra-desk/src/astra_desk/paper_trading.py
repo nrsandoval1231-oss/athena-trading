@@ -7,7 +7,8 @@ import os
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from astra_desk.contract import EXIT_ID, load_contract
 from astra_desk.desk import TradingDesk

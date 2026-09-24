@@ -6,6 +6,9 @@ __pycache__/
 
 # Secrets/data
 .env
+paper.env
+*.sqlite*
+build/
 # Bars and intermediate pulls are large and regenerable. The frozen universe
 # manifest under data/universe/ and the statistics that produced it are
 # neither: together they are the campaign's dataset identity and the record

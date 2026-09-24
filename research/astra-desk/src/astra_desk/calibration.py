@@ -15,7 +15,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from astra_desk.contract import GATING_AGENT_IDS, SKEPTIC_ID, load_contract
 from astra_desk.errors import CalibrationError, LiveTradingDisabled
@@ -246,7 +247,7 @@ def _comovement(xs: list[int], ys: list[int]) -> float | None:
         return 1.0 if any(xs) else None
     mx = mean(xs)
     my = mean(ys)
-    num = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    num = sum((x - mx) * (y - my) for x, y in zip(xs, ys, strict=True))
     dx = math.sqrt(sum((x - mx) ** 2 for x in xs))
     dy = math.sqrt(sum((y - my) ** 2 for y in ys))
     if dx == 0 or dy == 0:

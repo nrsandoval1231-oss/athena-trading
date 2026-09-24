@@ -105,6 +105,18 @@ def test_script_alpaca_path_fails_closed_without_keys(monkeypatch, capsys):
     assert payload["live_trading"] is False
 
 
+def test_legacy_demo_cannot_send_real_broker_orders(monkeypatch):
+    script = _script()
+
+    def forbidden():
+        raise AssertionError("legacy submission must stop before broker access")
+
+    monkeypatch.setattr(script.AlpacaPaperBroker, "from_env", forbidden)
+    with pytest.raises(SystemExit) as exc:
+        script.main(["--broker", "alpaca", "--authority", "PAPER", "--submit-demo"])
+    assert exc.value.code == 2
+
+
 def test_script_without_flags_does_not_send(capsys):
     code = _script().main([])
     assert code == 0

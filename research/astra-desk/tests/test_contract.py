@@ -4,7 +4,6 @@ import copy
 from pathlib import Path
 
 import pytest
-import yaml
 
 from astra_desk.contract import load_contract, load_schema, load_yaml, validate_contract_data
 from astra_desk.errors import ContractError

@@ -306,7 +306,6 @@ def compute_earnings_moves(close: pd.Series, report_times, now_utc=None):
         return []
     close_utc = _daily_close_times_utc(close.index)
     prices = close.to_numpy(dtype="float64")
-    n = len(prices)
 
     results = []
     for raw_ts in report_times:

@@ -12,7 +12,8 @@ import os
 import urllib.error
 import urllib.request
 from dataclasses import replace
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Protocol
+from collections.abc import Callable, Mapping
 from urllib.parse import urlparse
 
 from astra_desk.errors import BrokerCredentialsError, BrokerError, LiveTradingDisabled
@@ -323,13 +324,6 @@ def _urllib_transport(
             status = int(getattr(response, "status", 200))
     except urllib.error.HTTPError as exc:
         status = int(exc.code)
-        raw = exc.read() if exc.fp is not None else b""
-        body: Any = {}
-        if raw:
-            try:
-                body = json.loads(raw.decode("utf-8"))
-            except json.JSONDecodeError:
-                body = {}
         raise BrokerError(f"alpaca paper request failed: {method} {parsed.path} status={status}") from None
     if not raw:
         return status, {}

@@ -5,8 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Mapping
+from datetime import datetime, UTC
+from typing import Any
+from collections.abc import Mapping
 
 from astra_desk.types import Regime
 
@@ -49,7 +50,7 @@ class AppendOnlyLedger:
 
     def append(self, round_id: str, payload: Mapping[str, Any]) -> LedgerEntry:
         prev = self.head_hash
-        recorded_at = datetime.now(timezone.utc).isoformat()
+        recorded_at = datetime.now(UTC).isoformat()
         body = {
             "seq": len(self._entries),
             "round_id": round_id,
@@ -69,7 +70,7 @@ class AppendOnlyLedger:
         return entry
 
     @classmethod
-    def from_entries(cls, entries: tuple[LedgerEntry, ...]) -> "AppendOnlyLedger":
+    def from_entries(cls, entries: tuple[LedgerEntry, ...]) -> AppendOnlyLedger:
         """Load a verified chain. No rewrite of existing entries."""
         ledger = cls()
         ledger._entries = tuple(entries)
