@@ -1,109 +1,67 @@
 # Implementation status
-Status date: 24 September 2026. Product authority: [Athena Trading Canon](ATHENA_TRADING_CANON.md).
 
-The owner restored the supplied two-strategy architecture after the audit of main at 15fe4938241931078680cff79010ca09ce70feab. This document tracks implementation against that canon. The reset changed direction/documentation. Nick subsequently requested active Jev adjudication and live-data broker paper trading; the implementation below adds a bounded intraday pilot. It has not been launched against external services.
+Status date: 24 September 2026. Product authority: [Athena Trading Canon v3.0](ATHENA_TRADING_CANON.md). Nick directed Jev-only decisions, cloud paper operation, repository cleanup and outcome learning.
+
+**Implemented and locally verified; not deployed.** No broker/model execution or improved trading performance has been observed. Cloud access and server-side Alpaca/TypeSafe credentials remain unavailable.
 
 ## Canon-to-code map
 
-| Canon capability | Existing implementation | Honest state / next gap |
+| Capability | Current implementation | Remaining boundary |
 |---|---|---|
-| Earnings Adaptive | research/earnings-universe screening research | Research input only. No integrated earnings intelligence → scenarios → Actor → execution arm. |
-| Predictive Intraday | strategies/orb_momentum.py; orb_m/ engine | Reusable signals, simulation, and baseline. No complete continuously updated prediction/Actor arm. |
-| Point-in-time world state | market_data/; exogenous/; ORB-M market features | Useful components. No shared canonical account/market/context snapshot across both arms. |
-| LLM Decision Actor | paper/live.py OpenAIActor (cloud default), OllamaActor (existing local path); historical aat_v1/ and aat_v2/ | Pilot proposes candidate direction or NO_TRADE with rationale/invalidation, recording the reported Terra model and request configuration/response hashes; local Qwen retains its installed digest. Full canonical proposal service remains incomplete. |
-| Active Jev adjudicator | athena_adapter/jev.py, called by paper/live.py | Pinned jev-1.13.0, two Choice checks, strict response validation, active entry veto, recorded distributions/identity/policy. External calls and semantic accuracy not yet observed. |
-| Athena context and learning | athena_adapter/contracts.py; research lessons/evaluation code | Hash/contract utilities and research machinery. A production context/replay/promotion integration with Athena Core is not established. |
-| Shared APDE | position_management/apde.py; orb_m/management.py | APDE vocabulary and strategy-specific management exist. Shared broker-aware management for both arms is incomplete. |
-| Deterministic risk | risk/halt.py; ORB-M constitution/sizing | Partial ceilings and authority gating. Shared account/exposure/session lifecycle needs implementation. |
-| Broker execution and reconciliation | paper/live.py extends Alpaca paper adapter; paper/journal.py | Bounded pilot submits one-share protected bracket, tracks broker fills/positions, cancels then closes, recovers reserved entries without resend, and confirms flat. Fixture-tested only. Historical session/walk still has AT-03. Full account/exposure/APDE lifecycle remains incomplete. |
-| Decision Episodes/outcomes | athena_adapter/; AAT research receipts/outcomes | Reusable pieces. No canonical end-to-end episode for both strategies. |
-| Replay → extract → validate → promote | AAT V1/V2 research; Astra scaffold | Research-only. Current V2 runner does not demonstrate a meaningful learned-treatment comparison. |
-| Scheduled operation and reporting | paper/cloud.py, scripts/run_athena_paper.py, deploy/athena-paper.service | Dated sessions, unresolved-entry recovery before rollover, hosted Actor, restart service and heartbeat implemented and fixture-tested. Not deployed; no verified cloud uptime, external alerting or overnight learning. |
+| Jev decision model | athena_adapter/jev.py: one typed TAKE_TRADE / NO_TRADE / INSUFFICIENT_EVIDENCE decision; active threshold gate | Semantic trading quality unmeasured; no generated thesis |
+| Predictive Intraday | Existing ORB trigger/risk frame feeds paper/live.py | Bounded opening-range component, not full multi-source forecasting |
+| Earnings Adaptive | research/earnings-universe input research | Integrated earnings strategy remains incomplete |
+| Risk and execution | Dedicated paper account; one share/entry/day; rechecked limits; bracket, partial fills, cancellation and broker reconciliation | Full portfolio weekly/monthly/correlation policy remains incomplete |
+| APDE | Shared vocabulary and historical strategy management; broker protection/cleanup in active pilot | Full EXPLORE/PROTECT/HARVEST/DEFEND ratcheting not integrated |
+| Persistence | Single-writer SQLite events, verified chain and separate durable checkpoint | Privileged rewrites of both DB/anchor or lost disk require independent recovery evidence |
+| Outcome feedback | paper/learning.py reconciles fills, stores gross outcomes/provenance and retrieves prior experience with a temporal boundary | Net fees and complete market-path excursions unmeasured |
+| Learning validation | Fixed discovery sample, prospectively registered candidate, fresh validation sample, recorded rejection/promotion, expiring NO_TRADE rule | Narrow initial paper policy; no demonstrated future improvement or model training |
+| Cloud scheduling | paper/cloud.py starts sessions, prioritizes recovery and reviews after 20:15 Eastern; service/installer/runbook prepared | Host installation, credentials, external alerting and backup restore not verified |
+| Athena Core | Shared adapter identity contracts reused; trading-specific experience policy implemented | General Core service/context/replay/promotion integration remains incomplete |
 
-“Exists” means code was inspected. It does not imply broker readiness or a profitable/adaptive result.
+## Active sources
+
+- [LIVE_PAPER.md](LIVE_PAPER.md): the one active broker runner and operating bounds.
+- [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md): host setup, persistent service, preflight and activation.
+- [LEARNING.md](LEARNING.md): exact learning schedule, evidence, validation and adaptive limits.
+- [BUILD_PLAN.md](BUILD_PLAN.md): the single product build sequence.
+- [Latest repository audit](audits/2026-09-24-jev-learning.md): scope, repairs, retained defects and cleanup decisions.
+- [Research index](../research/README.md): retained historical experiments, not product entry points.
 
 ## Repository map
 
-| Location | Role after the reset |
-|---|---|
-| docs/ATHENA_TRADING_CANON.md + docs/assets/athena-trading-canon.jpg | Governing written canon and original visual source |
-| docs/BUILD_PLAN.md | The one active implementation sequence |
-| docs/IMPLEMENTATION_STATUS.md | Verified state, reuse map, gaps |
-| src/athena_trading/strategies/ | Strategy integration home; currently ORB-M only |
-| src/athena_trading/market_data/ + exogenous/ | Inputs for both arms, with availability/provenance checks |
-| src/athena_trading/athena_adapter/ | Domain boundary to Athena Core |
-| src/athena_trading/position_management/ | Shared APDE vocabulary; extend with actual behavior |
-| src/athena_trading/risk/ + execution/ + paper/ | Shared operational boundaries to complete |
-| src/athena_trading/orb_m/ | Reusable intraday engine/baseline; historical experiment semantics remain pinned |
-| src/athena_trading/aat_v1/ + aat_v2/ | Retained experiment code; not the default product runtime |
-| research/astra-desk/ | Isolated research scaffold; no automatic promotion into the product |
-| research/earnings-universe/ | Candidate earnings research input; validate before adoption |
-| configs/ + data/ + scripts/ | Existing research/runtime assets; retain stable paths and frozen identities |
-| research/history/ | Superseded product entry-point snapshots |
-| docs/audits/ | Dated evidence, including the pre-reset audit |
+Strategy/market components remain in strategies/, orb_m/, market_data/ and exogenous/. Trading integration belongs in athena_adapter/, risk/, execution/, position_management/ and paper/. The active path is run_athena_paper.py under the cloud supervisor. Terra/Ollama classes and related active CLI/environment configuration were removed. The unused backtesting placeholder was deleted after a reference check.
 
-No empty strategy/framework tree is added. Create or split runtime files when the next real implementation slice needs them.
+AAT-V1/V2 source, frozen config/data identities, original source illustration and historical entry-point snapshots remain byte-identical to the prior candidate (77 protected files checked). Astra received lint-only maintenance and its test now targets the consolidated workflow. Its execution/persistence defects remain isolated; no Astra broker code is adopted into the active path. The old ORB demo CLI retains fixtures and broker preflight but refuses broker submission.
 
-## Verification baseline
+## Verification
 
-Audit of 15fe4938241931078680cff79010ca09ce70feab:
+The baseline for this update is remote PR #18 commit `2476e6b5dee38f9ac7ce5b65c9a2e6d7a702362f`. Initial repository inventory: 303 tracked files, 205 Python files parsed. New learning/runtime tests are added in this revision.
 
-- Main package: **574 passed** on Python 3.12.
-- Ruff **0.15.8**: **31 existing errors**, mostly in imported research files.
-- Astra Desk: **157 passed, 1 failed**; the failure asserts a removed standalone workflow exists.
-- Root pytest testpaths=["tests"] omits the Astra suite.
-- Latest inspected GitHub CI failed before any steps, with no assigned runner. Its platform failure cause was unavailable.
-- All 283 original tracked files were checked against remote blob hashes.
+Tested revision: recorded in the publication evidence follow-up.
 
-Run main-package checks from the root. Run Astra checks from research/astra-desk in an environment with its dependencies (PyYAML, jsonschema, and pytest). Keep those results separate until the consolidated gate is repaired.
+Observed local checks:
 
-Canon-reset verification: **574 main-package tests passed**. All **246 runtime/config/data/script/test/workflow files** in the protected audit scope remain byte-identical to the audited main commit. Whitespace and active-document local links pass. The source diagram is byte-identical to the supplied JPEG (SHA-256 fe9a2da6a8de6ae56bb3c3ba864a1efed2fc1fb9eb7aa9a01d1ae0638c54b8ef). This reset does not repair the existing CI or runtime findings.
+```bash
+# Repository root, Python 3.12 with both packages' dependencies
+python -m pytest -q                              # 657 passed
+uv tool run --from ruff==0.15.8 ruff check .      # clean
+bash -n deploy/install.sh                       # clean
 
-## Active Jev paper slice
+git diff --check                               # clean
+# Separately packaged Astra suite
+cd research/astra-desk
+python -m pytest -o addopts='' -q                # 158 passed
+```
 
-Owner direction: **active paper, no shadow requirement**. Base main: `2382cce97b4b4b1dd4e096a4e501f6989f0b3126`. Verified first-integration commit: `9d83069e9ae53b01aee688aa68960eb8cc89ace6` (tree `aac92fd779c110c10836ddd6c0636d79f9945666`, 620 root tests); no historical research artifacts or existing runtime modules were rewritten.
+The existing root workflow now installs both packages and runs both suites. No new self-hosted runner is required. The three UP042 modernization warnings are narrowly suppressed for Astra enums because replacing Enum with StrEnum changes historical string rendering; the rest of the prior lint findings are repaired. A clean local gate is not evidence that the remote CI platform or target cloud host ran successfully.
 
-- New path: current Alpaca minute/daily data → bounded LLM Actor (Terra is now the cloud default) → active Jev acceptance/veto → rechecked deterministic risk → one-share limit/bracket paper entry → broker reconciliation/cleanup.
-- Initial bounds: one account/symbol, one entry per session, $1,000/1% notional cap, $10/0.1% initial stop-risk cap, 0.5% daily account-loss cap, 20 model reviews, flatten 15 minutes before broker close.
-- Jev model/question/result/policy and original market inputs are recorded. Confidence is semantic output uncertainty, not trading profit probability or a Kelly input.
-- SQLite events are content-verified and single-writer locked. The entry is reserved before send. Model outages do not prevent recovery of a reserved paper position.
-- **46 new tests; 620 root tests passed** using `python -m pytest -q`. Changed Python files pass Ruff **0.15.8**. Existing root lint/Astra findings remain open; the Astra code is unchanged and was not re-run for this slice.
-- CLI preflight was attempted and exited 2 for missing Alpaca environment credentials, with zero orders submitted. TypeSafe credentials are also absent. A DigitalOcean cloud deployment is prepared, but no operating host is configured. There is **no live broker/provider result or trading-accuracy evidence** from this change.
-- Launch procedure and exact remaining setup are in [LIVE_PAPER.md](LIVE_PAPER.md). No automatic shadow mode exists.
+Tests cover Jev-only decisions, malformed output, risk changes during inference, account-safe cleanup, remaining stop coverage, recovery without models, deleted journal tails, checkpoint interruption, reconciled outcomes, duplicate imports, future-data exclusion, discovery/validation separation, rule rejection/expiry, DST scheduling and a promoted rule changing the real pilot's decision path.
 
-This is a usable integration slice, not completion of the dual strategy, full APDE, account-wide weekly/monthly risk policy, predictive model, or Core learning loop. The historical fixture walker remains a fixture; use the new active command for live paper.
+## Historical evidence and remaining defects
 
-## Cloud operation extension
+Earlier first integration: `9d83069e9ae53b01aee688aa68960eb8cc89ace6`, tree `aac92fd779c110c10836ddd6c0636d79f9945666`, 620 root tests. Cloud extension: `ca7a1ace2513af52474527bb7203dac9a2104ac9`, tree `3948f1e6048f468de3ac235ef45d6f3605808528`, 648 root tests. Those versions used an Actor; they are not the current runtime.
 
-Nick requested continuous cloud operation independent of his PC. The selected initial host is a $12/month DigitalOcean Basic Regular 2 GiB Droplet, plus separate provider usage and optional backups. [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md) is the operational procedure, not another product roadmap.
+The original [audit](audits/2026-09-24.md) of `15fe4938241931078680cff79010ca09ce70feab` recorded 574 main tests, 31 lint findings, and 157/158 Astra tests. AT-06 (local gate) is now repaired. AT-01/02 (historical research receipt/resume integrity) and AT-04/05 (Astra execution/snapshots) remain open before those components can be adopted. AT-03/07 remain limitations of the historical library walker; its broker-submit CLI route is retired, and the active runner uses broker state and dated IDs. AT-08 was addressed by the canonical documentation reset.
 
-- Hosted `gpt-5.6-terra` uses strict Responses structured output; active Jev and deterministic risk remain in the same paper workflow. Refusal, incompletion, changed identity/direction, malformed output and timeouts block proposals. Model receipts retain configuration, exact response and usage without credentials. The hosted configuration hash is not a model-weight digest.
-- One systemd supervisor owns dated persistent sessions, starts after reboot and recovers unresolved old entries before starting a new day. Recovery preserves the saved symbol/feed/Actor binding and does not require model credentials. Halts remain effective for that session. A missed close cannot carry an empty cloud session into the next day.
-- Verification: `python -m pytest -q` reports **648 passed** (28 additional cloud cases); Ruff 0.15.8 passes for changed Python; `bash -n deploy/install.sh` and `git diff --check` pass. The target systemd executable is not installed in this workspace, so host installation/service activation is unverified. Existing root lint/Astra findings are unchanged and were not rerun.
-- Tested cloud source: commit `ca7a1ace2513af52474527bb7203dac9a2104ac9`, tree `3948f1e6048f468de3ac235ef45d6f3605808528`. The following publication commit changes this evidence line only; runtime, deployment files and tests are identical. No external execution evidence is claimed.
-- Deployment is **not active**. DigitalOcean console access failed in this browser; no connected DigitalOcean credential or server-side provider keys were available. No Droplet, model inference, or broker paper order was created. First-session observation, external alerting and backup/restore validation remain deployment work.
-
-## Outstanding defects
-
-See [the full audit](audits/2026-09-24.md) for counterexamples and source lines.
-
-| ID | Finding | Where it matters |
-|---|---|---|
-| AT-01 | Full-run and snapshot inputs are not consistently bound to verified bytes | Before reusing research evidence |
-| AT-02 | Resume accepts changed inputs/decisions without validating the complete history | Before any trusted resumable evidence run |
-| AT-03 | Paper risk state follows simulated exits instead of broker fills/exits | Before unattended broker paper operation |
-| AT-04 | Astra flatten omits position-close operations; broker errors prevent halt latch | Before adopting Astra execution code |
-| AT-05 | Astra snapshot changes can pass alongside a verified chain | Before adopting Astra persistence |
-| AT-06 | Consolidated lint/test gate is incomplete | First build slice |
-| AT-07 | Client order IDs repeat across session dates | Before multi-session operation |
-| AT-08 | Competing current-status documents | Addressed by the canon reset and explicit historical labels |
-
-The 24 September PR #16 fixes are present: qwen2.5:7b identity, deterministic subsample receipt comparison, and subsample index byte verification. Adjacent findings above remain open.
-
-## Evidence and authority
-
-- AAT-V1 holdout is consumed / INVALID_EVIDENCE (249 versus required 300). It cannot be repurposed for the restored product.
-- The recorded V2 Terra protocol remains REGISTERED_NOT_AUTHORIZED; candidate Qwen research is not that registered experiment.
-- Frozen V2 full data and snapshot bytes were not available in the repo audit. Their actual external contents are unverified here.
-- Real-money LIVE remains disabled. The later owner instruction authorizes bounded active paper operation and its Jev calls; it does not reopen historical experiments or authorize real-money orders.
-- Update this page after each real slice with observed evidence and remaining limits. Do not mark diagram boxes complete from file existence or fixture-only demonstrations.
+AAT-V1 remains consumed / INVALID_EVIDENCE. The registered V2 protocol remains REGISTERED_NOT_AUTHORIZED; no holdout was rerun or reclassified. Real-money LIVE remains disabled. The current paper learning study has its own versioned policy and does not consume those research outcomes.

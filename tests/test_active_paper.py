@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import json
 import sqlite3
 from datetime import UTC, date, datetime, timedelta
 from urllib.error import HTTPError
@@ -9,11 +8,11 @@ from urllib.error import HTTPError
 import pytest
 
 from athena_trading.athena_adapter.jev import (
-    JEV_ENDPOINT, JEV_MODEL, JevAdjudicator, ModelError, questions, request_json,
+    JEV_ENDPOINT, JEV_MODEL, JevDecisionEngine, ModelError, questions, request_json,
 )
 from athena_trading.paper.journal import PaperJournal
 from athena_trading.paper.live import (
-    ActivePaperPilot, LivePaperAPI, OllamaActor, PilotPolicy, signal_packet,
+    ActivePaperPilot, LivePaperAPI, PilotPolicy, signal_packet,
 )
 
 NOW = datetime(2026, 9, 24, 13, 46, 5, tzinfo=UTC)
@@ -21,12 +20,12 @@ OPEN = NOW.replace(minute=30, second=0)
 POLICY = PilotPolicy("AAPL")
 
 
-def response(choice="supported", confidence=0.9):
+def response(choice="TAKE_TRADE", confidence=0.9):
     return {"model": JEV_MODEL, "usage": {"input_tokens": 300, "output_tokens": 50},
             "answers": {key: {"type": "choice", "choice": choice,
                               "confidence": confidence,
                               "probabilities": {opt: 0.9 if opt == choice else 0.05
-                                                for opt in ("supported", "contradicted", "insufficient")}}
+                                                for opt in ("TAKE_TRADE", "NO_TRADE", "INSUFFICIENT_EVIDENCE")}}
                         for key in questions()}}
 
 
@@ -94,31 +93,30 @@ class Broker:
         raise AssertionError((method, path, payload))
 
 
-class Actor:
+class DecisionHook:
     def __init__(self):
-        self.action = "LONG"
+        self.action = "TAKE_TRADE"
         self.after = lambda: None
 
-    def propose(self, packet):
+    def transport(self, *args, **kwargs):
         self.after()
-        return {"action": self.action, "rationale": "The close broke above the opening range.",
-                "invalidation": "The breakout fails.", "actor_model": "fixture", "actor_digest": "0" * 64}
+        return response(self.action)
 
 
 @pytest.fixture
 def setup(tmp_path):
     journal = PaperJournal(tmp_path / "paper.sqlite")
-    broker, actor = Broker(), Actor()
+    broker, actor = Broker(), DecisionHook()
     broker.journal = journal
-    adjudicator = JevAdjudicator("fixture-key", transport=lambda *a, **k: response())
-    pilot = ActivePaperPilot(broker, actor, adjudicator, journal, POLICY)
+    adjudicator = JevDecisionEngine("fixture-key", transport=actor.transport)
+    pilot = ActivePaperPilot(broker, adjudicator, journal, POLICY)
     yield pilot, broker, actor, journal
     journal.close()
 
 
 def test_active_jev_veto_prevents_paper_order(setup):
     pilot, broker, _, journal = setup
-    pilot.jev = JevAdjudicator("fixture-key", transport=lambda *a, **k: response("contradicted"))
+    pilot.jev = JevDecisionEngine("fixture-key", transport=lambda *a, **k: response("NO_TRADE"))
     assert pilot.tick() == "JEV_VETO"
     assert not any(method == "POST" for method, _, _ in broker.calls)
     assert journal.last("adjudication")["receipt"]["accepted"] is False
@@ -152,7 +150,7 @@ def test_lost_submit_response_recovers_without_resubmission(setup):
     broker.lose_submit_response = True
     with pytest.raises(ModelError):
         pilot.tick()
-    recovered = ActivePaperPilot(broker, actor, pilot.jev, journal, POLICY)
+    recovered = ActivePaperPilot(broker, pilot.jev, journal, POLICY)
     assert recovered.tick() == "ENTRY_WORKING"
     assert sum(m == "POST" for m, _, _ in broker.calls) == 1
 
@@ -163,7 +161,7 @@ def test_model_error_never_places_order_or_repeats_same_bar(setup):
     def unavailable(*args, **kwargs):
         raise ModelError("HTTP 429")
 
-    pilot.jev = JevAdjudicator("fixture-key", transport=unavailable)
+    pilot.jev = JevDecisionEngine("fixture-key", transport=unavailable)
     with pytest.raises(ModelError):
         pilot.tick()
     assert pilot.tick() == "ALREADY_REVIEWED"
@@ -171,11 +169,11 @@ def test_model_error_never_places_order_or_repeats_same_bar(setup):
     assert not any(m == "POST" for m, _, _ in broker.calls)
 
 
-def test_actor_abstention_never_calls_jev(setup):
+def test_jev_abstention_never_submits_an_order(setup):
     pilot, broker, actor, journal = setup
     actor.action = "NO_TRADE"
-    assert pilot.tick() == "ACTOR_NO_TRADE"
-    assert not journal.last("adjudication")
+    assert pilot.tick() == "JEV_VETO"
+    assert journal.last("adjudication")["receipt"]["accepted"] is False
     assert not any(m == "POST" for m, _, _ in broker.calls)
 
 
@@ -184,6 +182,7 @@ def test_actor_abstention_never_calls_jev(setup):
     (lambda s: s["clock"].update(is_open=False), "SESSION_BLOCKED"),
     (lambda s: s["account"].update(buying_power="1"), "RISK_CHANGED"),
     (lambda s: s["account"].update(trading_blocked=True), "ACCOUNT_BLOCKED"),
+    (lambda s: s["account"].update(status="INACTIVE"), "ACCOUNT_BLOCKED"),
     (lambda s: s["account"].update(equity="99000"), "COMPLETE"),
 ])
 def test_risk_rechecks_after_jev_acceptance(setup, change, expected):
@@ -244,6 +243,28 @@ def test_existing_unowned_exposure_is_not_touched(setup):
     assert not journal.last("binding")
 
 
+def test_cleanup_refuses_different_account_even_with_matching_symbol(setup):
+    pilot, broker, _, journal = setup
+    pilot.tick()
+    broker.state["account"]["id"] = "other-account"
+    broker.state["positions"] = [{"symbol": "AAPL", "qty": "1"}]
+    before = len(broker.calls)
+    with pytest.raises(ValueError, match="different account"):
+        pilot.flatten_step(broker.snapshot())
+    assert len(broker.calls) == before
+
+
+def test_partially_filled_stop_does_not_protect_its_original_quantity(setup):
+    pilot, broker, _, journal = setup
+    pilot.tick()
+    broker.parent.update(status="filled", filled_qty="1")
+    broker.state["positions"] = [{"symbol": "AAPL", "qty": "1"}]
+    broker.state["orders"] = [{"id": "stop", "symbol": "AAPL", "type": "stop", "side": "sell",
+                               "qty": "1", "filled_qty": "0.5"}]
+    assert pilot.tick() == "FLATTENING"
+    assert journal.last("halt")["reason"] == "PROTECTION_MISSING"
+
+
 def test_halt_survives_cleanup_failure(setup):
     pilot, broker, _, journal = setup
     pilot.tick()
@@ -274,8 +295,8 @@ def test_no_duplicate_on_next_tick_after_complete(setup):
 
 
 @pytest.mark.parametrize("choice,confidence,accepted", [
-    ("supported", .9, True), ("supported", .1, False),
-    ("insufficient", .9, False), ("contradicted", .9, False),
+    ("TAKE_TRADE", .9, True), ("TAKE_TRADE", .1, False),
+    ("INSUFFICIENT_EVIDENCE", .9, False), ("NO_TRADE", .9, False),
 ])
 def test_jev_gates_and_exact_http_contract(choice, confidence, accepted):
     calls = []
@@ -284,8 +305,8 @@ def test_jev_gates_and_exact_http_contract(choice, confidence, accepted):
         calls.append((method, endpoint, payload, timeout))
         return response(choice, confidence)
 
-    judge = JevAdjudicator("fixture-key", transport=transport)
-    result = judge.adjudicate({"observations": {"breakout": "above"}}, {"action": "LONG"})
+    judge = JevDecisionEngine("fixture-key", transport=transport)
+    result = judge.decide({"candidate_direction": "LONG", "observations": {"breakout": "above"}})
     assert result.accepted is accepted
     assert result.receipt["execution_authorized"] is False
     assert calls[0][0:2] == ("POST", JEV_ENDPOINT)
@@ -299,38 +320,22 @@ def test_jev_gates_and_exact_http_contract(choice, confidence, accepted):
 
 @pytest.mark.parametrize("mutate", [
     lambda r: r.update(model="jev-latest"),
-    lambda r: r["answers"].pop("rationale_support"),
-    lambda r: r["answers"]["rationale_support"].update(type="noul"),
-    lambda r: r["answers"]["rationale_support"].update(choice="contradicted"),
-    lambda r: r["answers"]["rationale_support"].update(confidence=float("nan")),
-    lambda r: r["answers"]["rationale_support"].update(confidence=True),
-    lambda r: r["answers"]["rationale_support"]["probabilities"].update(supported=1.5),
-    lambda r: r["answers"]["rationale_support"]["probabilities"].update(supported=.5),
-    lambda r: r["answers"]["rationale_support"]["probabilities"].update(other=0),
+    lambda r: r["answers"].pop("entry_decision"),
+    lambda r: r["answers"]["entry_decision"].update(type="noul"),
+    lambda r: r["answers"]["entry_decision"].update(choice="NO_TRADE"),
+    lambda r: r["answers"]["entry_decision"].update(confidence=float("nan")),
+    lambda r: r["answers"]["entry_decision"].update(confidence=True),
+    lambda r: r["answers"]["entry_decision"]["probabilities"].update(TAKE_TRADE=1.5),
+    lambda r: r["answers"]["entry_decision"]["probabilities"].update(TAKE_TRADE=.5),
+    lambda r: r["answers"]["entry_decision"]["probabilities"].update(other=0),
     lambda r: r["usage"].update(input_tokens=-1),
 ])
 def test_invalid_jev_response_is_never_approval(mutate):
     raw = response()
     mutate(raw)
-    judge = JevAdjudicator("fixture-key", transport=lambda *a, **k: raw)
+    judge = JevDecisionEngine("fixture-key", transport=lambda *a, **k: raw)
     with pytest.raises(ModelError):
-        judge.adjudicate({"observations": {}}, {"action": "LONG"})
-
-
-def test_actor_requires_local_model_digest_and_bounded_action():
-    calls = []
-
-    def transport(method, url, headers, payload=None, **kwargs):
-        calls.append(url)
-        if url.endswith("/api/tags"):
-            return {"models": [{"name": "qwen2.5:7b", "digest": "a" * 64}]}
-        return {"model": "qwen2.5:7b", "done": True, "message": {"content": json.dumps({
-            "action": "SHORT", "rationale": "text", "invalidation": "text"})}}
-
-    actor = OllamaActor(transport=transport)
-    with pytest.raises(ModelError, match="direction"):
-        actor.propose({"candidate_direction": "LONG"})
-    assert len(calls) == 3
+        judge.decide({"candidate_direction": "LONG", "observations": {}})
 
 
 def test_current_data_ignores_incomplete_bar_and_excludes_today_daily():
@@ -406,7 +411,7 @@ def test_http_errors_never_echo_provider_body_or_secret(monkeypatch):
 def test_restart_can_exit_without_either_model(setup):
     pilot, broker, _, journal = setup
     pilot.tick()
-    recovered = ActivePaperPilot(broker, None, None, journal, POLICY)
+    recovered = ActivePaperPilot(broker, None, journal, POLICY)
     broker.state["clock"]["timestamp"] = NOW.replace(hour=19, minute=46).isoformat()
     assert recovered.tick() == "FLATTENING"
     assert journal.last("halt")["reason"] == "SESSION_CLOSE"
@@ -459,7 +464,7 @@ def test_client_order_id_changes_with_session_date(tmp_path):
     ids = []
     for offset in (0, 1):
         journal = PaperJournal(tmp_path / f"day-{offset}.sqlite")
-        broker, actor = Broker(), Actor()
+        broker = Broker()
         broker.journal = journal
         shifted_now = NOW + timedelta(days=offset)
         broker.state["clock"]["timestamp"] = shifted_now.isoformat()
@@ -479,8 +484,8 @@ def test_client_order_id_changes_with_session_date(tmp_path):
             return values
 
         broker.call, broker.bars = call, bars
-        jev = JevAdjudicator("fixture", transport=lambda *a, **k: response())
-        pilot = ActivePaperPilot(broker, actor, jev, journal, POLICY)
+        jev = JevDecisionEngine("fixture", transport=lambda *a, **k: response())
+        pilot = ActivePaperPilot(broker, jev, journal, POLICY)
         assert pilot.tick() == "ENTRY_SUBMITTED"
         ids.append(journal.last("entry_intent")["order"]["client_order_id"])
         journal.close()

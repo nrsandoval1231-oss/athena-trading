@@ -10,7 +10,8 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from astra_desk.accounting import CapitalBooks
 from astra_desk.errors import LedgerStoreError
@@ -68,7 +69,7 @@ def entry_from_dict(raw: Mapping[str, Any]) -> LedgerEntry:
 class PersistentLedger(AppendOnlyLedger):
     """Append-only ledger that mirrors each new entry to disk."""
 
-    def __init__(self, store: "LedgerStore", entries: tuple[LedgerEntry, ...] = ()) -> None:
+    def __init__(self, store: LedgerStore, entries: tuple[LedgerEntry, ...] = ()) -> None:
         super().__init__()
         self._store = store
         self._entries = entries
@@ -94,7 +95,7 @@ class LedgerStore:
         self.snapshot_path = path / SNAPSHOT_NAME
 
     @classmethod
-    def open(cls, path: str | Path | None, *, new: bool = False) -> "LedgerStore":
+    def open(cls, path: str | Path | None, *, new: bool = False) -> LedgerStore:
         store_path = resolve_store_path(path)
         store = cls(store_path)
         if new:

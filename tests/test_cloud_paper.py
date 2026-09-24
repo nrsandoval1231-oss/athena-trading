@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import json
 import signal
 import sqlite3
@@ -10,110 +9,13 @@ from pathlib import Path
 
 import pytest
 
-from athena_trading.athena_adapter.contracts import canonical_hash
-from athena_trading.athena_adapter.jev import ModelError
+from athena_trading.athena_adapter.jev import JEV_MODEL
 from athena_trading.paper import cloud
 from athena_trading.paper.journal import PaperJournal
-from athena_trading.paper.live import OpenAIActor, PilotPolicy
+from athena_trading.paper.live import PilotPolicy
 
 
-def actor_response(action="LONG"):
-    return {
-        "id": "resp_fixture", "model": OpenAIActor.model, "status": "completed",
-        "output": [{"type": "reasoning", "summary": []}, {
-            "type": "message", "content": [{"type": "output_text", "text": json.dumps({
-                "action": action, "rationale": "The close broke above the opening range.",
-                "invalidation": "Price returns below the range.",
-            })}],
-        }], "usage": {"input_tokens": 500, "output_tokens": 100},
-    }
-
-
-def test_hosted_actor_contract_and_receipt_exclude_credentials():
-    calls = []
-
-    def transport(method, url, headers, payload=None, **kwargs):
-        calls.append((method, url, headers, copy.deepcopy(payload), kwargs))
-        return {"id": OpenAIActor.model} if method == "GET" else actor_response()
-
-    actor = OpenAIActor("fixture-secret", transport=transport)
-    actor.preflight()
-    proposal = actor.propose({"candidate_direction": "LONG", "observations": {"price": 101}})
-    assert proposal["action"] == "LONG"
-    assert proposal["actor_model"] == OpenAIActor.model
-    assert calls[0][0:2] == ("GET", "https://api.openai.com/v1/models/gpt-5.6-terra")
-    method, url, headers, payload, options = calls[1]
-    assert (method, url) == ("POST", OpenAIActor.endpoint)
-    assert headers["Authorization"] == "Bearer fixture-secret"
-    assert options == {"timeout": 25}
-    assert payload["store"] is False
-    assert payload["reasoning"] == {"effort": "low"}
-    assert payload["max_output_tokens"] == 1024
-    assert payload["text"]["format"]["strict"] is True
-    assert payload["text"]["format"]["schema"]["additionalProperties"] is False
-    assert "tools" not in payload
-    assert actor.last_receipt["request_hash"] == canonical_hash(payload)
-    assert actor.last_receipt["response_hash"] == canonical_hash(actor_response())
-    assert "fixture-secret" not in json.dumps(actor.last_receipt)
-
-
-@pytest.mark.parametrize("action", ["LONG", "SHORT", "NO_TRADE"])
-def test_hosted_actor_accepts_only_the_candidate_or_abstention(action):
-    actor = OpenAIActor("fixture", transport=lambda *a, **k: actor_response(action))
-    assert actor.propose({"candidate_direction": "SHORT" if action == "SHORT" else "LONG"})["action"] == action
-
-
-@pytest.mark.parametrize("fault", ["model", "incomplete", "refusal", "missing", "duplicate",
-                                  "json", "extra", "direction", "text", "usage"])
-def test_hosted_actor_fails_closed_on_invalid_provider_output(fault):
-    raw = actor_response()
-    content = raw["output"][1]["content"]
-    if fault == "model":
-        raw["model"] = "different-model"
-    elif fault == "incomplete":
-        raw["status"] = "incomplete"
-    elif fault == "refusal":
-        content[0] = {"type": "refusal", "refusal": "Cannot propose."}
-    elif fault == "missing":
-        raw["output"] = []
-    elif fault == "duplicate":
-        content.append(copy.deepcopy(content[0]))
-    elif fault == "json":
-        content[0]["text"] = "not JSON"
-    elif fault == "usage":
-        raw["usage"]["output_tokens"] = True
-    else:
-        proposal = json.loads(content[0]["text"])
-        if fault == "extra":
-            proposal["size"] = 100
-        elif fault == "direction":
-            proposal["action"] = "SHORT"
-        else:
-            proposal["rationale"] = ""
-        content[0]["text"] = json.dumps(proposal)
-    actor = OpenAIActor("fixture", transport=lambda *a, **k: raw)
-    with pytest.raises(ModelError):
-        actor.propose({"candidate_direction": "LONG"})
-    assert actor.last_receipt is None
-
-
-def test_hosted_actor_does_not_retry_timeouts_or_oversized_input():
-    calls = []
-
-    def unavailable(*args, **kwargs):
-        calls.append(args)
-        raise TimeoutError("fixture timeout")
-
-    actor = OpenAIActor("fixture", transport=unavailable)
-    with pytest.raises(TimeoutError):
-        actor.propose({"candidate_direction": "LONG"})
-    assert len(calls) == 1
-    with pytest.raises(ModelError, match="size limit"):
-        actor.propose({"candidate_direction": "LONG", "text": "a" * 24_000})
-    assert len(calls) == 1
-
-
-def journal_at(directory, day, *, entry=False, finish=None, model=OpenAIActor.model):
+def journal_at(directory, day, *, entry=False, finish=None, model=JEV_MODEL):
     path = directory / f"{day}.sqlite"
     journal = PaperJournal(path)
     journal.append("binding", binding={"account_id": "fixture-account", "policy": asdict(
@@ -166,14 +68,14 @@ def test_recovery_preserves_old_symbol_feed_and_actor_without_model_access(tmp_p
     task = cloud.next_session(tmp_path, date(2026, 9, 24))
     command = cloud.session_command(task, PilotPolicy("MSFT"), Path("runner.py"))
     assert command[2:] == ["--authority", "PAPER", "--symbol", "AAPL", "--feed", "sip",
-                           "--actor", "ollama", "--journal", str(path), "--run"]
+                           "--journal", str(path), "--run"]
 
 
-def test_cloud_starts_new_session_with_explicit_date_and_hosted_actor(tmp_path):
+def test_cloud_starts_new_session_without_actor_dependency(tmp_path):
     task = cloud.next_session(tmp_path, date(2026, 9, 24))
     command = cloud.session_command(task, PilotPolicy("AAPL"), Path("runner.py"))
     assert command[-2:] == ["--session-date", "2026-09-24"]
-    assert command[command.index("--actor") + 1] == "openai"
+    assert "--actor" not in command
 
 
 def test_cloud_shutdown_between_clock_and_spawn_never_starts_session(tmp_path, monkeypatch):

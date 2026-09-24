@@ -11,7 +11,8 @@ Alpaca paper is optional and fail-closed:
 requires ``ALPACA_API_KEY`` and ``ALPACA_API_SECRET``. Missing keys exit
 nonzero without sending. LIVE is not a value.
 
-This script does not reopen the AAT holdout and does not claim performance.
+This historical runner supports fixtures and broker preflight only. Actual paper
+orders use run_athena_paper.py, which owns reconciliation, exits and learning.
 
 Walk fixture bars through ORB-M and the paper path (no network, no keys):
 
@@ -62,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--submit-demo", action="store_true",
-        help="with --broker alpaca, submit the synthetic demo (otherwise preflight only)",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--walk-bars", action="store_true",
@@ -89,6 +90,8 @@ def main(argv: list[str] | None = None) -> int:
         broker_name = args.broker or str(config.get("broker", "fixture"))
 
     if broker_name == "alpaca":
+        if args.submit_demo:
+            parser.error("legacy broker submission is retired; use run_athena_paper.py")
         try:
             broker = AlpacaPaperBroker.from_env()
         except MissingCredentialsError as exc:

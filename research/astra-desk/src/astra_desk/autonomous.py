@@ -11,7 +11,8 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from astra_desk.contract import EXIT_ID, PHASE3_REQUIRES, load_contract
 from astra_desk.desk import TradingDesk

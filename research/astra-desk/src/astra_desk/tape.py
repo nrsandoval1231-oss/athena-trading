@@ -13,7 +13,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean, pstdev
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from astra_desk.errors import AgentFeatureError, LiveTradingDisabled, MarketDataError
 from astra_desk.features import (

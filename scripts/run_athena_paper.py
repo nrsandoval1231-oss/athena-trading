@@ -10,11 +10,12 @@ import time
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-from athena_trading.athena_adapter.jev import JEV_MODEL, JevAdjudicator, request_json
+from athena_trading.athena_adapter.jev import JEV_MODEL, JevDecisionEngine, request_json
 from athena_trading.execution.authority import parse_authority, require_paper
 from athena_trading.paper.journal import PaperJournal
+from athena_trading.paper.learning import LearningStore
 from athena_trading.paper.live import (
-    ActivePaperPilot, LivePaperAPI, OllamaActor, OpenAIActor, PilotPolicy,
+    ActivePaperPilot, LivePaperAPI, PilotPolicy,
 )
 
 
@@ -23,7 +24,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--symbol", required=True, help="one explicit US equity symbol")
     parser.add_argument("--authority", required=True, choices=["PAPER"])
     parser.add_argument("--feed", choices=["iex", "sip"], default="iex")
-    parser.add_argument("--actor", choices=["openai", "ollama"], default="openai")
     parser.add_argument("--session-date", type=date.fromisoformat,
                         help="cloud session boundary; stop when this broker session ends")
     parser.add_argument("--journal", type=Path, required=True,
@@ -40,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     journal = None
     pilot = None
+    learning = None
     stopped = False
 
     def stop_requested(signum, frame):
@@ -47,36 +48,32 @@ def main(argv: list[str] | None = None) -> int:
         stopped = True
 
     try:
-        policy = PilotPolicy(symbol=args.symbol, feed=args.feed,
-                             actor_model=OpenAIActor.model if args.actor == "openai" else "qwen2.5:7b")
+        policy = PilotPolicy(symbol=args.symbol, feed=args.feed)
         broker = LivePaperAPI.from_env()
         if args.run:
             journal = PaperJournal(args.journal)
-            # Existing positions must remain manageable even when either model is offline.
-            pilot = ActivePaperPilot(broker, None, None, journal, policy,
-                                     session_date=args.session_date)
+            if journal.last("entry_intent"):
+                # Exact old policy binding is retained for recovery, without old model code.
+                policy = PilotPolicy(**journal.last("binding")["binding"]["policy"])
+            pilot = ActivePaperPilot(broker, None, journal, policy, session_date=args.session_date)
         if pilot is None or not pilot._entry():
-            if args.actor == "openai":
-                actor = OpenAIActor(os.environ.get("OPENAI_API_KEY", ""))
-                actor.preflight()
-            else:
-                actor = OllamaActor(policy.actor_model)
-            jev = JevAdjudicator(os.environ.get("TYPESAFE_API_KEY", ""),
-                                support_min=policy.support_min, confidence_min=policy.confidence_min)
-            # Authenticate Jev with a read-only request, not a synthetic inference.
+            jev = JevDecisionEngine(os.environ.get("TYPESAFE_API_KEY", ""),
+                                   support_min=policy.support_min, confidence_min=policy.confidence_min)
             models = request_json("GET", "https://api.typesafe.ai/v1/models", {
                 "Authorization": "Bearer " + os.environ["TYPESAFE_API_KEY"],
             }, timeout=5)
             if not isinstance(models, dict) or not isinstance(models.get("models"), list):
                 raise ValueError("TypeSafe model-list response is invalid")
             if pilot is not None:
-                pilot.actor, pilot.jev = actor, jev
+                pilot.jev = jev
+                learning = LearningStore(args.journal.parent)
+                pilot.learning = learning
         snapshot = broker.snapshot()
         if args.preflight:
             print(json.dumps({
                 "ok": True, "mode": "PAPER", "market_open": snapshot["clock"]["is_open"],
                 "positions": len(snapshot["positions"]), "open_orders": len(snapshot["orders"]),
-                "actor": actor.model, "actor_digest": actor.digest, "jev": JEV_MODEL,
+                "decision_model": JEV_MODEL,
                 "symbol": policy.symbol, "feed": policy.feed, "orders_submitted": 0,
             }))
             return 0
@@ -89,6 +86,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps({"mode": "PAPER", "status": status}), flush=True)
                 previous_status = status
             if status == "COMPLETE":
+                if learning is None:
+                    learning = LearningStore(args.journal.parent)
+                learning.ingest(journal, datetime.now(UTC))
                 journal.append("session_complete", at=datetime.now(UTC))
                 return 0
             time.sleep(5)
@@ -119,6 +119,8 @@ def main(argv: list[str] | None = None) -> int:
                       file=sys.stderr, flush=True)
         if journal is not None:
             journal.close()
+        if learning is not None:
+            learning.close()
     return 2
 
 

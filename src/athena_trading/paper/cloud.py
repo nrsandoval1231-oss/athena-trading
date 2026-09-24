@@ -13,7 +13,8 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 from .journal import PaperJournal
-from .live import LivePaperAPI, OpenAIActor, PilotPolicy, timestamp, NY
+from .learning import maintain
+from .live import LivePaperAPI, PilotPolicy, timestamp, NY
 
 
 @dataclass(frozen=True)
@@ -54,12 +55,8 @@ def next_session(state_dir: Path, today: date) -> SessionTask | None:
 def session_command(task: SessionTask, policy: PilotPolicy, runner: Path) -> list[str]:
     saved = task.saved_policy or {}
     symbol, feed = saved.get("symbol", policy.symbol), saved.get("feed", policy.feed)
-    model = saved.get("actor_model", OpenAIActor.model)
-    if model not in {OpenAIActor.model, "qwen2.5:7b"}:
-        raise ValueError("unknown saved Actor; explicit recovery required")
     command = [sys.executable, str(runner), "--authority", "PAPER", "--symbol", symbol,
-               "--feed", feed, "--actor", "openai" if model == OpenAIActor.model else "ollama",
-               "--journal", str(task.path), "--run"]
+               "--feed", feed, "--journal", str(task.path), "--run"]
     if not task.recovery:
         command.extend(["--session-date", task.path.stem])
     return command
@@ -103,13 +100,15 @@ def main() -> int:
                 broker_day = timestamp(clock["timestamp"]).astimezone(NY).date()
                 if broker_day != local_day:
                     task = next_session(state_dir, broker_day)
+                if task is None or not task.recovery:
+                    maintain(state_dir, timestamp(clock["timestamp"]))
                 if task is None:
                     heartbeat(state_dir, "SESSION_FINISHED_OR_HALTED", session=str(broker_day))
                 elif not task.recovery and not clock["is_open"]:
                     heartbeat(state_dir, "WAITING_FOR_MARKET", next_open=clock.get("next_open"))
                 else:
                     if not task.recovery and any(not os.environ.get(k, "").strip()
-                                                for k in ("OPENAI_API_KEY", "TYPESAFE_API_KEY")):
+                                                for k in ("TYPESAFE_API_KEY",)):
                         raise ValueError("hosted model credentials are not configured")
                     if stopping:
                         break

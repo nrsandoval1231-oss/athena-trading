@@ -1,5 +1,5 @@
 # Athena Trading Canon
-Version: 2.2 — owner-directed Jev, active paper and cloud amendments, 24 September 2026.
+Version: 3.0 — Jev-only decisions and outcome-learning amendment, 24 September 2026.
 Status: **AUTHORITATIVE PRODUCT ARCHITECTURE**.
 Owner: Nick Sandoval.
 
@@ -12,7 +12,7 @@ This document transcribes and operationalizes Nick's supplied architecture diagr
 ## Canonical requirements
 
 1. **Two product strategy arms.** Earnings Adaptive is event-driven and thesis-based. Predictive Intraday is signal-driven and prediction-based. Both use the shared components below. ORB-M can supply an intraday signal, baseline, or comparison; it does not replace either arm.
-2. **The Decision Actor is an LLM.** It reasons over available market state, relevant validated experience, and current positions. It proposes direction, entry, size, leverage, stops, horizon, and management action with an explicit rationale, confidence, expected outcome, and invalidation.
+2. **Jev is the active Decision Model.** Nick explicitly replaced the separate generative LLM Actor. Strategy code constructs bounded candidate actions and point-in-time features; Jev selects a permitted action or abstains using supplied evidence and relevant experience. Structured assessments replace generated theses in the current pilot. Original earnings-scenario and prediction ambitions remain target capabilities; Jev is not a general-purpose text generator.
 3. **Decision vocabulary.** LONG, SHORT, NO_TRADE, HOLD, ADD, REDUCE, PROTECT, TRAIL, and EXIT are the conceptual actions. A strategy may use a bounded subset. Every action becomes a structured proposal; none directly calls a broker.
 4. **Point-in-time world state.** A decision reads market data, signals/features, predictions, positions, and account/risk state frozen as of its decision time. Record event time and availability time. Missing or stale information is visible, never invented.
 5. **Athena context.** Retrieve relevant validated experiences, similar situations, lessons/rules, failure modes, and regime context with provenance and version identity. Future outcomes and unvalidated lessons cannot enter a decision packet.
@@ -37,10 +37,14 @@ This document transcribes and operationalizes Nick's supplied architecture diagr
 24. **Performance principles and intended outcomes.** Probability over prediction, expectancy over win rate, risk first, continuous adaptation, and disciplined use of data. Seek stronger risk management, better decisions, consistent process, and accumulated validated knowledge. Returns and improvement are objectives to measure, not promises.
 25. **Core ownership.** Athena Core remains domain-neutral and owns general episode/context/lesson/validation concepts. Athena Trading owns both strategies, market/broker semantics, APDE policy, trading risk, and trading outcomes. Integrate through athena_adapter; do not copy another independent Core into this repo.
 26. **Keep one product workflow.** Share contracts, state, risk, execution, replay integration, and reporting across both arms. Provider choice, research ablations, and deployment vendors are implementation choices, not additional product architectures.
-27. **Jev adjudicates the Actor's proposal.** Nick selected TypeSafe Jev as the shared adjudicator. It assesses bounded questions about evidence support and proposal consistency after the Actor and before deterministic risk. Record the exact model, question version, frozen inputs, full answer distributions, confidence, verdict, and policy. The Actor proposes; Jev accepts or vetoes the proposal under code-owned policy; deterministic risk remains final execution authority. Jev does not calculate position sizes, establish broker reality, or promote lessons without validation. Its answer probabilities are not probabilities of profitable trades.
-28. **Active paper is the immediate operating target.** Nick explicitly requested current market data and actual broker paper orders, with Jev in the active entry path; a shadow stage is not required. Missing, malformed, uncertain, contradictory, or unavailable adjudication cannot approve new exposure. Protective management and emergency/session exits do not depend on Jev or the Actor being available. Real-money LIVE authority remains disabled. Start with the bounded intraday paper slice described in implementation status, then extend through the same workflow.
+27. **One model decision boundary.** Jev selects TAKE_TRADE, NO_TRADE, or INSUFFICIENT_EVIDENCE for the supplied candidate; only a threshold-qualified TAKE_TRADE can proceed to deterministic risk. Record model, question version/hash, inputs, distribution, confidence, verdict and policy. Do not call the same model twice and describe that as independent verification. Code owns calculations, sizing, stops, permissions and reconciliation. Answer confidence is not a measured probability of trading profit.
+28. **Active paper is the immediate operating target.** Nick explicitly requested current market data and actual broker paper orders, with Jev in the active entry path; a shadow stage is not required. Missing, malformed, uncertain, contradictory, or unavailable adjudication cannot approve new exposure. Protective management and emergency/session exits do not depend on Jev being available. Real-money LIVE authority remains disabled. Start with the bounded intraday paper slice described in implementation status, then extend through the same workflow.
 
-29. **Cloud operation is the deployment target.** Nick requested an always-on cloud runtime independent of his local computer. Persist decision and broker state, restart after interruption, follow broker market sessions, and reconcile unfinished exposure before new entries. Being online continuously does not authorize trading outside the configured session, overnight exposure, real-money execution, or unvalidated learning. DigitalOcean and the hosted Actor are implementation choices described in the deployment runbook.
+29. **Cloud operation is the deployment target.** Nick requested an always-on cloud runtime independent of his local computer. Persist decision and broker state, restart after interruption, follow broker market sessions, and reconcile unfinished exposure before new entries. Being online continuously does not authorize trading outside the configured session, overnight exposure, real-money execution, or unvalidated learning. DigitalOcean and the model API are implementation choices described in the deployment runbook.
+
+30. **Evaluate every completed trade.** Reconcile actual broker fills, record attributable outcomes and preserve failed/no-fill episodes. Make verified observed experience available to subsequent eligible decisions, with account/strategy identity, provenance and availability timestamps. Unmeasured quantities remain unknown.
+31. **Review the day after after-hours.** The cloud supervisor runs the daily review at or after 20:15 America/New_York and catches up after downtime. Record candidates, rejected hypotheses, prospective validation results, promotions and unresolved data. Defer promotion while exposure or outcome integrity is unresolved.
+32. **Improve through measured, bounded changes.** Intraday experience retrieval is permitted; policy changes need separate prospective evidence. Initial automatic promotion can only add a temporary NO_TRADE rule, never increase exposure or change model weights/code. Preserve fixed study criteria, expiry and rejection history. Every trade supplies information; no trade guarantees an improvement.
 
 ## Shared decision flow
 
@@ -48,13 +52,13 @@ This document transcribes and operationalizes Nick's supplied architecture diagr
 |---|---|---|
 | World state | Assemble only available evidence and reconciled account state | Frozen state reference |
 | Athena context | Retrieve relevant validated knowledge | Versioned context reference |
-| Strategy + Decision Actor | Earnings thesis or intraday prediction and management reasoning | Structured proposed action |
-| Jev adjudicator | Assess evidence support and proposal consistency under versioned policy | Recorded acceptance or veto; no execution authority |
+| Strategy code | Construct supported earnings/intraday candidate actions and computed features | Bounded candidate and evidence |
+| Jev decision model | Select the candidate or abstain under versioned criteria | Recorded typed decision; no execution authority |
 | Deterministic risk | Authorize, constrain, or refuse under policy | Exact authorized intent or refusal |
 | Execution + APDE | Route and manage, then reconcile broker events | Observed execution/management events |
 | Outcome + Core learning | Attribute, replay, extract, validate, and promote | Decision Episode and versioned knowledge |
 
-The Actor proposes, Jev adjudicates, and the risk engine decides what can be executed. Both strategy arms share this boundary. The original visual is preserved; requirements 27–29 record Nick's subsequent explicit amendments.
+Strategy code supplies candidates, Jev decides whether to take them, and risk determines what can be executed. Both strategy arms share this boundary. The original visual is preserved; requirements 2 and 27–32 record Nick's subsequent explicit amendments.
 
 ## Present scope and change control
 

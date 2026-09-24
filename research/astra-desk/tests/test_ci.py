@@ -2,18 +2,18 @@ from pathlib import Path
 
 
 REPO = Path(__file__).resolve().parents[1]
-WORKFLOW = REPO / ".github" / "workflows" / "ci.yml"
+WORKFLOW = REPO.parents[1] / ".github" / "workflows" / "ci.yml"
 STATUS = REPO / "docs" / "STATUS.md"
 
 
 def test_ci_workflow_installs_and_runs_pytest() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
-    assert "pip install -e" in text
-    assert ".[dev]" in text
+    assert "pip install" in text
+    assert "astra-desk[dev]" in text
     assert "pytest" in text
-    assert "ruff" not in text
+    assert "ruff check ." in text
     assert "pull_request" in text
-    assert "main" in text
+    assert "working-directory: research/astra-desk" in text
 
 
 def test_status_handoff_states_current_baseline() -> None:

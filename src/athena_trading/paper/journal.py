@@ -31,6 +31,7 @@ class PaperJournal:
         self.db.commit()
         self.events: list[dict[str, Any]] = []
         self.head = "0" * 64
+        self.checkpoint = path.with_suffix(path.suffix + ".checkpoint")
         try:
             for seq, payload, previous, digest in self.db.execute(
                 "SELECT seq, payload, previous, digest FROM events ORDER BY seq"
@@ -41,6 +42,25 @@ class PaperJournal:
                     raise ValueError("paper journal integrity check failed")
                 self.events.append(event)
                 self.head = digest
+            self.db.execute("CREATE TABLE IF NOT EXISTS journal_meta (checkpointed INTEGER)")
+            checkpointed = self.db.execute("SELECT checkpointed FROM journal_meta").fetchone()
+            if self.checkpoint.exists():
+                anchor = json.loads(self.checkpoint.read_text())
+                seq = anchor["seq"]
+                if type(seq) is not int or not 0 <= seq <= len(self.events):
+                    raise ValueError("paper journal was truncated past its checkpoint")
+                row = self.db.execute("SELECT digest FROM events WHERE seq=?", (seq,)).fetchone()
+                digest = row[0] if row else "0" * 64
+                if anchor["digest"] != digest or len(self.events) - seq > 1:
+                    raise ValueError("paper journal checkpoint mismatch")
+            elif checkpointed:
+                raise ValueError("paper journal checkpoint is missing")
+            # A one-row gap is the recoverable DB-commit / checkpoint-write crash window.
+            # Old journals establish an anchor at their first verified migration read.
+            self._checkpoint()
+            if not checkpointed:
+                with self.db:
+                    self.db.execute("INSERT INTO journal_meta VALUES (1)")
         except Exception:
             self.close()
             raise
@@ -56,6 +76,21 @@ class PaperJournal:
             )
         self.events.append(event)
         self.head = digest
+        self._checkpoint()
+
+    def _checkpoint(self) -> None:
+        temporary = self.checkpoint.with_suffix(self.checkpoint.suffix + ".tmp")
+        with temporary.open("w") as stream:
+            os.chmod(temporary, 0o600)
+            json.dump({"seq": len(self.events), "digest": self.head}, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(self.checkpoint)
+        descriptor = os.open(self.checkpoint.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
 
     def last(self, kind: str) -> dict[str, Any] | None:
         return next((event for event in reversed(self.events) if event["kind"] == kind), None)

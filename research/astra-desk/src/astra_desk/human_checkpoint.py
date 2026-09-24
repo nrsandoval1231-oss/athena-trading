@@ -11,9 +11,10 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from astra_desk.contract import EXIT_ID, load_contract
 from astra_desk.desk import TradingDesk
@@ -174,7 +175,7 @@ def bind_approval(
     approved_at: str | None = None,
 ) -> HumanApproval:
     """Attach a structured approval to the current proposal hash (sim human)."""
-    stamp = approved_at or datetime.now(timezone.utc).isoformat()
+    stamp = approved_at or datetime.now(UTC).isoformat()
     return make_approval(
         approved_by=approved_by,
         approved_at=stamp,

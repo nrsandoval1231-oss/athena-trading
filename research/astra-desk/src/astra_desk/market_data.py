@@ -11,7 +11,8 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Callable, Mapping
+from typing import Any
+from collections.abc import Callable, Mapping
 from urllib.parse import urlparse
 
 from astra_desk.errors import (
