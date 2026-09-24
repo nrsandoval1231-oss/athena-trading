@@ -1,3 +1,5 @@
+> **RESEARCH REFERENCE — product direction restored 24 September 2026.** This document retains its experiment/component history and restrictions. Its product-level next-step instructions are superseded by [Athena Trading Canon](ATHENA_TRADING_CANON.md) and [Build Plan](BUILD_PLAN.md). Read [Implementation Status](IMPLEMENTATION_STATUS.md) for current capability.
+
 # AAT-V1 training planner
 
 `run_aat_v1_training.py` validates a separately materialized `TRAINING` JSONL

@@ -1,14 +1,13 @@
 # Architecture
+The authoritative architecture is [Athena Trading Canon](ATHENA_TRADING_CANON.md), restored from the [owner-supplied diagram](assets/athena-trading-canon.jpg).
 
-Athena Trading is a domain client of Athena Core.
+Both **Earnings Adaptive** and **Athena Predictive Intraday** share:
+- Point-in-time world state and validated Athena context.
+- An LLM Decision Actor.
+- Deterministic risk authorization.
+- Execution, APDE, and broker reconciliation.
+- Decision Episodes, replay, validation, and versioned learning through Athena Core.
 
-```text
-Market data -> Strategy -> Risk -> Position management -> Trading outcome
-                    |                         |
-                    +---- Athena adapter -----+
-                              |
-                         Athena Core
-                       Arena / Gauntlet
-```
+[Implementation status and repository map](IMPLEMENTATION_STATUS.md) · [Active build sequence](BUILD_PLAN.md)
 
-The dependency direction is one-way: Athena Trading may depend on Athena contracts; Athena Core must never depend on trading primitives.
+This file is a navigation entry point. Keep architectural requirements in the canon.

@@ -1,3 +1,5 @@
+> **RESEARCH REFERENCE — isolated component.** Governing product architecture: [Athena Trading Canon](../../docs/ATHENA_TRADING_CANON.md). This historical scaffold does not establish current product or broker readiness; see the repository implementation status and audit.
+
 # Stock Universe Screener
 
 Research tooling only — this project never executes trades. It builds a ranked

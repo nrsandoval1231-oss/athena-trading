@@ -1,3 +1,5 @@
+> **RESEARCH REFERENCE — isolated component.** Governing product architecture: [Athena Trading Canon](../../docs/ATHENA_TRADING_CANON.md). This historical scaffold does not establish current product or broker readiness; see the repository implementation status and audit.
+
 # Astra Desk
 
 Phase 0–3 scaffold of a declarative, machine-addressable multi-agent trading desk.

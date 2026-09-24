@@ -1,3 +1,5 @@
+> **RESEARCH REFERENCE — product direction restored 24 September 2026.** This document retains its experiment/component history and restrictions. Its product-level next-step instructions are superseded by [Athena Trading Canon](ATHENA_TRADING_CANON.md) and [Build Plan](BUILD_PLAN.md). Read [Implementation Status](IMPLEMENTATION_STATUS.md) for current capability.
+
 # AAT-V2 Model Execution Options
 
 Status: local Ollama TRAINING plumbing is in-tree, and a **RunPod / remote-Ollama
