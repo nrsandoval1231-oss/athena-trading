@@ -27,6 +27,8 @@ Read, in order:
 - Current execution authority remains PAPER/ABSENT. Existing spend and external-action boundaries still apply.
 - Nick explicitly requested active live-data paper trading, with no mandatory shadow stage. Follow the bounded pilot policy and LIVE_PAPER.md. This is permission for paper operation, not real-money LIVE authority or a frozen research rerun.
 
+- Nick selected cloud operation independent of his PC. Extend the existing paper runner through CLOUD_DEPLOYMENT.md; hosted Terra is the default Actor. Keep the persistent session journals and recover unfinished exposure before daily rollover.
+
 ## Verification and handoff
 
 - Keep fixtures/simulation separate from actual provider or broker evidence.

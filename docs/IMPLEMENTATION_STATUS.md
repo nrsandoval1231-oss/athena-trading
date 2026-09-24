@@ -10,7 +10,7 @@ The owner restored the supplied two-strategy architecture after the audit of mai
 | Earnings Adaptive | research/earnings-universe screening research | Research input only. No integrated earnings intelligence → scenarios → Actor → execution arm. |
 | Predictive Intraday | strategies/orb_momentum.py; orb_m/ engine | Reusable signals, simulation, and baseline. No complete continuously updated prediction/Actor arm. |
 | Point-in-time world state | market_data/; exogenous/; ORB-M market features | Useful components. No shared canonical account/market/context snapshot across both arms. |
-| LLM Decision Actor | paper/live.py OllamaActor; historical aat_v1/ and aat_v2/ | Pilot proposes candidate direction or NO_TRADE with rationale/invalidation, recording installed qwen2.5:7b digest. Full canonical proposal service remains incomplete. |
+| LLM Decision Actor | paper/live.py OpenAIActor (cloud default), OllamaActor (existing local path); historical aat_v1/ and aat_v2/ | Pilot proposes candidate direction or NO_TRADE with rationale/invalidation, recording the reported Terra model and request configuration/response hashes; local Qwen retains its installed digest. Full canonical proposal service remains incomplete. |
 | Active Jev adjudicator | athena_adapter/jev.py, called by paper/live.py | Pinned jev-1.13.0, two Choice checks, strict response validation, active entry veto, recorded distributions/identity/policy. External calls and semantic accuracy not yet observed. |
 | Athena context and learning | athena_adapter/contracts.py; research lessons/evaluation code | Hash/contract utilities and research machinery. A production context/replay/promotion integration with Athena Core is not established. |
 | Shared APDE | position_management/apde.py; orb_m/management.py | APDE vocabulary and strategy-specific management exist. Shared broker-aware management for both arms is incomplete. |
@@ -18,7 +18,7 @@ The owner restored the supplied two-strategy architecture after the audit of mai
 | Broker execution and reconciliation | paper/live.py extends Alpaca paper adapter; paper/journal.py | Bounded pilot submits one-share protected bracket, tracks broker fills/positions, cancels then closes, recovers reserved entries without resend, and confirms flat. Fixture-tested only. Historical session/walk still has AT-03. Full account/exposure/APDE lifecycle remains incomplete. |
 | Decision Episodes/outcomes | athena_adapter/; AAT research receipts/outcomes | Reusable pieces. No canonical end-to-end episode for both strategies. |
 | Replay → extract → validate → promote | AAT V1/V2 research; Astra scaffold | Research-only. Current V2 runner does not demonstrate a meaningful learned-treatment comparison. |
-| Scheduled operation and reporting | scripts/run_athena_paper.py | Active, attended first-session CLI with preflight and shutdown cleanup. Not deployed, no credentials present, no verified unattended service or overnight learning. |
+| Scheduled operation and reporting | paper/cloud.py, scripts/run_athena_paper.py, deploy/athena-paper.service | Dated sessions, unresolved-entry recovery before rollover, hosted Actor, restart service and heartbeat implemented and fixture-tested. Not deployed; no verified cloud uptime, external alerting or overnight learning. |
 
 “Exists” means code was inspected. It does not imply broker readiness or a profitable/adaptive result.
 
@@ -61,17 +61,27 @@ Canon-reset verification: **574 main-package tests passed**. All **246 runtime/c
 
 ## Active Jev paper slice
 
-Owner direction: **active paper, no shadow requirement**. Base main: `2382cce97b4b4b1dd4e096a4e501f6989f0b3126`. Exact integration source is the associated PR head; no historical research artifacts or existing runtime modules were rewritten.
+Owner direction: **active paper, no shadow requirement**. Base main: `2382cce97b4b4b1dd4e096a4e501f6989f0b3126`. Verified first-integration commit: `9d83069e9ae53b01aee688aa68960eb8cc89ace6` (tree `aac92fd779c110c10836ddd6c0636d79f9945666`, 620 root tests); no historical research artifacts or existing runtime modules were rewritten.
 
-- New path: current Alpaca minute/daily data → bounded Ollama Actor → active Jev acceptance/veto → rechecked deterministic risk → one-share limit/bracket paper entry → broker reconciliation/cleanup.
+- New path: current Alpaca minute/daily data → bounded LLM Actor (Terra is now the cloud default) → active Jev acceptance/veto → rechecked deterministic risk → one-share limit/bracket paper entry → broker reconciliation/cleanup.
 - Initial bounds: one account/symbol, one entry per session, $1,000/1% notional cap, $10/0.1% initial stop-risk cap, 0.5% daily account-loss cap, 20 model reviews, flatten 15 minutes before broker close.
 - Jev model/question/result/policy and original market inputs are recorded. Confidence is semantic output uncertainty, not trading profit probability or a Kelly input.
 - SQLite events are content-verified and single-writer locked. The entry is reserved before send. Model outages do not prevent recovery of a reserved paper position.
 - **46 new tests; 620 root tests passed** using `python -m pytest -q`. Changed Python files pass Ruff **0.15.8**. Existing root lint/Astra findings remain open; the Astra code is unchanged and was not re-run for this slice.
-- CLI preflight was attempted and exited 2 for missing Alpaca environment credentials, with zero orders submitted. TypeSafe credentials are also absent. No operating host is configured. There is **no live broker/provider result or trading-accuracy evidence** from this change.
+- CLI preflight was attempted and exited 2 for missing Alpaca environment credentials, with zero orders submitted. TypeSafe credentials are also absent. A DigitalOcean cloud deployment is prepared, but no operating host is configured. There is **no live broker/provider result or trading-accuracy evidence** from this change.
 - Launch procedure and exact remaining setup are in [LIVE_PAPER.md](LIVE_PAPER.md). No automatic shadow mode exists.
 
 This is a usable integration slice, not completion of the dual strategy, full APDE, account-wide weekly/monthly risk policy, predictive model, or Core learning loop. The historical fixture walker remains a fixture; use the new active command for live paper.
+
+## Cloud operation extension
+
+Nick requested continuous cloud operation independent of his PC. The selected initial host is a $12/month DigitalOcean Basic Regular 2 GiB Droplet, plus separate provider usage and optional backups. [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md) is the operational procedure, not another product roadmap.
+
+- Hosted `gpt-5.6-terra` uses strict Responses structured output; active Jev and deterministic risk remain in the same paper workflow. Refusal, incompletion, changed identity/direction, malformed output and timeouts block proposals. Model receipts retain configuration, exact response and usage without credentials. The hosted configuration hash is not a model-weight digest.
+- One systemd supervisor owns dated persistent sessions, starts after reboot and recovers unresolved old entries before starting a new day. Recovery preserves the saved symbol/feed/Actor binding and does not require model credentials. Halts remain effective for that session. A missed close cannot carry an empty cloud session into the next day.
+- Verification: `python -m pytest -q` reports **648 passed** (28 additional cloud cases); Ruff 0.15.8 passes for changed Python; `bash -n deploy/install.sh` and `git diff --check` pass. The target systemd executable is not installed in this workspace, so host installation/service activation is unverified. Existing root lint/Astra findings are unchanged and were not rerun.
+- Exact cloud verification revision is recorded in the publication follow-up; no external execution evidence is claimed.
+- Deployment is **not active**. DigitalOcean console access failed in this browser; no connected DigitalOcean credential or server-side provider keys were available. No Droplet, model inference, or broker paper order was created. First-session observation, external alerting and backup/restore validation remain deployment work.
 
 ## Outstanding defects
 

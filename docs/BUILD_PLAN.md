@@ -7,7 +7,7 @@ Build the shared workflow once, connect Predictive Intraday first using existing
 
 ## One finish line
 
-**Owner-directed priority:** integrate TypeSafe Jev as an active adjudicator and start live-data broker paper trading. No shadow stage is required. The first bounded intraday pilot is implemented in the existing paper/adapter packages; [LIVE_PAPER.md](LIVE_PAPER.md) is its launch procedure. Credentials and an operating host are still required. This slice does not finish the complete Actor, risk, APDE, strategy, or learning requirements below.
+**Owner-directed priority:** integrate TypeSafe Jev as an active adjudicator and start live-data broker paper trading. No shadow stage is required. The first bounded intraday pilot is implemented in the existing paper/adapter packages; [LIVE_PAPER.md](LIVE_PAPER.md) is its launch procedure. Nick also requested continuous cloud operation. A DigitalOcean/systemd deployment with hosted Terra, daily scheduling and journal recovery is prepared in [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md); cloud access and provider credentials are still required. This slice does not finish the complete Actor, risk, APDE, strategy, or learning requirements below.
 
 An observed market opportunity becomes a timestamped world state, relevant Athena context, an LLM proposal, active Jev adjudication, a deterministic risk verdict, a broker-confirmed paper lifecycle managed by APDE, and an attributed Decision Episode. A supported lesson is then versioned and retrieved in a later decision. Earnings and intraday both use this same path. Observed, simulated, and counterfactual outcomes remain distinguishable.
 

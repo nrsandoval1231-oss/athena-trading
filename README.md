@@ -13,6 +13,7 @@ Athena Trading combines **Earnings Adaptive** and **Athena Predictive Intraday**
 | Question | Source |
 |---|---|
 | What are we building? | [ATHENA_TRADING_CANON.md](docs/ATHENA_TRADING_CANON.md) |
+| How does it stay online in the cloud? | [CLOUD_DEPLOYMENT.md](docs/CLOUD_DEPLOYMENT.md) |
 | How do I start active paper trading? | [LIVE_PAPER.md](docs/LIVE_PAPER.md) |
 | What works and what is missing? | [IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) |
 | What should the builder do next? | [BUILD_PLAN.md](docs/BUILD_PLAN.md) |
@@ -22,7 +23,7 @@ Athena Trading combines **Earnings Adaptive** and **Athena Predictive Intraday**
 
 ## Current reality
 
-The first active intraday paper pilot now connects current Alpaca data → local LLM proposal → Jev acceptance/veto → deterministic risk → protected paper order and broker-confirmed exit. See [active paper launch](docs/LIVE_PAPER.md). It is implemented and fixture-tested, but **not launched**: account/model credentials and an operating host are still needed.
+The first active intraday paper pilot now connects current Alpaca data → hosted GPT-5.6 Terra proposal → Jev acceptance/veto → deterministic risk → protected paper order and broker-confirmed exit. See [active paper launch](docs/LIVE_PAPER.md). It is implemented and fixture-tested, but **not launched**: DigitalOcean deployment access and server-side provider credentials are still needed. The cloud service adds reboot restart, daily scheduling and recovery before new entries; see [cloud deployment](docs/CLOUD_DEPLOYMENT.md).
 
 The complete two-strategy product, full APDE, and shared learning loop remain incomplete. Historical fixture walkers retain their documented limitations.
 

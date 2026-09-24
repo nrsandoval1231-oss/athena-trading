@@ -1,5 +1,5 @@
 # Athena Trading Canon
-Version: 2.1 — owner-directed Jev and active paper amendment, 24 September 2026.
+Version: 2.2 — owner-directed Jev, active paper and cloud amendments, 24 September 2026.
 Status: **AUTHORITATIVE PRODUCT ARCHITECTURE**.
 Owner: Nick Sandoval.
 
@@ -40,6 +40,8 @@ This document transcribes and operationalizes Nick's supplied architecture diagr
 27. **Jev adjudicates the Actor's proposal.** Nick selected TypeSafe Jev as the shared adjudicator. It assesses bounded questions about evidence support and proposal consistency after the Actor and before deterministic risk. Record the exact model, question version, frozen inputs, full answer distributions, confidence, verdict, and policy. The Actor proposes; Jev accepts or vetoes the proposal under code-owned policy; deterministic risk remains final execution authority. Jev does not calculate position sizes, establish broker reality, or promote lessons without validation. Its answer probabilities are not probabilities of profitable trades.
 28. **Active paper is the immediate operating target.** Nick explicitly requested current market data and actual broker paper orders, with Jev in the active entry path; a shadow stage is not required. Missing, malformed, uncertain, contradictory, or unavailable adjudication cannot approve new exposure. Protective management and emergency/session exits do not depend on Jev or the Actor being available. Real-money LIVE authority remains disabled. Start with the bounded intraday paper slice described in implementation status, then extend through the same workflow.
 
+29. **Cloud operation is the deployment target.** Nick requested an always-on cloud runtime independent of his local computer. Persist decision and broker state, restart after interruption, follow broker market sessions, and reconcile unfinished exposure before new entries. Being online continuously does not authorize trading outside the configured session, overnight exposure, real-money execution, or unvalidated learning. DigitalOcean and the hosted Actor are implementation choices described in the deployment runbook.
+
 ## Shared decision flow
 
 | Stage | Responsibility | Output |
@@ -52,7 +54,7 @@ This document transcribes and operationalizes Nick's supplied architecture diagr
 | Execution + APDE | Route and manage, then reconcile broker events | Observed execution/management events |
 | Outcome + Core learning | Attribute, replay, extract, validate, and promote | Decision Episode and versioned knowledge |
 
-The Actor proposes, Jev adjudicates, and the risk engine decides what can be executed. Both strategy arms share this boundary. The original visual is preserved; requirements 27–28 record Nick's subsequent explicit amendment.
+The Actor proposes, Jev adjudicates, and the risk engine decides what can be executed. Both strategy arms share this boundary. The original visual is preserved; requirements 27–29 record Nick's subsequent explicit amendments.
 
 ## Present scope and change control
 

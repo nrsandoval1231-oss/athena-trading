@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import sqlite3
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from urllib.error import HTTPError
 
 import pytest
@@ -122,6 +122,17 @@ def test_active_jev_veto_prevents_paper_order(setup):
     assert pilot.tick() == "JEV_VETO"
     assert not any(method == "POST" for method, _, _ in broker.calls)
     assert journal.last("adjudication")["receipt"]["accepted"] is False
+
+
+@pytest.mark.parametrize("next_day", [False, True])
+def test_cloud_session_stops_if_close_was_missed_or_day_changed(setup, next_day):
+    pilot, broker, _, journal = setup
+    pilot.session_date = date(2026, 9, 24)
+    broker.state["clock"]["is_open"] = next_day
+    broker.state["clock"]["timestamp"] = "2026-09-25T13:46:05Z" if next_day else "2026-09-24T20:01:00Z"
+    assert pilot.tick() == "COMPLETE"
+    assert journal.last("decision_started") is None
+    assert not any(method == "POST" for method, _, _ in broker.calls)
 
 
 def test_supported_jev_order_is_protected_reserved_and_not_a_fill(setup):

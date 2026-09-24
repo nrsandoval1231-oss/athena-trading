@@ -7,12 +7,15 @@ import os
 import signal
 import sys
 import time
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from athena_trading.athena_adapter.jev import JEV_MODEL, JevAdjudicator, request_json
 from athena_trading.execution.authority import parse_authority, require_paper
 from athena_trading.paper.journal import PaperJournal
-from athena_trading.paper.live import ActivePaperPilot, LivePaperAPI, OllamaActor, PilotPolicy
+from athena_trading.paper.live import (
+    ActivePaperPilot, LivePaperAPI, OllamaActor, OpenAIActor, PilotPolicy,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -20,6 +23,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--symbol", required=True, help="one explicit US equity symbol")
     parser.add_argument("--authority", required=True, choices=["PAPER"])
     parser.add_argument("--feed", choices=["iex", "sip"], default="iex")
+    parser.add_argument("--actor", choices=["openai", "ollama"], default="openai")
+    parser.add_argument("--session-date", type=date.fromisoformat,
+                        help="cloud session boundary; stop when this broker session ends")
     parser.add_argument("--journal", type=Path, required=True,
                         help="persistent SQLite path; reuse on restart, never reset during a session")
     mode = parser.add_mutually_exclusive_group(required=True)
@@ -41,14 +47,20 @@ def main(argv: list[str] | None = None) -> int:
         stopped = True
 
     try:
-        policy = PilotPolicy(symbol=args.symbol, feed=args.feed)
+        policy = PilotPolicy(symbol=args.symbol, feed=args.feed,
+                             actor_model=OpenAIActor.model if args.actor == "openai" else "qwen2.5:7b")
         broker = LivePaperAPI.from_env()
         if args.run:
             journal = PaperJournal(args.journal)
             # Existing positions must remain manageable even when either model is offline.
-            pilot = ActivePaperPilot(broker, None, None, journal, policy)
+            pilot = ActivePaperPilot(broker, None, None, journal, policy,
+                                     session_date=args.session_date)
         if pilot is None or not pilot._entry():
-            actor = OllamaActor(policy.actor_model)
+            if args.actor == "openai":
+                actor = OpenAIActor(os.environ.get("OPENAI_API_KEY", ""))
+                actor.preflight()
+            else:
+                actor = OllamaActor(policy.actor_model)
             jev = JevAdjudicator(os.environ.get("TYPESAFE_API_KEY", ""),
                                 support_min=policy.support_min, confidence_min=policy.confidence_min)
             # Authenticate Jev with a read-only request, not a synthetic inference.
@@ -77,6 +89,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps({"mode": "PAPER", "status": status}), flush=True)
                 previous_status = status
             if status == "COMPLETE":
+                journal.append("session_complete", at=datetime.now(UTC))
                 return 0
             time.sleep(5)
         pilot.halt("OPERATOR_STOP")
@@ -91,7 +104,8 @@ def main(argv: list[str] | None = None) -> int:
                 pass  # still attempt broker cleanup if the journal write failed
     finally:
         if pilot is not None and pilot._entry() and not journal.last("flat_confirmed"):
-            for _ in range(24):
+            deadline = time.monotonic() + 120
+            while time.monotonic() < deadline:
                 try:
                     if pilot.flatten_step(broker.snapshot()):
                         print(json.dumps({"status": "FLAT_CONFIRMED", "mode": "PAPER"}), flush=True)
