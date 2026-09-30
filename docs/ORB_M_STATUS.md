@@ -33,7 +33,14 @@ holdout.
 | `athena_trading.paper` | Session runner, bar walker, fixture broker, Alpaca paper adapter | Complete |
 
 Paper execution is **not** live trading. `ExecutionAuthority` is `ABSENT` or
-`PAPER`; `LIVE` is rejected. Two runners exist:
+`PAPER`; `LIVE` is rejected. The active broker paper path is
+`scripts/run_athena_paper.py`: current Alpaca bars, an ORB opening-range
+candidate, TypeSafe Jev, deterministic risk, and Alpaca paper brackets with
+broker-held stops. See [LIVE_PAPER.md](LIVE_PAPER.md). It is implemented and
+not deployed. `scripts/run_orb_m_paper.py` keeps fixture walks and read-only
+Alpaca preflight; `--submit-demo` is retired and does not send orders.
+
+Two ORB-M runners remain for fixtures and the historical session path:
 
 * `run_orb_m_paper_session` — batch: `run_symbol_session` then send sendable
   decisions. Kept as `--dry-run`.
@@ -53,7 +60,7 @@ CI proves the walk with `configs/fixtures/orb_m_paper_bars_v1.json` (schema
 `https://paper-api.alpaca.markets`.
 
 What this increment does **not** do: live-money authority, live streaming,
-broker-side stops/harvests, a required provider pull, ORB-M retune, or reopen
+broker-side stops or harvests on this walker, a required provider pull, an ORB-M retune, or reopening
 the consumed AAT holdout / claim contract. Demo parameters lower the PASS
 threshold so the fixture has a sendable decision; that is wiring, not a
 campaign retune.
@@ -261,8 +268,10 @@ Campaign path modules (`quality`, `deterioration`, `run_symbol_session`) and
 the paper execution loop (`execution`, `risk`, `paper`, including a causal
 bar walker) are implemented. Remaining operational work is a smoke re-run
 after statistics fixes and a real freeze with provider keys — not a second
-pool invention. A continuous live-market paper loop (streaming bars,
-broker-side stops/harvests) is still absent.
+pool invention. The bounded Jev paper runner in
+[LIVE_PAPER.md](LIVE_PAPER.md) is the product paper path and uses broker-held
+stops. This ORB-M walker still does not stream live bars or send harvests and
+trails to the broker.
 
 
 1. Breakout Quality Score, calibrated against TRAINING feature distributions

@@ -5,7 +5,7 @@ Migration boundary established 2026-09-03.
 ## Result
 
 - `Athena` remains the canonical home of Athena Core, Arena, Gauntlet, domain-neutral evidence/episode semantics, lineage, validation and authority.
-- `athena-trading` is the canonical home for trading strategy, market/provider adapters, broker/paper execution, trading risk, fills/slippage, trading backtests and trading-domain experiments.
+- `athena-trading` is the canonical home for trading strategy, market/provider adapters, broker/paper execution, trading risk, fills/slippage, and trading-domain experiments. The 2026-09-03 ownership statement included trading backtests. The unused backtesting placeholder was later deleted after a reference check; this tree has no backtest package.
 - Historical source files remain in Athena temporarily where deletion would break existing acceptance/research reproducibility. They are legacy compatibility material, not canonical ownership.
 - New trading development must occur in `athena-trading`; no new trading features should be added to Athena Core.
 

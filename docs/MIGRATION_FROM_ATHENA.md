@@ -1,5 +1,7 @@
 # Migration Plan: Athena → Athena Trading
 
+> **HISTORICAL — superseded.** This plan described the Athena → Athena Trading split. Completion is recorded in [MIGRATION_COMPLETE.md](MIGRATION_COMPLETE.md). Product direction is [Athena Trading Canon](ATHENA_TRADING_CANON.md) and [BUILD_PLAN.md](BUILD_PLAN.md). The phases below are kept as a dated record.
+
 Do not delete historical material from Athena during the first migration pass.
 
 ## Classification
