@@ -58,6 +58,26 @@ The existing root workflow now installs both packages and runs both suites. No n
 
 Tests cover Jev-only decisions, malformed output, risk changes during inference, account-safe cleanup, remaining stop coverage, recovery without models, deleted journal tails, checkpoint interruption, reconciled outcomes, duplicate imports, future-data exclusion, discovery/validation separation, rule rejection/expiry, DST scheduling and a promoted rule changing the real pilot's decision path.
 
+## Safe cleanup verification
+
+Status addition: 30 September 2026. Safe cleanup only: deleted unreferenced `configs/orb_m_smoke_pool.txt` and unused `demo_bar_session()`, `bar_session_to_payload()`, and its private helper `_bar_to_payload()`. Stale docs were edited in place. Review-only configs and unused Alpaca corporate-action helpers were left for the owner. No dependency was removed; the supplied audit did not name one.
+
+Tested revision: `ac4a4212a80ebd8258f46a1bf4c3d5a51708f97b`, tree `1b1478a20eb5ec5a07efd84b759229a7bc2bce24`. This evidence paragraph is a docs-only follow-up; the tested runtime files are that revision.
+
+Observed local checks, Python 3.12:
+
+```bash
+python -m pip install pytest ruff==0.15.8 . './research/astra-desk[dev]'
+python -m pytest -q                              # 657 passed
+python -m ruff check .                           # clean, ruff 0.15.8
+bash -n deploy/install.sh                        # clean
+git diff --check                                 # clean
+cd research/astra-desk
+python -m pytest -o addopts='' -q                # 158 passed
+```
+
+Root pytest still excludes `research/astra-desk/tests`. A clean local gate is not cloud deployment or trading-performance evidence.
+
 ## Historical evidence and remaining defects
 
 Earlier first integration: `9d83069e9ae53b01aee688aa68960eb8cc89ace6`, tree `aac92fd779c110c10836ddd6c0636d79f9945666`, 620 root tests. Cloud extension: `ca7a1ace2513af52474527bb7203dac9a2104ac9`, tree `3948f1e6048f468de3ac235ef45d6f3605808528`, 648 root tests. Those versions used an Actor; they are not the current runtime.
