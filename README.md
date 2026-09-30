@@ -20,7 +20,7 @@ Athena Trading combines **Earnings Adaptive** and **Athena Predictive Intraday**
 | What should the builder do next? | [BUILD_PLAN.md](docs/BUILD_PLAN.md) |
 | Which existing code can be reused? | [Repository map](docs/IMPLEMENTATION_STATUS.md#repository-map) |
 | What are the old experiments? | [Research index](research/README.md) |
-| What did the latest audit find? | [24 September audit](docs/audits/2026-09-24.md) |
+| What did the latest audit find? | [Jev and learning audit, 24 September 2026](docs/audits/2026-09-24-jev-learning.md). The earlier inventory remains [2026-09-24](docs/audits/2026-09-24.md). |
 
 ## Current reality
 

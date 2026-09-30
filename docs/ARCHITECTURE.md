@@ -3,7 +3,7 @@ The authoritative architecture is [Athena Trading Canon](ATHENA_TRADING_CANON.md
 
 Both **Earnings Adaptive** and **Athena Predictive Intraday** share:
 - Point-in-time world state and validated Athena context.
-- An LLM Decision Actor.
+- TypeSafe Jev as the sole active decision model.
 - Deterministic risk authorization.
 - Execution, APDE, and broker reconciliation.
 - Decision Episodes, replay, validation, and versioned learning through Athena Core.

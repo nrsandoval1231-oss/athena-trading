@@ -80,20 +80,6 @@ def load_bar_session(path: str | Path) -> BarSession:
     return BarSession(symbol, prior, bars)
 
 
-def bar_session_to_payload(session: BarSession) -> dict:
-    return {
-        "schema_version": BARS_SCHEMA,
-        "symbol": session.symbol,
-        "prior": {
-            "previous_close": session.prior.previous_close,
-            "atr14": session.prior.atr14,
-            "average_daily_volume": session.prior.average_daily_volume,
-            "average_opening_volume": session.prior.average_opening_volume,
-        },
-        "bars": [_bar_to_payload(bar) for bar in session.bars],
-    }
-
-
 def _bar_from_payload(item: object) -> Bar:
     if not isinstance(item, dict):
         raise ValueError("each bar must be an object")
@@ -109,15 +95,3 @@ def _bar_from_payload(item: object) -> Bar:
         float(item["close"]),
         float(item["volume"]),
     )
-
-
-def _bar_to_payload(bar: Bar) -> dict:
-    return {
-        "event_at": bar.event_at.isoformat(),
-        "minute": bar.minute,
-        "open": bar.open,
-        "high": bar.high,
-        "low": bar.low,
-        "close": bar.close,
-        "volume": bar.volume,
-    }

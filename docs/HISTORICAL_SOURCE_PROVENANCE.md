@@ -6,7 +6,7 @@ The following implementation lineage originated in `nrsandoval1231-oss/Athena` b
 
 - `src/athena_lab/massive*.py` → market-data/provider lineage
 - `src/athena_lab/alpaca_corporate_actions.py` → Alpaca market/reference lineage
-- paper/broker adapters and `configs/athena_paper_risk_v1.json` → paper execution/risk lineage
+- paper/broker adapters and `configs/legacy/athena_paper_risk_v1.json` → paper execution/risk lineage. Older notes cited `configs/athena_paper_risk_v1.json`; that path is not in this tree. The file labels itself `HISTORICAL_NOT_ORB_V1_AUTHORITY` and is not the active pilot policy.
 - ORB observation/scanning scripts → ORB strategy lineage
 - fill/slippage/timing diagnostics → trading execution research lineage
 - APDE trading state machine → position-management lineage
