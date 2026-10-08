@@ -46,4 +46,4 @@ python scripts/run_orb_m_paper.py --walk-bars
 
 The bar walk is a fixture demonstration. It is not the completed dual-strategy bot.
 
-The root suite does not cover the separately packaged Astra Desk tests. The repaired consolidated gate and historical findings are recorded in [implementation status](docs/IMPLEMENTATION_STATUS.md#verification); run both packages for a complete local gate.
+Astra Desk has moved into its own private [standalone repository](https://github.com/nrsandoval1231-oss/astra-desk). Athena's local/CI verification now covers Athena only; Astra has an independent Python 3.11/3.12 test and lint gate. See the [extraction receipt](docs/ASTRA_DESK_EXTRACTION.md) and [implementation status](docs/IMPLEMENTATION_STATUS.md).
