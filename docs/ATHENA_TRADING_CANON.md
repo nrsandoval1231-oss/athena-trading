@@ -64,6 +64,6 @@ Strategy code supplies candidates, Jev decides whether to take them, and risk de
 
 The restoration itself did not grant operational authority. Nick's subsequent instruction authorizes implementing and starting active broker paper trading with Jev adjudication. The first pilot bounds exposure and inference calls explicitly. This does not authorize real-money trading, reopen an experiment, or alter frozen research evidence. Actual activation still requires configured paper/model credentials and a running process; code and test fixtures are not proof of a launched session.
 
-Use the implementation map to reuse useful code. AAT-V1/V2, ORB-M campaign documents, provider runbooks, and Astra Desk retain their historical evidence and restrictions. Their old next-step instructions are superseded for product planning by BUILD_PLAN.md.
+Use the implementation map to reuse useful code. AAT-V1/V2, ORB-M campaign documents, provider runbooks, retain their historical evidence and restrictions. Astra Desk's independent private repository preserves its own historical evidence and restrictions. Their old next-step instructions are superseded for product planning by BUILD_PLAN.md.
 
 Make product changes here; update status with verification evidence. Do not create competing “vNext,” experiment, or provider roadmaps as the default product plan.

@@ -24,5 +24,3 @@ select = ["F", "E9", "B", "UP"]
 
 [tool.ruff.lint.per-file-ignores]
 "**/__init__.py" = ["F401", "F403", "F405"]
-# Research receipts retain Enum's original string rendering; StrEnum changes it.
-"research/astra-desk/src/astra_desk/types.py" = ["UP042"]

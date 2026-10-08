@@ -28,7 +28,7 @@ An observed market opportunity becomes a timestamped world state, relevant Athen
 ## Working constraints
 
 12. **One slice at a time.** Finish and verify a useful behavior, update status, then continue. An API adapter, enum, mock, or long model-call run alone does not complete a strategy or the learning loop.
-13. **Reuse selectively.** Keep useful market, ORB-M, APDE, risk, and adapter components. Historical AAT ablation arms B/C/D/E are experiment labels, not additional product strategy arms. Astra stays isolated until a specific tested component is adopted.
+13. **Reuse selectively.** Keep useful market, ORB-M, APDE, risk, and adapter components. Historical AAT ablation arms B/C/D/E are experiment labels, not additional product strategy arms. Astra Desk is maintained in a separate private repository, not in Athena's dependency graph. Adopt any component only after an explicit reviewed integration and regression tests.
 14. **Keep implementation choices small.** One primary Actor/provider path and one shared runtime are sufficient initially. Add alternatives only to solve a measured current limitation. Model benchmarking and GPU scaling do not lead the product plan.
 15. **Separate capability from authority.** A diagram or build task does not grant live trading, paid calls, consumed-holdout reuse, or a policy bypass. Preserve the owner's existing permissions and the current operational boundary.
 
