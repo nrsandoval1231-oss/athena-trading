@@ -6,7 +6,17 @@ Offline evolutionary toy in `paper/self_improve.py` and `scripts/run_fixture_sel
 
 This is not broker evidence, LIVE authority, or trading-performance evidence. The lab does not call Alpaca or TypeSafe.
 
-Local gate results for this lab are recorded after the commands below are run on the revision that contains it.
+Tested revision: `8a482ccbc61b41def88b785068f9dca3003c3f52`. This paragraph is a docs-only follow-up; the lab, script, and tests are that revision.
+
+Observed local checks, Python 3.12:
+
+```bash
+python -m ruff check .    # clean, ruff 0.15.8
+python -m pytest -q       # 671 passed
+git diff --check          # clean
+```
+
+The previous recorded root gate was 657 passed. These 14 additional tests cover one-field mutation, the sealed holdout, ABSENT authority, receipts, and the kill/survive gate. Root pytest does not include Astra Desk; that suite lives in its own repository. A clean local gate is not deployment or trading-performance evidence.
 
 ## Repository split — 7 October 2026
 
