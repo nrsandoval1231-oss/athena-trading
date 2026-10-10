@@ -3,6 +3,9 @@
 PAPER execution may be granted by an operator. It stays off unless configured.
 LIVE is not a value. The AAT holdout, claim contract, and TRAINING evaluator
 are not this package and are not touched by a paper session.
+
+``self_improve`` is a separate offline fixture lab. It keeps authority ABSENT,
+uses its own synthetic bars, and does not read the AAT holdout.
 """
 from .alpaca import (
     PAPER_API_BASE, AlpacaPaperBroker, AlpacaPaperError, MissingCredentialsError,
