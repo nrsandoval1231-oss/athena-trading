@@ -28,7 +28,7 @@ The bounded intraday paper path connects current Alpaca data → strategy candid
 
 Completed trades become verified experience available to later decisions. The cloud supervisor reviews each day after 20:15 Eastern; only prospectively validated, temporary abstention rules can be promoted. See [learning](docs/LEARNING.md) and [cloud deployment](docs/CLOUD_DEPLOYMENT.md).
 
-The implementation is locally verified but **not deployed**: cloud access and server-side Alpaca/TypeSafe credentials remain unavailable. The complete Earnings arm, full APDE, comprehensive forecasting and general Athena Core integration are incomplete. Learning from observations is implemented; improved trading performance is not established.
+The first Hostinger paper pilot was installed on 10 October 2026. `athena-paper.service` is enabled and was last observed in `WAITING_FOR_MARKET` for Monday open. Alpaca and TypeSafe keys are on that host in `paper.env` and are not in this repository. **LIVE is still rejected.** The fixture lab is not paper evidence. The complete Earnings arm, full APDE, comprehensive forecasting and general Athena Core integration are incomplete. Learning from observations is implemented; improved trading performance is not established. No broker session has traded.
 
 ORB-M is a reusable intraday component and baseline. AAT experiments are research history. The existing Ollama B/C/D runner uses identical empty-memory requests; it does not yet demonstrate Athena learning.
 

@@ -1,6 +1,8 @@
 # Paper-readiness audit — 10 October 2026
 
-**Verdict:** the bounded Alpaca **paper** pilot is implemented and is the right path onto a real paper account. It is not launched. **LIVE stays rejected.** A first session can be attended only after Nick supplies a flat paper account, a TypeSafe key, and a host. It should not be left running until the day-ending halt bug below is fixed: a missing IEX minute, a stale bar, or a single startup error writes `halt` and the supervisor will not try again that day.
+> **Deployment note, later on 10 October 2026.** P0-1 below (no host and no server-side keys) describes this review, not the end of the day. Nick then installed the paper runner on a Hostinger VPS. `athena-paper.service` is enabled, Alpaca and TypeSafe keys live only in the host `paper.env`, and the service was last observed in `WAITING_FOR_MARKET` for Monday open. Pre-Monday fixture, preflight, and health checks passed. That install is not a traded session. **LIVE stays rejected.** Current deployment status is [IMPLEMENTATION_STATUS.md](../IMPLEMENTATION_STATUS.md). The findings below are the audit record.
+
+**Verdict:** the bounded Alpaca **paper** pilot is implemented and is the right path onto a real paper account. At the time of this audit it was not launched. **LIVE stays rejected.** A first session can be attended only after Nick supplies a flat paper account, a TypeSafe key, and a host. It should not be left running until the day-ending halt bug below is fixed: a missing IEX minute, a stale bar, or a single startup error writes `halt` and the supervisor will not try again that day.
 
 Audited repository: `nrsandoval1231-oss/athena-trading`. Exact main: `d36164ef7843d135dbfeea3684be598566abcf33` (merged PR #21, fixture self-improve lab). The paper runner, supervisor, journal, learning store, broker pin, and installer have not changed since `733a1c441dbed15799397192cf6470b46c370d45`. PR #21 added an offline lab only.
 
@@ -28,9 +30,9 @@ A completed no-trade day is a successful run of this policy. Nothing in the code
 
 ## 2. What blocks a first attended paper session
 
-Three things block it, in this order.
+Three things blocked it at the time of this audit, in this order. The host finding was superseded later the same day; see the deployment note above.
 
-**Nick does not yet have a running host or server-side keys.** [CLOUD_DEPLOYMENT.md](../CLOUD_DEPLOYMENT.md) and [LIVE_PAPER.md](../LIVE_PAPER.md) still say that. This audit found no Droplet, no `/etc/athena/paper.env`, and no launched journal. Code cannot supply those.
+**At audit time, Nick did not yet have a running host or server-side keys.** [CLOUD_DEPLOYMENT.md](../CLOUD_DEPLOYMENT.md) and [LIVE_PAPER.md](../LIVE_PAPER.md) said that then. This audit found no Droplet, no `/etc/athena/paper.env`, and no launched journal. Code cannot supply those. Later on 10 October 2026 the Hostinger VPS install put the keys on the host and enabled `athena-paper.service`.
 
 **The launch docs name the wrong install SHA.** They tell the operator to install "PR #18 or its eventual merge" and they quote 657 root tests plus 158 Astra tests. Astra Desk is no longer in this repo (PR #20). `deploy/install.sh` refuses a checkout whose `HEAD` is not the SHA argument. Cloning current main and passing the September SHA fails closed before any trade. The paper runtime at current main is the same code as `733a1c4`; the SHA to pass is the checkout you intend to run, which today is `d36164ef7843d135dbfeea3684be598566abcf33`.
 
@@ -42,7 +44,7 @@ Three things block it, in this order.
 
 | ID | Finding | Evidence | Consequence |
 |---|---|---|---|
-| P0-1 | No paper host and no server-side Alpaca paper or TypeSafe credentials. | `docs/LIVE_PAPER.md` launch status; `docs/CLOUD_DEPLOYMENT.md` "No server has been provisioned"; `deploy/paper.env.example` is empty placeholders. | Nothing is running against a broker. This is owner work, not a code change. |
+| P0-1 | At audit time: no paper host and no server-side Alpaca paper or TypeSafe credentials. Superseded later on 10 October 2026 by the Hostinger install in the note above. | Launch status in `docs/LIVE_PAPER.md` and `docs/CLOUD_DEPLOYMENT.md` as of this audit; `deploy/paper.env.example` is empty placeholders. | At audit time, nothing was running against a broker. This was owner work, not a code change. The later install is not a traded session. |
 | P0-2 | A missing minute in the opening window aborts the day. | `signal_packet` returns quietly until `bars[-1].minute < 15`, then calls `freeze_opening_range` (`src/athena_trading/paper/live.py`). That function requires `len(window) == opening_minutes` (15) or raises (`src/athena_trading/orb_m/entry.py`). The runner's `except` writes `halt` / `RUNNER_ERROR` (`scripts/run_athena_paper.py`). `next_session` then sets `current_finished` when `halt` is set and there is no entry (`src/athena_trading/paper/cloud.py`). | IEX minute bars exist only when that venue prints. One silent minute in 09:30–09:45 makes the first later bar fatal. The account may be flat, but the dated journal will not trade again. Tests cover a complete fixture window, not a gap, and they do not run the supervisor afterward. |
 | P0-3 | The same halt catches stale bars, a TypeSafe blip, a short ATR history, and a calendar mismatch. | Stale bar is an explicit `ValueError` once 15 minutes exist (`live.py`, test `test_stale_bar_is_not_replayed_as_current_signal` expects the raise). Model-list and `LearningStore` run after the pilot is constructed and before the loop (`run_athena_paper.py`). ATR needs 15 prior sessions (`average_true_range`). Daily dates must match the previous broker session or tick raises `prior daily data is stale`. | Any of these, once, finishes the day. There is no documented retry that keeps the safety rule "do not delete the journal." |
 
