@@ -24,6 +24,11 @@ class SessionTask:
     saved_policy: dict | None = None
 
 
+def _reservation_closed(journal: PaperJournal) -> bool:
+    """A flat close, or a reserved id Alpaca never created. Neither is resubmitted."""
+    return bool(journal.last("flat_confirmed") or journal.last("entry_not_created"))
+
+
 def next_session(state_dir: Path, today: date) -> SessionTask | None:
     """Never roll past an unresolved entry or a corrupt journal."""
     unresolved = []
@@ -33,13 +38,14 @@ def next_session(state_dir: Path, today: date) -> SessionTask | None:
         journal = PaperJournal(path)
         try:
             entry = journal.last("entry_intent")
-            if entry and not journal.last("flat_confirmed"):
+            closed = _reservation_closed(journal)
+            if entry and not closed:
                 binding = journal.last("binding")
                 if binding is None:
                     raise ValueError("unresolved entry has no account/policy binding")
                 unresolved.append(SessionTask(path, True, binding["binding"]["policy"]))
             if path == current and (
-                journal.last("session_complete") or journal.last("flat_confirmed")
+                journal.last("session_complete") or closed
                 or (journal.last("halt") and not entry)
             ):
                 current_finished = True

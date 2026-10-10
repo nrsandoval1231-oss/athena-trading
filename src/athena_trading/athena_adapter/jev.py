@@ -40,6 +40,10 @@ def questions() -> dict[str, Any]:
 class ModelError(RuntimeError):
     """Unusable or unavailable model response. No fallback approval."""
 
+    def __init__(self, message: str, *, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+
 
 class _NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -60,7 +64,7 @@ def request_json(
                 raise ModelError("response exceeds size limit")
             return json.loads(raw) if raw else None
     except HTTPError as exc:
-        raise ModelError(f"HTTP {exc.code}") from None
+        raise ModelError(f"HTTP {exc.code}", status=exc.code) from None
     except (URLError, OSError, UnicodeError, ValueError) as exc:
         raise ModelError(f"request failed: {type(exc).__name__}") from None
 

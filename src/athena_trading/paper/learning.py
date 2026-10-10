@@ -250,7 +250,9 @@ def maintain(state_dir: Path, now: datetime):
                 entry = journal.last("entry_intent")
                 if entry:
                     sessions.add(date.fromisoformat(entry["session"]))
-                    unresolved |= not bool(journal.last("flat_confirmed"))
+                    unresolved |= not bool(
+                        journal.last("flat_confirmed") or journal.last("entry_not_created")
+                    )
                     store.ingest(journal, now)
                 else:
                     try:

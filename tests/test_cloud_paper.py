@@ -36,6 +36,21 @@ def test_completed_or_halted_session_does_not_restart_that_day(tmp_path, finish)
     assert tomorrow == cloud.SessionTask(tmp_path / "2026-09-25.sqlite")
 
 
+def test_never_created_order_is_terminal_and_a_single_miss_is_not(tmp_path):
+    missed = journal_at(tmp_path, "2026-09-23", entry=True)
+    journal = PaperJournal(missed)
+    journal.append("order_lookup_miss", reason="BROKER_ORDER_NOT_FOUND")
+    journal.close()
+    task = cloud.next_session(tmp_path, date(2026, 9, 24))
+    assert task.recovery and task.path == missed
+    journal = PaperJournal(missed)
+    journal.append("entry_not_created", reason="BROKER_ORDER_NOT_FOUND")
+    journal.close()
+    assert cloud.next_session(tmp_path, date(2026, 9, 24)) == cloud.SessionTask(
+        tmp_path / "2026-09-24.sqlite",
+    )
+
+
 def test_unfinished_entry_blocks_new_day_even_if_completion_was_recorded(tmp_path):
     old = journal_at(tmp_path, "2026-09-23", entry=True, finish="session_complete")
     journal_at(tmp_path, "2026-09-24", finish="halt")

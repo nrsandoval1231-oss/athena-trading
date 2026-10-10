@@ -25,6 +25,14 @@ NY = ZoneInfo("America/New_York")
 TERMINAL = {"filled", "canceled", "expired", "rejected", "replaced"}
 
 
+class DataDeferral(Exception):
+    """Market data cannot support a new entry yet. Wait; do not halt a flat account."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
+
+
 def timestamp(value: str) -> datetime:
     result = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if result.tzinfo is None or result.utcoffset() is None:
@@ -136,9 +144,13 @@ def signal_packet(
     bars.sort(key=lambda b: b.event_at)
     if not bars or bars[-1].minute < 15:
         return None
-    if (now - (bars[-1].event_at + timedelta(minutes=1))).total_seconds() > policy.max_bar_age_seconds:
-        raise ValueError("latest completed bar is stale")
+    age = (now - (bars[-1].event_at + timedelta(minutes=1))).total_seconds()
+    if age > policy.max_bar_age_seconds:
+        raise DataDeferral("STALE_BAR")
     constitution = Constitution()
+    opening_bars = [bar for bar in bars if 0 <= bar.minute < constitution.opening_minutes]
+    if len(opening_bars) != constitution.opening_minutes:
+        raise DataDeferral("OPENING_RANGE_INCOMPLETE")
     opening = freeze_opening_range(bars, constitution)
     signal = detect_breakout(bars[-1:], opening, constitution)
     if signal is None:
@@ -217,16 +229,45 @@ class ActivePaperPilot:
         entry = self._entry()
         if not entry:
             return None
-        parent = self.broker.call(
-            "GET", "/v2/orders:by_client_order_id?" +
-            urlencode({"client_order_id": entry["order"]["client_order_id"]}),
-        )
+        try:
+            parent = self.broker.call(
+                "GET", "/v2/orders:by_client_order_id?" +
+                urlencode({"client_order_id": entry["order"]["client_order_id"]}),
+            )
+        except ModelError as exc:
+            not_found = getattr(exc, "status", None) == 404 or str(exc) == "HTTP 404"
+            if not not_found:
+                raise
+            if self.journal.last("entry_ack"):
+                raise ValueError(
+                    "acknowledged entry disappeared; refusing to drop or resend it"
+                ) from exc
+            return None
         for key in ("client_order_id", "symbol", "side"):
             if parent.get(key) != entry["order"][key]:
                 raise ValueError("recovered order does not match the reserved entry")
         if number(parent["qty"]) != 1 or not 0 <= number(parent["filled_qty"]) <= 1:
             raise ValueError("recovered entry quantity mismatch")
         return parent
+
+    def _missing_reserved_order(self, snapshot: dict[str, Any]) -> str:
+        """The reserved id was never created. Look twice, then stop. Never resubmit."""
+        if snapshot["positions"] or snapshot["orders"]:
+            raise ValueError("reserved order is missing while exposure remains")
+        client_order_id = self._entry()["order"]["client_order_id"]
+        if self.journal.last("entry_not_created"):
+            return "ENTRY_NOT_CREATED"
+        if not self.journal.last("order_lookup_miss"):
+            self.journal.append(
+                "order_lookup_miss", reason="BROKER_ORDER_NOT_FOUND",
+                client_order_id=client_order_id, at=datetime.now(UTC),
+            )
+            return "ORDER_NOT_FOUND_RECHECK"
+        self.journal.append(
+            "entry_not_created", reason="BROKER_ORDER_NOT_FOUND",
+            client_order_id=client_order_id, at=datetime.now(UTC),
+        )
+        return "ENTRY_NOT_CREATED"
 
     def flatten_step(self, snapshot: dict[str, Any]) -> bool:
         """Halt first; cancel entry/exit reservations, then close confirmed exposure."""
@@ -237,6 +278,10 @@ class ActivePaperPilot:
         symbol = self.policy.symbol
         if any(item["symbol"] != symbol for item in snapshot["positions"] + snapshot["orders"]):
             raise ValueError("unowned exposure is present; refusing account-wide cleanup")
+        if self.journal.last("entry_not_created"):
+            if snapshot["positions"] or snapshot["orders"]:
+                raise ValueError("exposure remains after a missing-order closeout")
+            return True
         close_events = [e for e in self.journal.events if e["kind"] == "close_ack"]
         close_ids = {e["order"]["id"] for e in close_events}
         working = snapshot["orders"]
@@ -267,6 +312,8 @@ class ActivePaperPilot:
             return False
         # A possibly accepted entry must be resolved before declaring the account flat.
         parent = self._track_entry()
+        if parent is None:
+            return self._missing_reserved_order(snapshot) == "ENTRY_NOT_CREATED"
         if parent["status"] not in TERMINAL:
             self.broker.call("DELETE", "/v2/orders/" + parent["id"])
             return False
@@ -316,7 +363,13 @@ class ActivePaperPilot:
             if entry["session"] != day:
                 self.halt("PRIOR_SESSION_RECOVERY")
                 return "COMPLETE" if self.flatten_step(snapshot) else "FLATTENING"
+            if self.journal.last("entry_not_created"):
+                if snapshot["positions"] or snapshot["orders"]:
+                    raise ValueError("exposure remains after a missing-order closeout")
+                return "ENTRY_NOT_CREATED"
             parent = self._track_entry()
+            if parent is None:
+                return self._missing_reserved_order(snapshot)
             self.journal.append("entry_observation", order=parent)
             qty = number(parent["filled_qty"])
             if parent["status"] == "partially_filled" or (qty > 0 and parent["status"] != "filled"):
@@ -369,7 +422,12 @@ class ActivePaperPilot:
         if not prior_dates or max(prior_dates) != max(prior_sessions):
             raise ValueError("prior daily data is stale")
         raw = self.broker.bars(self.policy.symbol, session_open, now, "1Min", self.policy.feed)
-        candidate = signal_packet(raw, self.daily, now=now, session_open=session_open, policy=self.policy)
+        try:
+            candidate = signal_packet(
+                raw, self.daily, now=now, session_open=session_open, policy=self.policy,
+            )
+        except DataDeferral as deferred:
+            return deferred.reason
         if candidate is None:
             return "WAITING_FOR_SIGNAL"
         packet, order = candidate

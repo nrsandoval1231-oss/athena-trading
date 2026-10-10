@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import copy
+import importlib.util
 import sqlite3
+from dataclasses import asdict
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from urllib.error import HTTPError
 
 import pytest
@@ -10,9 +13,10 @@ import pytest
 from athena_trading.athena_adapter.jev import (
     JEV_ENDPOINT, JEV_MODEL, JevDecisionEngine, ModelError, questions, request_json,
 )
+from athena_trading.paper import cloud
 from athena_trading.paper.journal import PaperJournal
 from athena_trading.paper.live import (
-    ActivePaperPilot, LivePaperAPI, PilotPolicy, signal_packet,
+    ActivePaperPilot, DataDeferral, LivePaperAPI, PilotPolicy, signal_packet,
 )
 
 NOW = datetime(2026, 9, 24, 13, 46, 5, tzinfo=UTC)
@@ -53,6 +57,8 @@ class Broker:
         self.calls = []
         self.parent = None
         self.lose_submit_response = False
+        self.reject_submit = False
+        self.hide_order = False
         self.journal = None
 
     def snapshot(self):
@@ -70,6 +76,8 @@ class Broker:
             return {"status": "active", "tradable": True, "class": "us_equity",
                     "shortable": True, "easy_to_borrow": True}
         if method == "POST":
+            if self.reject_submit:
+                raise ModelError("HTTP 422", status=422)
             assert self.journal.last("entry_intent"), "reservation must be durable before send"
             self.parent = {**payload, "id": "entry-1", "status": "new", "filled_qty": "0"}
             self.state["orders"] = [copy.deepcopy(self.parent)]
@@ -77,6 +85,8 @@ class Broker:
                 raise ModelError("timeout")
             return copy.deepcopy(self.parent)
         if path.startswith("/v2/orders:by_client_order_id"):
+            if self.hide_order or self.parent is None:
+                raise ModelError("HTTP 404", status=404)
             return copy.deepcopy(self.parent)
         if path.startswith("/v2/orders?"):
             return [copy.deepcopy(self.parent)] if self.parent else []
@@ -348,7 +358,6 @@ def test_current_data_ignores_incomplete_bar_and_excludes_today_daily():
 
 
 @pytest.mark.parametrize("change", [
-    lambda bars: bars.pop(3),
     lambda bars: bars.append(copy.deepcopy(bars[0])),
     lambda bars: bars[-1].update(c=float("nan")),
 ])
@@ -361,8 +370,94 @@ def test_invalid_bar_input_blocks_signal(change):
 
 def test_stale_bar_is_not_replayed_as_current_signal():
     minute, daily = market_bars()
-    with pytest.raises(ValueError, match="stale"):
+    with pytest.raises(DataDeferral, match="STALE_BAR"):
         signal_packet(minute, daily, now=NOW + timedelta(minutes=3), session_open=OPEN, policy=POLICY)
+
+
+def test_stale_bar_waits_without_halt_or_order(setup):
+    pilot, broker, _, journal = setup
+    broker.state["clock"]["timestamp"] = (NOW + timedelta(minutes=3)).isoformat()
+    assert pilot.tick() == "STALE_BAR"
+    assert pilot.tick() == "STALE_BAR"
+    assert not journal.last("halt")
+    assert not journal.last("entry_intent")
+    assert not any(method == "POST" for method, _, _ in broker.calls)
+
+
+def test_missing_opening_minute_waits_without_halt_or_order(setup):
+    pilot, broker, _, journal = setup
+    minute, daily = market_bars()
+    gapped = [bar for index, bar in enumerate(minute) if index != 4]
+
+    def bars(symbol, start, end, timeframe, feed):
+        return gapped if timeframe == "1Min" else daily
+
+    broker.bars = bars
+    assert pilot.tick() == "OPENING_RANGE_INCOMPLETE"
+    assert pilot.tick() == "OPENING_RANGE_INCOMPLETE"
+    assert not journal.last("halt")
+    assert not journal.last("entry_intent")
+    assert not any(method == "POST" for method, _, _ in broker.calls)
+
+
+def test_daily_loss_still_halts_without_an_order(setup):
+    pilot, broker, actor, journal = setup
+    actor.after = lambda: broker.state["account"].update(equity="99000")
+    assert pilot.tick() == "COMPLETE"
+    assert journal.last("halt")["reason"] == "DAILY_LOSS_LIMIT"
+    assert not journal.last("entry_intent")
+    assert not any(method == "POST" for method, _, _ in broker.calls)
+
+
+def _posts(broker):
+    return sum(method == "POST" for method, _, _ in broker.calls)
+
+
+def test_two_flat_404s_end_a_never_created_order_without_resubmit(setup):
+    pilot, broker, _, journal = setup
+    broker.reject_submit = True
+    broker.hide_order = True
+    with pytest.raises(ModelError, match="HTTP 422"):
+        pilot.tick()
+    assert journal.last("entry_intent")
+    assert not journal.last("entry_ack")
+    assert _posts(broker) == 1
+    assert pilot.tick() == "ORDER_NOT_FOUND_RECHECK"
+    assert journal.last("order_lookup_miss")["reason"] == "BROKER_ORDER_NOT_FOUND"
+    assert not journal.last("entry_not_created")
+    assert pilot.tick() == "ENTRY_NOT_CREATED"
+    assert journal.last("entry_not_created")["reason"] == "BROKER_ORDER_NOT_FOUND"
+    reserved = journal.last("entry_intent")["order"]["client_order_id"]
+    assert journal.last("entry_not_created")["client_order_id"] == reserved
+    again = ActivePaperPilot(broker, pilot.jev, journal, POLICY)
+    assert again.tick() == "ENTRY_NOT_CREATED"
+    assert _posts(broker) == 1
+    assert not journal.last("flat_confirmed")
+
+
+def test_404_with_a_position_stays_unresolved_and_does_not_resubmit(setup):
+    pilot, broker, _, journal = setup
+    broker.reject_submit = True
+    broker.hide_order = True
+    with pytest.raises(ModelError, match="HTTP 422"):
+        pilot.tick()
+    broker.state["positions"] = [{"symbol": "AAPL", "qty": "1"}]
+    with pytest.raises(ValueError, match="exposure remains"):
+        pilot.tick()
+    assert not journal.last("entry_not_created")
+    assert _posts(broker) == 1
+
+
+def test_acknowledged_order_404_is_not_dropped_or_resent(setup):
+    pilot, broker, _, journal = setup
+    assert pilot.tick() == "ENTRY_SUBMITTED"
+    broker.hide_order = True
+    broker.state["orders"] = []
+    with pytest.raises(ValueError, match="acknowledged entry disappeared"):
+        pilot.tick()
+    assert journal.last("entry_ack")
+    assert not journal.last("entry_not_created")
+    assert _posts(broker) == 1
 
 
 def test_journal_detects_edits_and_enforces_single_writer(tmp_path):
@@ -499,3 +594,133 @@ def test_short_candidate_has_correct_bracket_direction():
     assert packet["candidate_direction"] == "SHORT"
     assert order["side"] == "sell"
     assert float(order["take_profit"]["limit_price"]) < float(order["limit_price"]) < float(order["stop_loss"]["stop_price"])
+
+
+def _runner():
+    path = Path(__file__).resolve().parents[1] / "scripts" / "run_athena_paper.py"
+    spec = importlib.util.spec_from_file_location("run_athena_paper_resilience", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _flat_snapshot():
+    return {"positions": [], "orders": [], "clock": {"is_open": True}, "account": {}}
+
+
+def test_typesafe_startup_failure_keeps_a_flat_day_runnable(tmp_path, monkeypatch):
+    script = _runner()
+    day = date(2026, 9, 24)
+    journal_path = tmp_path / f"{day.isoformat()}.sqlite"
+    monkeypatch.setenv("ALPACA_API_KEY", "paper-key")
+    monkeypatch.setenv("ALPACA_API_SECRET", "paper-secret")
+    monkeypatch.setenv("TYPESAFE_API_KEY", "model-key")
+
+    class FlatBroker:
+        def snapshot(self):
+            return _flat_snapshot()
+
+    def unavailable(*args, **kwargs):
+        raise ModelError("HTTP 503", status=503)
+
+    monkeypatch.setattr(script.LivePaperAPI, "from_env", lambda: FlatBroker())
+    monkeypatch.setattr(script, "request_json", unavailable)
+    monkeypatch.setattr(script.time, "sleep", lambda *_args: None)
+    code = script.main([
+        "--symbol", "AAPL", "--authority", "PAPER", "--feed", "iex",
+        "--journal", str(journal_path), "--run",
+    ])
+    assert code == 2
+    journal = PaperJournal(journal_path)
+    try:
+        assert journal.last("halt") is None
+        assert journal.last("entry_intent") is None
+    finally:
+        journal.close()
+    task = cloud.next_session(tmp_path, day)
+    assert task == cloud.SessionTask(journal_path)
+
+
+def test_startup_failure_with_visible_exposure_still_halts(tmp_path, monkeypatch):
+    script = _runner()
+    day = date(2026, 9, 24)
+    journal_path = tmp_path / f"{day.isoformat()}.sqlite"
+    monkeypatch.setenv("ALPACA_API_KEY", "paper-key")
+    monkeypatch.setenv("ALPACA_API_SECRET", "paper-secret")
+    monkeypatch.setenv("TYPESAFE_API_KEY", "model-key")
+
+    class ExposedBroker:
+        def snapshot(self):
+            return {"positions": [{"symbol": "AAPL", "qty": "1"}], "orders": [],
+                    "clock": {"is_open": True}, "account": {}}
+
+    def unavailable(*_args, **_kwargs):
+        raise ModelError("HTTP 503", status=503)
+
+    monkeypatch.setattr(script.LivePaperAPI, "from_env", lambda: ExposedBroker())
+    monkeypatch.setattr(script, "request_json", unavailable)
+    monkeypatch.setattr(script.time, "sleep", lambda *_args: None)
+    assert script.main([
+        "--symbol", "AAPL", "--authority", "PAPER", "--journal", str(journal_path), "--run",
+    ]) == 2
+    journal = PaperJournal(journal_path)
+    try:
+        assert journal.last("halt")["reason"] == "RUNNER_ERROR"
+        assert journal.last("entry_intent") is None
+    finally:
+        journal.close()
+    assert cloud.next_session(tmp_path, day) is None
+
+
+def test_failure_after_reservation_halts_and_does_not_resubmit(tmp_path, monkeypatch):
+    script = _runner()
+    day = date(2026, 9, 24)
+    journal_path = tmp_path / f"{day.isoformat()}.sqlite"
+    journal = PaperJournal(journal_path)
+    journal.append("binding", binding={
+        "account_id": "paper-account", "policy": asdict(POLICY),
+    })
+    journal.append("entry_intent", session=day.isoformat(), order={
+        "client_order_id": "athp-reserved", "symbol": "AAPL", "side": "buy", "qty": "1",
+    })
+    journal.close()
+    calls = []
+
+    class Broker:
+        def snapshot(self):
+            return {"positions": [], "orders": [], "account": {"id": "paper-account"},
+                    "clock": {"timestamp": NOW.isoformat(), "is_open": True,
+                              "next_close": NOW.replace(hour=20).isoformat()}}
+
+        def call(self, method, path, payload=None):
+            calls.append(method)
+            raise ModelError("HTTP 404", status=404)
+
+    monkeypatch.setenv("ALPACA_API_KEY", "paper-key")
+    monkeypatch.setenv("ALPACA_API_SECRET", "paper-secret")
+    monkeypatch.setenv("TYPESAFE_API_KEY", "model-key")
+    monkeypatch.setattr(script.LivePaperAPI, "from_env", lambda: Broker())
+    def fail_tick(self):
+        raise RuntimeError("broker down during recovery")
+
+    clock = {"now": 0}
+
+    def monotonic():
+        clock["now"] += 1_000
+        return clock["now"]
+
+    monkeypatch.setattr(script.ActivePaperPilot, "tick", fail_tick)
+    monkeypatch.setattr(script.time, "sleep", lambda *_args: None)
+    monkeypatch.setattr(script.time, "monotonic", monotonic)
+    assert script.main([
+        "--symbol", "AAPL", "--authority", "PAPER", "--journal", str(journal_path), "--run",
+    ]) == 2
+    journal = PaperJournal(journal_path)
+    try:
+        assert journal.last("halt")["reason"] == "RUNNER_ERROR"
+        assert not journal.last("entry_not_created")
+    finally:
+        journal.close()
+    assert "POST" not in calls
+    task = cloud.next_session(tmp_path, day)
+    assert task.recovery and task.path == journal_path
