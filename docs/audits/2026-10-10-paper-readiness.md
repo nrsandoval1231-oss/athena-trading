@@ -4,7 +4,7 @@
 
 Audited repository: `nrsandoval1231-oss/athena-trading`. Exact main: `d36164ef7843d135dbfeea3684be598566abcf33` (merged PR #21, fixture self-improve lab). The paper runner, supervisor, journal, learning store, broker pin, and installer have not changed since `733a1c441dbed15799397192cf6470b46c370d45`. PR #21 added an offline lab only.
 
-This audit did not deploy, did not call Alpaca or TypeSafe, and did not use real keys. GitHub Actions on the audited push succeeded: run `38073284465` (10 October 2026, about 41 seconds). Local pytest for this documentation revision is recorded in [IMPLEMENTATION_STATUS.md](../IMPLEMENTATION_STATUS.md) when this branch's check is run. Fixture results are not broker evidence and are not a trading edge.
+This audit did not deploy, did not call Alpaca or TypeSafe, and did not use real keys. GitHub Actions on the audited push succeeded: run `38073284465` (10 October 2026, about 41 seconds). Local checks on the audit commit, recorded in [IMPLEMENTATION_STATUS.md](../IMPLEMENTATION_STATUS.md), were 672 root tests passed, Ruff 0.15.8 clean, installer syntax clean, and a gapped opening window raising `opening window needs 15 bars, found 14`. Fixture results are not broker evidence and are not a trading edge.
 
 ## 1. What already works for paper
 

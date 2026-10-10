@@ -4,7 +4,18 @@
 
 Audited main `d36164ef7843d135dbfeea3684be598566abcf33` (PR #21). The paper runner, supervisor, journal, learning store, broker pin, and installer are unchanged since `733a1c441dbed15799397192cf6470b46c370d45`. The pilot is not deployed. LIVE remains rejected. The fixture lab is not paper evidence and must not auto-promote. Full findings and the owner checklist: [paper-readiness audit](audits/2026-10-10-paper-readiness.md).
 
-GitHub Actions on that main push succeeded (run `38073284465`). This documentation revision does not change runtime behavior. Local commands for the audit branch are recorded after they are run.
+GitHub Actions on that main push succeeded (run `38073284465`). This documentation revision does not change runtime behavior.
+
+Local checks on audit commit `4a75582617cf4e1ee1a801507f7cefc794632de6`, Python 3.12. Runtime files are that commit. This follow-up only records the commands and points the audit at them.
+
+```bash
+python -m pytest -q                 # 672 passed in 11.49s
+python -m ruff check .              # clean, ruff 0.15.8
+bash -n deploy/install.sh           # clean
+git diff --check                    # clean
+```
+
+A one-off on that tree removed one opening-range minute from the active-paper fixture. `signal_packet` raised `ValueError: opening window needs 15 bars, found 14`. `parse_authority("LIVE")` raised `AuthorityError`. `ExecutionAuthority` was `ABSENT` and `PAPER` only. Root pytest does not include Astra Desk; that suite lives in its own repository.
 
 ## Fixture self-improve lab — 10 October 2026
 
