@@ -1,5 +1,11 @@
 # Implementation status
 
+## Paper-readiness audit — 10 October 2026
+
+Audited main `d36164ef7843d135dbfeea3684be598566abcf33` (PR #21). The paper runner, supervisor, journal, learning store, broker pin, and installer are unchanged since `733a1c441dbed15799397192cf6470b46c370d45`. The pilot is not deployed. LIVE remains rejected. The fixture lab is not paper evidence and must not auto-promote. Full findings and the owner checklist: [paper-readiness audit](audits/2026-10-10-paper-readiness.md).
+
+GitHub Actions on that main push succeeded (run `38073284465`). This documentation revision does not change runtime behavior. Local commands for the audit branch are recorded after they are run.
+
 ## Fixture self-improve lab — 10 October 2026
 
 Offline evolutionary toy in `paper/self_improve.py` and `scripts/run_fixture_self_improve.py`. Sol's role is a `MutationScope` over scalar `ManagementParameters` fields. A local mutator applies one field through `evolve()`. The default command runs three generations. Each generation seeds from the best search survivor and reuses the sealed search partition. An Astra-style PASS/FAIL/UNKNOWN gate uses a precommitted policy on the walk-forward selection fold. The paper walker runs only under `ExecutionAuthority.ABSENT`; simulated episode R comes from `run_symbol_session`. The frozen holdout is hashed before search and opened once after the last generation. Its verdicts are not fed back. `report.md` is the skim; the JSON receipts stay the machine record. Nothing is promoted into the paper pilot. See [FIXTURE_SELF_IMPROVE.md](FIXTURE_SELF_IMPROVE.md).
@@ -50,7 +56,8 @@ Status date: 24 September 2026. Product authority: [Athena Trading Canon v3.0](A
 - [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md): host setup, persistent service, preflight and activation.
 - [LEARNING.md](LEARNING.md): exact learning schedule, evidence, validation and adaptive limits.
 - [BUILD_PLAN.md](BUILD_PLAN.md): the single product build sequence.
-- [Latest repository audit](audits/2026-09-24-jev-learning.md): scope, repairs, retained defects and cleanup decisions.
+- [Paper-readiness audit, 10 October 2026](audits/2026-10-10-paper-readiness.md): what blocks a first attended Alpaca paper session, and how the fixture lab stays off that path.
+- [Jev and learning audit, 24 September 2026](audits/2026-09-24-jev-learning.md): scope, repairs, retained defects and cleanup decisions.
 - [Research index](../research/README.md): retained historical experiments, not product entry points.
 
 ## Repository map

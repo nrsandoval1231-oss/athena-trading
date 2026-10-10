@@ -59,7 +59,9 @@ If cleanup cannot finish, it prints `UNRESOLVED_PAPER_EXPOSURE` and exits nonzer
 
 ## Verification and launch status
 
-The Jev-only/learning revision passes **657 root tests and 158 Astra tests**, with repo-wide Ruff 0.15.8 clean. Tests exercise typed decisions, malformed responses, rechecked risk, broker recovery, checkpoint corruption, point-in-time experience, prospective validation, expiry and learned vetoes. See the immutable revision evidence in [implementation status](IMPLEMENTATION_STATUS.md).
+The Jev-only/learning revision of 24 September 2026 passed **657 root tests and 158 Astra tests**, with repo-wide Ruff 0.15.8 clean. Tests exercise typed decisions, malformed responses, rechecked risk, broker recovery, checkpoint corruption, point-in-time experience, prospective validation, expiry and learned vetoes. See the immutable revision evidence in [implementation status](IMPLEMENTATION_STATUS.md).
+
+**Status correction, 10 October 2026.** Astra Desk is no longer in this repository. Current main is `d36164ef7843d135dbfeea3684be598566abcf33`. The paper runtime matches `733a1c441dbed15799397192cf6470b46c370d45`. GitHub Actions on that main push succeeded (run `38073284465`). The recorded root gate on the lab revision is 672 passed; Astra's suite runs in its own repository. A missing IEX opening minute or another startup error currently latches a day-ending halt. Read [the paper-readiness audit](audits/2026-10-10-paper-readiness.md) before the first attended session.
 
 **Not launched.** Cloud access and Alpaca/TypeSafe credentials are still required. The test results are fixtures, not observed broker or semantic-accuracy results. The old synthetic demo command now supports fixtures and broker preflight only; it cannot submit an Alpaca demo order. Use this active runner for broker paper operation.
 

@@ -24,7 +24,7 @@ A Droplet fits the existing SQLite runtime. DigitalOcean App Platform has epheme
 
 Create the configured Droplet in the owner's account or use an existing dedicated host. Authorize the displayed recurring charge before creation. Do not place credentials in cloud-init, the repository, command arguments, or chat. Use the owner's existing SSH access. Enable host monitoring and configure backups under the chosen budget.
 
-Clone `nrsandoval1231-oss/athena-trading` into `/opt/athena-trading` using the owner's authorized repository access. Select the full reviewed commit SHA from PR #18 or its eventual merge. As root on that host:
+Clone `nrsandoval1231-oss/athena-trading` into `/opt/athena-trading` using the owner's authorized repository access. Pass `install.sh` the full SHA of that checkout. As of the 10 October 2026 paper-readiness audit, that SHA is `d36164ef7843d135dbfeea3684be598566abcf33`. The paper runner itself is unchanged since `733a1c441dbed15799397192cf6470b46c370d45`; an older SHA against current main is refused by the installer. As root on that host:
 
 ```bash
 athena_revision=FULL_REVIEWED_40_CHARACTER_COMMIT_SHA
@@ -80,7 +80,7 @@ SIGTERM requests the child's existing halt and cleanup path. The service allows 
 
 ## Verified state and references
 
-As of 24 September 2026: **657 root tests and 158 Astra tests pass**, and repo-wide Ruff 0.15.8 is clean. Installation and systemd startup on the target Droplet have not occurred. Exact tested revision and command evidence are in [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md).
+As of 24 September 2026 the Jev/learning revision had **657 root tests and 158 Astra tests** passing, with repo-wide Ruff 0.15.8 clean. As of 10 October 2026 Astra Desk is a separate repository, current main is `d36164ef7843d135dbfeea3684be598566abcf33`, and GitHub Actions run `38073284465` on that push succeeded. Installation and systemd startup on the target Droplet have not occurred. A child `halt` with no reserved entry finishes that dated journal for the day; systemd restart does not clear it. See [the paper-readiness audit](audits/2026-10-10-paper-readiness.md). Exact tested revision and command evidence are in [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md).
 
 The DigitalOcean console returned “Site Unavailable” in this workspace browser on the initial visit and one reload. No DigitalOcean credential was found in the connected credential catalog. Alpaca and TypeSafe runtime keys are absent here. **No server has been provisioned, no service deployed, and no provider inference or paper order executed.**
 
