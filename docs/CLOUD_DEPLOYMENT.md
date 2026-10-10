@@ -1,13 +1,13 @@
 # Continuous cloud paper operation
 
-Deploy the existing active paper runner on one DigitalOcean Droplet. The service stays online across market sessions and reboots; entries remain restricted to the broker's market session and the bounded policy in [LIVE_PAPER.md](LIVE_PAPER.md). The bounded learning review is implemented; the full Earnings arm, APDE and general Core integration remain incomplete.
+Deploy the existing active paper runner on one persistent Linux VPS. The active host is a Hostinger VPS, installed on 10 October 2026. A DigitalOcean Droplet remains an optional path. Either host uses the same `deploy/install.sh`, `athena-paper.service`, and root-owned `/etc/athena/paper.env`. The service stays online across market sessions and reboots; entries remain restricted to the broker's market session and the bounded policy in [LIVE_PAPER.md](LIVE_PAPER.md). The bounded learning review is implemented; the full Earnings arm, APDE and general Core integration remain incomplete.
 
 ## Selected setup
 
 | Component | Choice |
 |---|---|
-| Host | DigitalOcean Basic, Regular CPU, 1 vCPU, 2 GiB RAM, 50 GiB disk; $12/month base cap |
-| OS and location | Ubuntu 24.04 LTS, available US East region |
+| Active host | Hostinger VPS, installed 10 October 2026. `athena-paper.service` is enabled. Plan size, address, and SSH account are not recorded here |
+| Optional host | DigitalOcean Basic, Regular CPU, 1 vCPU, 2 GiB RAM, 50 GiB disk; $12/month base cap; Ubuntu 24.04 LTS in an available US East region. Not the host of the 10 October install |
 | Decision model | TypeSafe `jev-1.13.0`; the only model in the active path |
 | Learning | Immediate reconciled experience; nightly prospective validation after 20:15 Eastern |
 | Broker | Dedicated Alpaca paper account; IEX unless SIP is explicitly subscribed/configured |
@@ -18,13 +18,13 @@ Deploy the existing active paper runner on one DigitalOcean Droplet. The service
 
 The $12 is the server charge, not an all-in trading budget. API usage, optional backups, taxes, and any paid market-data entitlement are separate. Each session permits at most 20 candidate reviews, each with at most one Jev call. Jev state is capped at 24 KB; failed inference is not retried automatically. Nightly learning uses deterministic code and makes no paid model calls. These are usage bounds, not a guaranteed dollar ceiling. Set provider spending controls for the intended account budget.
 
-A Droplet fits the existing SQLite runtime. DigitalOcean App Platform has ephemeral local filesystems and does not support persistent volumes; using it would require moving state to another service. Begin with one host and measure memory/disk growth before increasing resources. This is an initial sizing choice, not a load-test result or uptime guarantee.
+A Hostinger VPS with a persistent disk fits the existing SQLite runtime. A DigitalOcean Droplet is the same kind of host. DigitalOcean App Platform has ephemeral local filesystems and does not support persistent volumes; using it would require moving state to another service. Begin with one host and measure memory/disk growth before increasing resources. The Droplet row is an initial sizing choice for that optional path, not a load-test result, a Hostinger invoice, or an uptime guarantee.
 
 ## Install a reviewed revision
 
-Create the configured Droplet in the owner's account or use an existing dedicated host. Authorize the displayed recurring charge before creation. Do not place credentials in cloud-init, the repository, command arguments, or chat. Use the owner's existing SSH access. Enable host monitoring and configure backups under the chosen budget.
+Use the existing Hostinger VPS, or optionally create the configured Droplet in the owner's account. Authorize any displayed recurring charge before creating a new host. Do not place credentials in cloud-init, the repository, command arguments, or chat. Use the owner's existing SSH access. Enable host monitoring and configure backups under the chosen budget. This runbook does not record a host address, an SSH user name, or the contents of `paper.env`.
 
-Clone `nrsandoval1231-oss/athena-trading` into `/opt/athena-trading` using the owner's authorized repository access. Pass `install.sh` the full SHA of that checkout. As of the 10 October 2026 paper-readiness audit, that SHA is `d36164ef7843d135dbfeea3684be598566abcf33`. The paper runner itself is unchanged since `733a1c441dbed15799397192cf6470b46c370d45`; an older SHA against current main is refused by the installer. As root on that host:
+Clone `nrsandoval1231-oss/athena-trading` into `/opt/athena-trading` using the owner's authorized repository access. Pass `install.sh` the full SHA of the checkout you intend to run. The 10 October 2026 paper-readiness audit named `d36164ef7843d135dbfeea3684be598566abcf33`, when that audit's paper runner still matched `733a1c441dbed15799397192cf6470b46c370d45`. Session-resilience changes landed later that day, so a later reviewed SHA is a valid install argument when it is that checkout's `HEAD`. The installer refuses a SHA that is not the checkout's `HEAD`. This runbook does not record the SHA installed on the Hostinger VPS. As root on that host:
 
 ```bash
 athena_revision=FULL_REVIEWED_40_CHARACTER_COMMIT_SHA
@@ -82,9 +82,11 @@ SIGTERM requests the child's existing halt and cleanup path. The service allows 
 
 ## Verified state and references
 
-As of 24 September 2026 the Jev/learning revision had **657 root tests and 158 Astra tests** passing, with repo-wide Ruff 0.15.8 clean. As of 10 October 2026 Astra Desk is a separate repository, current main is `d36164ef7843d135dbfeea3684be598566abcf33`, and GitHub Actions run `38073284465` on that push succeeded. Installation and systemd startup on the target Droplet have not occurred. Flat-day data and startup errors retry; a halt that was written, or `entry_not_created`, finishes that dated journal. See [the paper-readiness audit](audits/2026-10-10-paper-readiness.md) and [LIVE_PAPER.md](LIVE_PAPER.md#recovery-and-exits). Exact tested revision and command evidence are in [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md).
+As of 24 September 2026 the Jev/learning revision had **657 root tests and 158 Astra tests** passing, with repo-wide Ruff 0.15.8 clean. As of 10 October 2026 Astra Desk is a separate repository, current main at the paper-readiness audit was `d36164ef7843d135dbfeea3684be598566abcf33`, and GitHub Actions run `38073284465` on that push succeeded. Flat-day data and startup errors retry; a halt that was written, or `entry_not_created`, finishes that dated journal. See [the paper-readiness audit](audits/2026-10-10-paper-readiness.md) and [LIVE_PAPER.md](LIVE_PAPER.md#recovery-and-exits). Exact tested revision and command evidence are in [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md).
 
-The DigitalOcean console returned “Site Unavailable” in this workspace browser on the initial visit and one reload. No DigitalOcean credential was found in the connected credential catalog. Alpaca and TypeSafe runtime keys are absent here. **No server has been provisioned, no service deployed, and no provider inference or paper order executed.**
+**Hostinger paper pilot, 10 October 2026.** Nick installed this runner on a Hostinger VPS with `deploy/install.sh`, `athena-paper.service`, and root-owned `/etc/athena/paper.env`. The service is enabled. That environment file holds the Alpaca paper and TypeSafe keys. The values stay on the host and are not in this repository. The service was last observed in `WAITING_FOR_MARKET`, waiting for Monday open. Pre-Monday fixture, preflight, and health checks passed that day. Those checks show the install and connectivity. They are not a broker fill, a traded session, or a performance result. **LIVE remains rejected.** This document does not record which commit SHA that host is running.
+
+DigitalOcean remains an optional host with the same installer, service, and environment file. A Droplet has not been provisioned from this repository. On 24 September 2026 the DigitalOcean console returned “Site Unavailable” in this workspace browser on the initial visit and one reload, and no DigitalOcean credential was in the connected catalog. That note is not the Hostinger install. No paper order has been observed, and no broker session has traded.
 
 Primary documentation checked on the status date:
 

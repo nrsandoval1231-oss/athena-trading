@@ -1,5 +1,11 @@
 # Implementation status
 
+## Hostinger paper pilot — 10 October 2026
+
+Nick installed the paper runner on a Hostinger VPS. `athena-paper.service` is enabled. `/etc/athena/paper.env` on that host holds the Alpaca paper and TypeSafe keys. The file is not in git, and its contents are not recorded here. The service was last observed in `WAITING_FOR_MARKET` for Monday open. Pre-Monday fixture, preflight, and health checks passed that day. Those checks are not a broker fill. No broker session has traded, and improved trading performance is not established. **LIVE remains rejected.** The fixture lab is not paper evidence and must not auto-promote. DigitalOcean remains an optional host in [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md). It is not the host of this install. External alerting and backup restore are still not verified. Pilot bounds in [LIVE_PAPER.md](LIVE_PAPER.md) are unchanged.
+
+This section is a docs-only status correction. It does not change the runner, supervisor, journal, learning store, broker pin, or installer. The session-resilience behavior below is unchanged. Checked against runtime commit `5c574e53a1a417cefbd3735bcb071475dbf4999d`. `git diff --check` was clean. No Python or installer files changed, so pytest and Ruff were not re-run. Root pytest still excludes Astra Desk; that suite lives in its own repository.
+
 ## Paper session resilience — 10 October 2026
 
 A flat account with no reserved order no longer gets a day-ending `RUNNER_ERROR` halt for a missing opening minute, a stale bar, or a TypeSafe/startup failure. The supervisor retries that journal. A reserved id that Alpaca answers with HTTP 404 twice, while the account stays flat and no `entry_ack` was stored, is journaled as `entry_not_created` / `BROKER_ORDER_NOT_FOUND` and is not submitted again. A 404 with a position or open order, or after an acknowledgement, stays unresolved. Halt remains for a reserved order, visible exposure, daily loss, and operator stop. LIVE remains rejected. The fixture lab is not on this path.
@@ -17,7 +23,7 @@ Root pytest does not include Astra Desk; that suite lives in its own repository.
 
 ## Paper-readiness audit — 10 October 2026
 
-Audited main `d36164ef7843d135dbfeea3684be598566abcf33` (PR #21). The paper runner, supervisor, journal, learning store, broker pin, and installer are unchanged since `733a1c441dbed15799397192cf6470b46c370d45`. The pilot is not deployed. LIVE remains rejected. The fixture lab is not paper evidence and must not auto-promote. Full findings and the owner checklist: [paper-readiness audit](audits/2026-10-10-paper-readiness.md).
+Audited main `d36164ef7843d135dbfeea3684be598566abcf33` (PR #21). The paper runner, supervisor, journal, learning store, broker pin, and installer are unchanged since `733a1c441dbed15799397192cf6470b46c370d45`. The audit recorded that the pilot was not deployed and that server-side credentials were unavailable. That deployment claim is superseded by the Hostinger install above. LIVE remains rejected. The fixture lab is not paper evidence and must not auto-promote. Full findings and the owner checklist: [paper-readiness audit](audits/2026-10-10-paper-readiness.md).
 
 GitHub Actions on that main push succeeded (run `38073284465`). This documentation revision does not change runtime behavior.
 
@@ -59,7 +65,7 @@ Astra Desk has been independently extracted to private [`nrsandoval1231-oss/astr
 
 Status date: 24 September 2026. Product authority: [Athena Trading Canon v3.0](ATHENA_TRADING_CANON.md). Nick directed Jev-only decisions, cloud paper operation, repository cleanup and outcome learning.
 
-**Implemented and locally verified; not deployed.** No broker/model execution or improved trading performance has been observed. Cloud access and server-side Alpaca/TypeSafe credentials remain unavailable.
+**Status as of 24 September 2026:** implemented and locally verified, and not deployed on that date. Cloud access and server-side Alpaca/TypeSafe credentials were unavailable then. Deployment status after 10 October 2026 is the Hostinger section above. No broker session has traded, and improved trading performance has not been observed.
 
 ## Canon-to-code map
 
@@ -73,7 +79,7 @@ Status date: 24 September 2026. Product authority: [Athena Trading Canon v3.0](A
 | Persistence | Single-writer SQLite events, verified chain and separate durable checkpoint | Privileged rewrites of both DB/anchor or lost disk require independent recovery evidence |
 | Outcome feedback | paper/learning.py reconciles fills, stores gross outcomes/provenance and retrieves prior experience with a temporal boundary | Net fees and complete market-path excursions unmeasured |
 | Learning validation | Fixed discovery sample, prospectively registered candidate, fresh validation sample, recorded rejection/promotion, expiring NO_TRADE rule | Narrow initial paper policy; no demonstrated future improvement or model training |
-| Cloud scheduling | paper/cloud.py starts sessions, prioritizes recovery and reviews after 20:15 Eastern; service/installer/runbook prepared | Host installation, credentials, external alerting and backup restore not verified |
+| Cloud scheduling | paper/cloud.py starts sessions, prioritizes recovery and reviews after 20:15 Eastern; Hostinger VPS service enabled 10 October 2026, last observed `WAITING_FOR_MARKET` | External alerting and backup restore not verified; LIVE remains rejected; no traded session observed |
 | Athena Core | Shared adapter identity contracts reused; trading-specific experience policy implemented | General Core service/context/replay/promotion integration remains incomplete |
 
 ## Active sources
@@ -82,7 +88,7 @@ Status date: 24 September 2026. Product authority: [Athena Trading Canon v3.0](A
 - [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md): host setup, persistent service, preflight and activation.
 - [LEARNING.md](LEARNING.md): exact learning schedule, evidence, validation and adaptive limits.
 - [BUILD_PLAN.md](BUILD_PLAN.md): the single product build sequence.
-- [Paper-readiness audit, 10 October 2026](audits/2026-10-10-paper-readiness.md): what blocks a first attended Alpaca paper session, and how the fixture lab stays off that path.
+- [Paper-readiness audit, 10 October 2026](audits/2026-10-10-paper-readiness.md): findings from that review, including how the fixture lab stays off the paper path. The host and credential finding in that audit is superseded by the Hostinger install above.
 - [Jev and learning audit, 24 September 2026](audits/2026-09-24-jev-learning.md): scope, repairs, retained defects and cleanup decisions.
 - [Research index](../research/README.md): retained historical experiments, not product entry points.
 

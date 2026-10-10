@@ -36,8 +36,10 @@ Paper execution is **not** live trading. `ExecutionAuthority` is `ABSENT` or
 `PAPER`; `LIVE` is rejected. The active broker paper path is
 `scripts/run_athena_paper.py`: current Alpaca bars, an ORB opening-range
 candidate, TypeSafe Jev, deterministic risk, and Alpaca paper brackets with
-broker-held stops. See [LIVE_PAPER.md](LIVE_PAPER.md). It is implemented and
-not deployed. `scripts/run_orb_m_paper.py` keeps fixture walks and read-only
+broker-held stops. See [LIVE_PAPER.md](LIVE_PAPER.md). It is installed on a
+Hostinger VPS as of 10 October 2026 and was last observed waiting for market
+open. **LIVE remains rejected.** That install is not a traded session.
+`scripts/run_orb_m_paper.py` keeps fixture walks and read-only
 Alpaca preflight; `--submit-demo` is retired and does not send orders.
 
 Two ORB-M runners remain for fixtures and the historical session path:

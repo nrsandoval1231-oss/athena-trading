@@ -29,7 +29,7 @@ This uses the ORB trigger as one intraday component. It is not the full historic
 
 ## Configure the runner
 
-Use a Linux host with persistent storage and Python 3.11+. [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md) is the DigitalOcean installation and continuous-operation procedure. Configure only these server-side environment variables through the host's secret settings:
+Use a Linux host with persistent storage and Python 3.11+. [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md) is the installation and continuous-operation procedure. The active host example is a Hostinger VPS. A DigitalOcean Droplet remains an optional path with the same `install.sh`, systemd unit, and `paper.env` pattern. Configure only these server-side environment variables through the host's secret settings:
 
 - `ALPACA_API_KEY`
 - `ALPACA_API_SECRET`
@@ -67,7 +67,7 @@ The Jev-only/learning revision of 24 September 2026 passed **657 root tests and 
 
 **Status correction, 10 October 2026.** Astra Desk is no longer in this repository. The audit of main `d36164ef7843d135dbfeea3684be598566abcf33` is [paper-readiness](audits/2026-10-10-paper-readiness.md). GitHub Actions on that push succeeded (run `38073284465`). The recorded root gate on the lab revision is 672 passed; Astra's suite runs in its own repository. A missing opening minute, a stale bar, or a flat startup error no longer finishes the day by itself. A reserved id Alpaca never created is closed out as `BROKER_ORDER_NOT_FOUND` and is not resent. Read the recovery section above before the first attended session.
 
-**Not launched.** Cloud access and Alpaca/TypeSafe credentials are still required. The test results are fixtures, not observed broker or semantic-accuracy results. The old synthetic demo command now supports fixtures and broker preflight only; it cannot submit an Alpaca demo order. Use this active runner for broker paper operation.
+**Hostinger paper pilot, 10 October 2026.** Nick installed this runner on a Hostinger VPS. `athena-paper.service` is enabled. The host `paper.env` holds the Alpaca paper and TypeSafe keys; those values are not in Git. The service was last observed in `WAITING_FOR_MARKET` for Monday open. Pre-Monday fixture, preflight, and health checks passed that day. That is install and connectivity evidence, not a fill. No broker session has traded. **LIVE remains rejected.** The pilot bounds in the table above are unchanged. Test results and the fixture lab are not observed broker or semantic-accuracy results. The old synthetic demo command now supports fixtures and broker preflight only; it cannot submit an Alpaca demo order. Use this active runner for broker paper operation.
 
 ## Verified API references
 

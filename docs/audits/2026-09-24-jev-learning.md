@@ -1,8 +1,8 @@
 # Repository audit and Jev/learning repair
 
-Date: 24 September 2026. Baseline: remote PR #18 at `2476e6b5dee38f9ac7ce5b65c9a2e6d7a702362f`. Exact tested repair revision is recorded in [implementation status](../IMPLEMENTATION_STATUS.md).
+Date: 24 September 2026. Baseline: remote PR #18 at `2476e6b5dee38f9ac7ce5b65c9a2e6d7a702362f`. Exact tested repair revision is recorded in [implementation status](../IMPLEMENTATION_STATUS.md). The deployment row below is this audit's finding. It is not the 10 October 2026 Hostinger paper-pilot install.
 
-**Verdict:** the bounded paper path now has one model, broker-grounded experience feedback and a prospective learning gate. The local repository gate is repaired. Cloud activation and a demonstrated trading edge remain unverified; the complete dual-strategy product is not finished.
+**Verdict:** the bounded paper path now has one model, broker-grounded experience feedback and a prospective learning gate. The local repository gate is repaired. On this date, cloud activation and a demonstrated trading edge were unverified; the complete dual-strategy product is not finished.
 
 ## Scope and method
 
@@ -43,6 +43,6 @@ Kept research files with imports, tests, receipts or provenance references. No b
 
 ## Verification and operating limits
 
-Local: 657 root tests; 158 Astra tests; repo-wide Ruff 0.15.8 clean; installer shell syntax and diff whitespace clean. Source/config provenance checks pass. Remote CI success, systemd startup, broker authentication, model quality, backup restore, alert delivery and actual live paper outcomes have not been verified.
+Local: 657 root tests; 158 Astra tests; repo-wide Ruff 0.15.8 clean; installer shell syntax and diff whitespace clean. Source/config provenance checks pass. On this date, remote CI success, systemd startup, broker authentication, model quality, backup restore, alert delivery and actual live paper outcomes had not been verified.
 
-No cloud resources were provisioned, provider inference performed, messages sent, real-money authority enabled or frozen experiment rerun. The deliverable is the reviewed code/documentation candidate and its local verification evidence.
+On this date, no cloud resources were provisioned, no provider inference was performed, no messages were sent, real-money authority stayed disabled, and no frozen experiment was rerun. The deliverable is the reviewed code/documentation candidate and its local verification evidence.
