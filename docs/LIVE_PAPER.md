@@ -51,7 +51,11 @@ Preflight authenticates the broker and TypeSafe's read-only model-list endpoint 
 
 ## Recovery and exits
 
-The journal reserves a client order ID before submission. A lost acknowledgement never causes a blind resend; recovery queries the broker by that ID. If the broker cannot resolve it, the runner stays halted and reports the uncertainty. NEW and accepted orders are not fills. Confirmed positions and open orders drive cleanup; cancel/close acknowledgements are not sufficient to declare flat.
+The journal reserves a client order ID before submission. A lost acknowledgement never causes a blind resend; recovery queries the broker by that ID. NEW and accepted orders are not fills. Confirmed positions and open orders drive cleanup; cancel/close acknowledgements are not sufficient to declare flat.
+
+A missing opening-range minute or a completed bar older than 90 seconds waits in the session (`OPENING_RANGE_INCOMPLETE` or `STALE_BAR`). A TypeSafe or startup error with no reserved order and a flat account exits without a halt, and the supervisor starts that same journal again. A halt is still written when an order id is reserved, a position or open order is visible, or the daily-loss cap hits. Operator stop still halts.
+
+If the reserved id was never acknowledged and Alpaca answers HTTP 404 while the account is flat, the runner records `order_lookup_miss` and looks once more. A second flat 404 records `entry_not_created` with reason `BROKER_ORDER_NOT_FOUND` and ends recovery. The id is not submitted again. A 404 while a position or open order remains, or a 404 after an `entry_ack`, stays unresolved and is still not resent.
 
 Restart the same `--run` command with the same journal and Alpaca credentials to recover. An existing reserved entry does not require Jev, the TypeSafe key, or healthy learning state to recover and exit. The CLI reconstructs its complete saved policy binding, including legacy model labels, without restoring old model code. Ctrl-C/SIGTERM latches a halt and attempts cancellation and position closure. The runner observes flat positions, no working orders, and a terminal entry twice before recording `flat_confirmed`. Broker observations retain fill quantities/prices; no simulated P&L is used.
 
@@ -61,7 +65,7 @@ If cleanup cannot finish, it prints `UNRESOLVED_PAPER_EXPOSURE` and exits nonzer
 
 The Jev-only/learning revision of 24 September 2026 passed **657 root tests and 158 Astra tests**, with repo-wide Ruff 0.15.8 clean. Tests exercise typed decisions, malformed responses, rechecked risk, broker recovery, checkpoint corruption, point-in-time experience, prospective validation, expiry and learned vetoes. See the immutable revision evidence in [implementation status](IMPLEMENTATION_STATUS.md).
 
-**Status correction, 10 October 2026.** Astra Desk is no longer in this repository. Current main is `d36164ef7843d135dbfeea3684be598566abcf33`. The paper runtime matches `733a1c441dbed15799397192cf6470b46c370d45`. GitHub Actions on that main push succeeded (run `38073284465`). The recorded root gate on the lab revision is 672 passed; Astra's suite runs in its own repository. A missing IEX opening minute or another startup error currently latches a day-ending halt. Read [the paper-readiness audit](audits/2026-10-10-paper-readiness.md) before the first attended session.
+**Status correction, 10 October 2026.** Astra Desk is no longer in this repository. The audit of main `d36164ef7843d135dbfeea3684be598566abcf33` is [paper-readiness](audits/2026-10-10-paper-readiness.md). GitHub Actions on that push succeeded (run `38073284465`). The recorded root gate on the lab revision is 672 passed; Astra's suite runs in its own repository. A missing opening minute, a stale bar, or a flat startup error no longer finishes the day by itself. A reserved id Alpaca never created is closed out as `BROKER_ORDER_NOT_FOUND` and is not resent. Read the recovery section above before the first attended session.
 
 **Not launched.** Cloud access and Alpaca/TypeSafe credentials are still required. The test results are fixtures, not observed broker or semantic-accuracy results. The old synthetic demo command now supports fixtures and broker preflight only; it cannot submit an Alpaca demo order. Use this active runner for broker paper operation.
 

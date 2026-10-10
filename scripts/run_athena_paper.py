@@ -19,6 +19,20 @@ from athena_trading.paper.live import (
 )
 
 
+def _halt_for_failure(pilot: ActivePaperPilot, broker: LivePaperAPI) -> bool:
+    """Halt when an order is reserved or exposure is visible.
+
+    A flat account with no reservation stays open so the supervisor can retry.
+    """
+    if pilot._entry() is not None:
+        return True
+    try:
+        snapshot = broker.snapshot()
+    except Exception:
+        return False
+    return bool(snapshot.get("positions") or snapshot.get("orders"))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--symbol", required=True, help="one explicit US equity symbol")
@@ -85,11 +99,11 @@ def main(argv: list[str] | None = None) -> int:
             if status != previous_status:
                 print(json.dumps({"mode": "PAPER", "status": status}), flush=True)
                 previous_status = status
-            if status == "COMPLETE":
+            if status in {"COMPLETE", "ENTRY_NOT_CREATED"}:
                 if learning is None:
                     learning = LearningStore(args.journal.parent)
                 learning.ingest(journal, datetime.now(UTC))
-                journal.append("session_complete", at=datetime.now(UTC))
+                journal.append("session_complete", at=datetime.now(UTC), status=status)
                 return 0
             time.sleep(5)
         pilot.halt("OPERATOR_STOP")
@@ -97,18 +111,27 @@ def main(argv: list[str] | None = None) -> int:
         # No provider payload, credentials, or traceback in operator output.
         print(json.dumps({"ok": False, "error_type": type(exc).__name__,
                           "error": str(exc)[:250]}), file=sys.stderr, flush=True)
-        if pilot is not None:
-            try:
-                pilot.halt("RUNNER_ERROR")
-            except Exception:
-                pass  # still attempt broker cleanup if the journal write failed
+        if pilot is not None and journal is not None and not journal.last("halt"):
+            if _halt_for_failure(pilot, broker):
+                try:
+                    pilot.halt("RUNNER_ERROR")
+                except Exception:
+                    pass  # still attempt broker cleanup if the journal write failed
     finally:
-        if pilot is not None and pilot._entry() and not journal.last("flat_confirmed"):
+        unresolved = (
+            pilot is not None and journal is not None and pilot._entry()
+            and not journal.last("flat_confirmed") and not journal.last("entry_not_created")
+        )
+        if unresolved:
             deadline = time.monotonic() + 120
             while time.monotonic() < deadline:
                 try:
                     if pilot.flatten_step(broker.snapshot()):
-                        print(json.dumps({"status": "FLAT_CONFIRMED", "mode": "PAPER"}), flush=True)
+                        kind = (
+                            "ENTRY_NOT_CREATED" if journal.last("entry_not_created")
+                            else "FLAT_CONFIRMED"
+                        )
+                        print(json.dumps({"status": kind, "mode": "PAPER"}), flush=True)
                         break
                 except Exception:
                     pass

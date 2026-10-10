@@ -68,6 +68,8 @@ The supervisor checks broker session state, sleeps between checks, and starts th
 
 Recovery uses the original journal's symbol, feed and policy binding. A reserved entry can reconcile and close without TypeSafe credentials. It still needs the broker and writable state. The service never restores a backup automatically, creates a fresh journal to bypass a halt, or blindly resends a reserved entry. Broker client IDs remain stable per account/session.
 
+A flat account with no reserved order does not get a `RUNNER_ERROR` halt for a stale bar, a missing opening minute, or a startup/model-list failure. The supervisor retries that journal. `entry_not_created` (`BROKER_ORDER_NOT_FOUND`) finishes the reserved id after two flat HTTP 404s and does not submit it again. A halt with no reserved entry still finishes that dated journal: operator stop, daily loss, or visible exposure. systemd restart does not clear a halt that was written.
+
 The child begins flattening 15 minutes before the broker-reported close, including early closes. A missed close or date rollover ends an empty cloud session. An unresolved position continues recovery rather than authorizing the next day. A per-session halt without exposure permits a fresh journal on the next market day; to suspend all future sessions, stop the service.
 
 ```bash
@@ -80,7 +82,7 @@ SIGTERM requests the child's existing halt and cleanup path. The service allows 
 
 ## Verified state and references
 
-As of 24 September 2026 the Jev/learning revision had **657 root tests and 158 Astra tests** passing, with repo-wide Ruff 0.15.8 clean. As of 10 October 2026 Astra Desk is a separate repository, current main is `d36164ef7843d135dbfeea3684be598566abcf33`, and GitHub Actions run `38073284465` on that push succeeded. Installation and systemd startup on the target Droplet have not occurred. A child `halt` with no reserved entry finishes that dated journal for the day; systemd restart does not clear it. See [the paper-readiness audit](audits/2026-10-10-paper-readiness.md). Exact tested revision and command evidence are in [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md).
+As of 24 September 2026 the Jev/learning revision had **657 root tests and 158 Astra tests** passing, with repo-wide Ruff 0.15.8 clean. As of 10 October 2026 Astra Desk is a separate repository, current main is `d36164ef7843d135dbfeea3684be598566abcf33`, and GitHub Actions run `38073284465` on that push succeeded. Installation and systemd startup on the target Droplet have not occurred. Flat-day data and startup errors retry; a halt that was written, or `entry_not_created`, finishes that dated journal. See [the paper-readiness audit](audits/2026-10-10-paper-readiness.md) and [LIVE_PAPER.md](LIVE_PAPER.md#recovery-and-exits). Exact tested revision and command evidence are in [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md).
 
 The DigitalOcean console returned “Site Unavailable” in this workspace browser on the initial visit and one reload. No DigitalOcean credential was found in the connected credential catalog. Alpaca and TypeSafe runtime keys are absent here. **No server has been provisioned, no service deployed, and no provider inference or paper order executed.**
 

@@ -1,5 +1,20 @@
 # Implementation status
 
+## Paper session resilience — 10 October 2026
+
+A flat account with no reserved order no longer gets a day-ending `RUNNER_ERROR` halt for a missing opening minute, a stale bar, or a TypeSafe/startup failure. The supervisor retries that journal. A reserved id that Alpaca answers with HTTP 404 twice, while the account stays flat and no `entry_ack` was stored, is journaled as `entry_not_created` / `BROKER_ORDER_NOT_FOUND` and is not submitted again. A 404 with a position or open order, or after an acknowledgement, stays unresolved. Halt remains for a reserved order, visible exposure, daily loss, and operator stop. LIVE remains rejected. The fixture lab is not on this path.
+
+Local checks, Python 3.12, on `bcf3f446704a0a8f58a713bc86a723574c240e63`. This sentence is a docs-only follow-up; the runtime and tests are that commit.
+
+```bash
+python -m pytest -q                 # 681 passed in 11.57s
+python -m ruff check .              # clean, ruff 0.15.8
+bash -n deploy/install.sh           # clean
+git diff --check                    # clean
+```
+
+Root pytest does not include Astra Desk; that suite lives in its own repository. These results are not a broker session.
+
 ## Paper-readiness audit — 10 October 2026
 
 Audited main `d36164ef7843d135dbfeea3684be598566abcf33` (PR #21). The paper runner, supervisor, journal, learning store, broker pin, and installer are unchanged since `733a1c441dbed15799397192cf6470b46c370d45`. The pilot is not deployed. LIVE remains rejected. The fixture lab is not paper evidence and must not auto-promote. Full findings and the owner checklist: [paper-readiness audit](audits/2026-10-10-paper-readiness.md).
