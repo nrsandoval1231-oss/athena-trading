@@ -20,10 +20,10 @@ Repos stay separate. The paper pilot, learning store, and live runner are not up
 1. The builtin catalog is split before any mutation. Search sessions are chronological. The later holdout is hashed. Search receives that hash, not the bars.
 2. Walk-forward inside search: the earliest `max(1, n // 3)` sessions are a burn-in fold. The later sessions are the only sample the survive gate reads.
 3. Each candidate is one adaptive-surface step, up and down, except a boolean field which is a single flip.
-4. The best PASS candidate may become the next search parent. That parent is still inside the toy. `promoted_to_paper_pilot` stays false.
-5. After the generation receipts are on disk, the holdout opens once. Survivors are scored against the original parent. Those labels are not fed back into search.
+4. The best PASS candidate becomes the next search parent when one exists. The next generation mutates that parent and scores the same sealed search partition again. `promoted_to_paper_pilot` stays false.
+5. After every generation receipt is on disk, the holdout opens once. Survivors from every generation are scored against the original parent. Those labels are not fed back into search.
 
-The builtin search fold is a spike that round-trips. A higher `peak_retention` can pass that fold and still fail the holdout, where the same tighter trail exits during a pause before a later run. That disagreement is why the holdout stays sealed.
+The default command runs three generations. On the builtin spike fold, search keeps raising `peak_retention` because that fold pays a tighter trail. The holdout then fails that chain. A different generation-0 survivor can pass the holdout and still lose the search seed, because the holdout is not an input.
 
 ## Gates
 
@@ -48,10 +48,11 @@ UNKNOWN does not survive. A holdout PASS is still not written into the paper pil
 ## Run
 
 ```bash
+python -m pip install pytest ruff==0.15.8 .
 python scripts/run_fixture_self_improve.py --out /tmp/fixture-self-improve
 ```
 
-The process writes `generation-000.json`, `holdout-evaluation.json`, and `summary.json`. It refuses `LIVE`, refuses an `--authority` flag, and refuses to overwrite generation receipts. Further generations reuse the same search bars; they still do not open the holdout until the end.
+`--generations` defaults to 3. `--out` is required. `-h` prints help. The process writes `generation-000.json` through `generation-002.json`, `holdout-evaluation.json`, `summary.json`, and `report.md`. Stdout is the same markdown report. It refuses `LIVE`, refuses an `--authority` flag, and refuses to overwrite generation receipts. Later generations reuse the same search bars and still do not open the holdout until the end.
 
 ## What this is not
 

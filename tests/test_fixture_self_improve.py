@@ -220,7 +220,7 @@ def test_lab_kills_most_candidates_and_writes_absent_receipts(tmp_path, monkeypa
         raise AssertionError("network")
 
     monkeypatch.setattr(socket, "create_connection", _network)
-    summary = run_fixture_lab(tmp_path)
+    summary = run_fixture_lab(tmp_path, generations=1)
     assert summary["execution_authority"] == "ABSENT"
     assert summary["promoted_to_paper_pilot"] is False
     assert summary["aat_v1_holdout_consumed"] is False
@@ -314,6 +314,59 @@ def test_sources_do_not_import_broker_or_model_clients():
             assert not any(part in lowered for part in banned), name
 
 
+def test_default_run_seeds_three_generations_and_opens_holdout_once(tmp_path, monkeypatch):
+    def _network(*_args, **_kwargs):
+        raise AssertionError("network")
+
+    monkeypatch.setattr(socket, "create_connection", _network)
+    summary = run_fixture_lab(tmp_path)
+    assert summary["generations"] == 3
+    assert summary["holdout_open_count"] == 1
+    assert summary["promoted_to_paper_pilot"] is False
+    assert summary["execution_authority"] == "ABSENT"
+    assert summary["aat_v1_holdout_consumed"] is False
+    kept = [row["kept_candidate"] for row in summary["search_lineage"]]
+    assert kept == [
+        "g0-peak_retention-+0.1",
+        "g1-peak_retention-+0.1",
+        "g2-peak_retention-+0.1",
+    ]
+    assert summary["search_lineage"][1]["seeded_from"] == "g0-peak_retention-+0.1"
+    assert summary["search_lineage"][2]["seeded_from"] == "g1-peak_retention-+0.1"
+    receipts = [
+        json.loads((tmp_path / f"generation-{index:03d}.json").read_text(encoding="utf-8"))
+        for index in range(3)
+    ]
+    assert receipts[1]["parent_parameter_identity"] == receipts[0]["next_search_parent_identity"]
+    assert receipts[2]["parent_parameter_identity"] == receipts[1]["next_search_parent_identity"]
+    assert receipts[1]["search_partition_reused"] is True
+    assert receipts[2]["search_partition_reused"] is True
+    assert receipts[2]["parent_lineage"] == [
+        {"field": "peak_retention", "value": 0.75},
+        {"field": "peak_retention", "value": 0.85},
+    ]
+    for receipt in receipts:
+        assert receipt["sealed_holdout_accessed"] is False
+        assert receipt["execution_authority"] == "ABSENT"
+        assert receipt["promoted_to_paper_pilot"] is False
+        assert "holdout-001" not in receipt["readable"]
+        assert "Parent selection mean R" in receipt["readable"]
+        for record in receipt["candidates"]:
+            assert record["fields_changed"] == [record["field"]]
+    holdout = json.loads((tmp_path / "holdout-evaluation.json").read_text(encoding="utf-8"))
+    by_id = {record["candidate_id"]: record for record in holdout["candidates"]}
+    assert by_id["g0-peak_retention-+0.1"]["verdict"] == "FAIL"
+    assert by_id["g2-peak_retention-+0.1"]["verdict"] == "FAIL"
+    report = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert report == summary["report_text"]
+    assert "Execution authority: ABSENT" in report
+    assert "Promoted to paper pilot: false" in report
+    assert "Search lineage" in report
+    assert "## Holdout" in report
+    assert "harmful on the sealed holdout" in report
+    assert "g1-peak_retention-+0.1" in report
+
+
 def test_cli_rejects_live_and_authority_and_writes_receipts(tmp_path, capsys):
     script = _script()
     assert script.main(["LIVE", "--out", str(tmp_path)]) == 2
@@ -323,10 +376,18 @@ def test_cli_rejects_live_and_authority_and_writes_receipts(tmp_path, capsys):
     assert list(tmp_path.iterdir()) == []
     assert script.main(["--out", str(tmp_path)]) == 0
     assert (tmp_path / "generation-000.json").is_file()
+    assert (tmp_path / "generation-002.json").is_file()
     assert (tmp_path / "holdout-evaluation.json").is_file()
     assert (tmp_path / "summary.json").is_file()
-    payload = json.loads(capsys.readouterr().out)
+    assert (tmp_path / "report.md").is_file()
+    stdout = capsys.readouterr().out
+    assert stdout == (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "Execution authority: ABSENT" in stdout
+    payload = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
     assert payload["execution_authority"] == "ABSENT"
+    assert payload["generations"] == 3
+    assert payload["promoted_to_paper_pilot"] is False
+    assert "report_text" not in payload
     assert script.main(["--out", str(tmp_path)]) == 2
 
 

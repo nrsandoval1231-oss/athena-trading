@@ -47,6 +47,10 @@ SESSION_SCHEMA = "athena-fixture-self-improve-session-v1"
 
 EXECUTION_AUTHORITY = "ABSENT"
 LAB_EQUITY = 100_000.0
+# Default CLI path. Each generation seeds from the best search survivor.
+# The same sealed search partition is reused. The holdout stays shut until
+# every generation receipt exists.
+DEFAULT_GENERATIONS = 3
 # Sealed when the synthetic catalog below was fixed. Changing a bar is a new
 # catalog, not a quiet edit: update this hash in the same change.
 BUILTIN_CATALOG_IDENTITY = (
@@ -681,6 +685,7 @@ def run_search(
     for generation in range(generations):
         if materialize(lineage).identity_hash != parent.identity_hash:
             raise RuntimeError("search parent drifted from its lineage")
+        starting_lineage = [dict(step) for step in lineage]
         parent_burn = score_sessions(parent, burn_in, partition="SEARCH")
         parent_selection = score_sessions(parent, selection, partition="SEARCH")
         if parent_selection.closed_episodes < chosen_policy.min_closed_episodes:
@@ -750,6 +755,7 @@ def run_search(
             "paper_walker": parent_walker,
             "parent_burn_in": parent_burn.as_dict(),
             "parent_identity": lab_parent().identity_hash,
+            "parent_lineage": starting_lineage,
             "parent_parameter_identity": starting_identity,
             "parent_selection": parent_selection.as_dict(),
             "promoted_to_paper_pilot": False,
@@ -769,10 +775,203 @@ def run_search(
                 "selection_session_ids": [session.session_id for session in selection],
             },
         }
+        receipt["readable"] = render_generation(receipt)
         path = out / f"generation-{generation:03d}.json"
         _write_json(path, receipt)
         receipts.append(receipt)
     return tuple(receipts)
+
+
+def _fmt_num(value: Any) -> str:
+    if value is None:
+        return "—"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        text = f"{value:.4f}".rstrip("0").rstrip(".")
+        return text or "0"
+    return str(value)
+
+
+def _fmt_delta(value: Any) -> str:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return "—"
+    sign = "+" if value > 0 else ""
+    return sign + _fmt_num(float(value))
+
+
+_REASON_TEXT = {
+    "BEATS_PARENT": "beats parent on the selection fold",
+    "DOES_NOT_BEAT_PARENT": "does not beat parent on the selection fold",
+    "ILLEGAL_MUTATION": "illegal step; no second field was tried",
+    "INSUFFICIENT_EVIDENCE": "too few closed episodes",
+    "HOLDOUT_CONFIRMED": "confirmed on the sealed holdout",
+    "HOLDOUT_HARM": "harmful on the sealed holdout",
+    "HOLDOUT_INCONCLUSIVE": "inconclusive on the sealed holdout",
+}
+
+
+def _reason_text(reason: str) -> str:
+    return _REASON_TEXT.get(reason, reason)
+
+
+def _lineage_phrase(steps: Sequence[Mapping[str, Any]]) -> str:
+    if not steps:
+        return "lab parent"
+    return " → ".join(
+        f"{step['field']}={_fmt_num(step['value'])}" for step in steps
+    )
+
+
+def render_generation(receipt: Mapping[str, Any]) -> str:
+    """One generation as a markdown table. Search receipts omit holdout bars."""
+    parent_mean = receipt["parent_selection"]["mean_r"]
+    seeded = _lineage_phrase(receipt.get("parent_lineage") or [])
+    lines = [
+        f"## Generation {receipt['generation']}",
+        "",
+        f"Parent selection mean R: {_fmt_num(parent_mean)}. Seed: {seeded}.",
+        f"Paper walker: {receipt['paper_walker']['execution_authority']}, "
+        f"{receipt['paper_walker']['broker_class']} submissions "
+        f"{receipt['paper_walker']['submitted_count']}, "
+        f"halt {receipt['paper_walker']['halt_reason']}.",
+        "",
+        "| Candidate | Field | Before | After | Search mean R | Delta | Verdict | Reason |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for record in receipt["candidates"]:
+        selection = record.get("selection") or {}
+        lines.append(
+            "| {candidate} | {field} | {before} | {after} | {mean} | {delta} | {verdict} | {reason} |".format(
+                candidate=record["candidate_id"],
+                field=record["field"],
+                before=_fmt_num(record["before"]),
+                after=_fmt_num(record["after"]),
+                mean=_fmt_num(selection.get("mean_r")),
+                delta=_fmt_delta(record.get("delta_r")),
+                verdict=record["verdict"],
+                reason=_reason_text(str(record["verdict_reason"])),
+            )
+        )
+    kept = receipt["next_search_parent_candidate"] or "(parent unchanged)"
+    lines.extend([
+        "",
+        f"Survived: {', '.join(receipt['survived']) or '—'}.",
+        f"Killed: {', '.join(receipt['killed']) or '—'}.",
+        f"Unknown: {', '.join(receipt['unknown']) or '—'}.",
+        f"Next search parent: {kept}.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def render_holdout(holdout: Mapping[str, Any]) -> str:
+    parent_mean = holdout["parent_holdout"]["mean_r"]
+    lines = [
+        "## Holdout",
+        "",
+        "Opened once after search. Baseline is the generation-0 parent, "
+        f"mean R {_fmt_num(parent_mean)}.",
+        "These verdicts do not choose the next search parent and do not promote a pilot.",
+        "",
+        "| Generation | Candidate | Lineage | Mean R | Delta | Verdict | Reason |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for record in holdout["candidates"]:
+        metrics = record.get("holdout") or {}
+        lines.append(
+            "| {generation} | {candidate} | {lineage} | {mean} | {delta} | {verdict} | {reason} |".format(
+                generation=record["generation"],
+                candidate=record["candidate_id"],
+                lineage=_lineage_phrase(record.get("lineage") or []),
+                mean=_fmt_num(metrics.get("mean_r")),
+                delta=_fmt_delta(record.get("delta_r")),
+                verdict=record["verdict"],
+                reason=_reason_text(str(record["verdict_reason"])),
+            )
+        )
+    if not holdout["candidates"]:
+        lines.append("| — | — | — | — | — | — | no search survivor |")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def search_lineage_rows(receipts: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Who each generation kept, using only search receipts."""
+    rows: list[dict[str, Any]] = []
+    previous: str | None = None
+    for receipt in receipts:
+        kept_id = receipt["next_search_parent_candidate"]
+        kept = None
+        if kept_id is not None:
+            kept = next(
+                record for record in receipt["candidates"]
+                if record["candidate_id"] == kept_id
+            )
+        rows.append({
+            "advanced": receipt["search_parent_advanced"],
+            "after": None if kept is None else kept["after"],
+            "before": None if kept is None else kept["before"],
+            "delta_r": None if kept is None else kept["delta_r"],
+            "field": None if kept is None else kept["field"],
+            "generation": receipt["generation"],
+            "kept_candidate": kept_id,
+            "seeded_from": previous or "lab_parent",
+            "selection_mean_r": None if kept is None else kept["selection"]["mean_r"],
+        })
+        if kept_id is not None:
+            previous = kept_id
+    return rows
+
+
+def render_lineage(rows: Sequence[Mapping[str, Any]]) -> str:
+    lines = [
+        "## Search lineage",
+        "",
+        "Each generation seeds from the best PASS survivor of the previous one. "
+        "The sealed search partition is reused. Holdout labels are not an input.",
+        "",
+        "| Generation | Seeded from | Kept | Field | After | Selection mean R | Delta |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for row in rows:
+        lines.append(
+            "| {generation} | {seed} | {kept} | {field} | {after} | {mean} | {delta} |".format(
+                generation=row["generation"],
+                seed=row["seeded_from"],
+                kept=row["kept_candidate"] or "(parent unchanged)",
+                field=row["field"] or "—",
+                after=_fmt_num(row["after"]),
+                mean=_fmt_num(row["selection_mean_r"]),
+                delta=_fmt_delta(row["delta_r"]),
+            )
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_report(
+    receipts: Sequence[Mapping[str, Any]],
+    holdout: Mapping[str, Any],
+    lineage: Sequence[Mapping[str, Any]],
+) -> str:
+    header = "\n".join([
+        "# Fixture self-improve",
+        "",
+        "Execution authority: ABSENT. Live enabled: false. Alpaca called: false. "
+        "TypeSafe called: false. AAT-V1 holdout consumed: false. "
+        "Promoted to paper pilot: false.",
+        "",
+        "Search reused one sealed partition. The holdout was opened once, "
+        "after the last generation receipt, and its verdicts were not fed back.",
+        "",
+    ])
+    body = [header, render_lineage(lineage)]
+    body.extend(str(receipt["readable"]) for receipt in receipts)
+    body.append(render_holdout(holdout))
+    return "\n".join(body).rstrip() + "\n"
 
 
 def _pass_records(generation_receipts: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -843,7 +1042,7 @@ def evaluate_sealed_holdout(
             "verdict": verdict,
             "verdict_reason": reason,
         })
-    return {
+    payload = {
         "aat_v1_holdout_consumed": False,
         "alpaca_called": False,
         "baseline": "generation-0 parent",
@@ -865,6 +1064,8 @@ def evaluate_sealed_holdout(
         "selection_uses_holdout": False,
         "typesafe_called": False,
     }
+    payload["readable"] = render_holdout(payload)
+    return payload
 
 
 def _load_generation_receipts(out: Path, generations: int) -> list[dict[str, Any]]:
@@ -878,12 +1079,18 @@ def _load_generation_receipts(out: Path, generations: int) -> list[dict[str, Any
 def run_fixture_lab(
     out_dir: str | Path,
     *,
-    generations: int = 1,
+    generations: int = DEFAULT_GENERATIONS,
     catalog: Sequence[LabSession] | None = None,
     scope: MutationScope | None = None,
     policy: GatePolicy | None = None,
 ) -> dict[str, Any]:
-    """Run search, write its receipts, then open the holdout once."""
+    """Run search, write its receipts, then open the holdout once.
+
+    The default is three generations. Generation ``n+1`` seeds from the best
+    PASS survivor of generation ``n`` when one exists. Every generation scores
+    the same sealed search partition. The holdout opens once, after the last
+    receipt, and its verdicts are not a search input.
+    """
     _assert_lab_authority()
     if generations < 1:
         raise ValueError("generations must be positive")
@@ -904,22 +1111,45 @@ def run_fixture_lab(
     receipts = _load_generation_receipts(out, generations)
     holdout = evaluate_sealed_holdout(seal, receipts, policy=chosen_policy)
     _write_json(out / "holdout-evaluation.json", holdout)
+    lineage = search_lineage_rows(receipts)
+    report = render_report(receipts, holdout, lineage)
+    (out / "report.md").write_text(report, encoding="utf-8")
     summary = {
         "aat_v1_holdout_consumed": False,
         "execution_authority": EXECUTION_AUTHORITY,
         "generations": generations,
+        "generations_summary": [
+            {
+                "generation": receipt["generation"],
+                "kept_candidate": receipt["next_search_parent_candidate"],
+                "killed": list(receipt["killed"]),
+                "parent_selection_mean_r": receipt["parent_selection"]["mean_r"],
+                "survived": list(receipt["survived"]),
+                "unknown": list(receipt["unknown"]),
+            }
+            for receipt in receipts
+        ],
         "holdout_open_count": holdout["holdout_open_count"],
         "holdout_verdicts": [
-            {"candidate_id": record["candidate_id"], "verdict": record["verdict"]}
+            {
+                "candidate_id": record["candidate_id"],
+                "delta_r": record["delta_r"],
+                "generation": record["generation"],
+                "verdict": record["verdict"],
+                "verdict_reason": record["verdict_reason"],
+            }
             for record in holdout["candidates"]
         ],
         "killed": sum(len(receipt["killed"]) for receipt in receipts),
         "live_enabled": False,
         "out": str(out),
         "promoted_to_paper_pilot": False,
+        "report": "report.md",
         "schema_version": SUMMARY_SCHEMA,
+        "search_lineage": lineage,
         "survived": sum(len(receipt["survived"]) for receipt in receipts),
         "unknown": sum(len(receipt["unknown"]) for receipt in receipts),
     }
     _write_json(out / "summary.json", summary)
+    summary["report_text"] = report
     return summary

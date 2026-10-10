@@ -4,17 +4,22 @@ Mutates one management knob at a time, scores sealed synthetic bars, and
 writes generation receipts. Execution authority stays ABSENT. This process
 does not call a broker or model client and does not read the AAT-V1 holdout.
 
+The default is 3 search generations on the builtin fixtures. Each generation
+seeds from the best search survivor. The holdout opens once after the last
+generation and is not fed back into search.
+
     python scripts/run_fixture_self_improve.py --out /tmp/fixture-self-improve
 """
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
 from athena_trading.execution.authority import AuthorityError
-from athena_trading.paper.self_improve import HoldoutSealError, run_fixture_lab
+from athena_trading.paper.self_improve import (
+    DEFAULT_GENERATIONS, HoldoutSealError, run_fixture_lab,
+)
 
 
 def _mentions_live(argv: list[str]) -> bool:
@@ -26,14 +31,20 @@ def main(argv: list[str] | None = None) -> int:
     if _mentions_live(raw):
         print("LIVE execution authority is not available", file=sys.stderr)
         return 2
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument(
         "--out", type=Path, required=True,
         help="directory for generation and holdout receipts",
     )
     parser.add_argument(
-        "--generations", type=int, default=1,
-        help="search generations on the same fixture partition (default 1)",
+        "--generations", type=int, default=DEFAULT_GENERATIONS,
+        help=(
+            "search generations on the same sealed partition "
+            f"(default {DEFAULT_GENERATIONS})"
+        ),
     )
     parser.add_argument(
         "--authority", default=None, help=argparse.SUPPRESS,
@@ -50,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
     except (ValueError, AuthorityError, HoldoutSealError, FileExistsError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    print(json.dumps(summary, indent=2, sort_keys=True))
+    print(summary["report_text"], end="")
     return 0
 
 
