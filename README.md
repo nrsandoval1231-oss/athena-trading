@@ -42,8 +42,9 @@ From the repository root, in a Python 3.11+ environment:
 python -m pip install pytest ruff==0.15.8 .
 python -m pytest -q
 python scripts/run_orb_m_paper.py --walk-bars
+python scripts/run_fixture_self_improve.py --out /tmp/fixture-self-improve
 ```
 
-The bar walk is a fixture demonstration. It is not the completed dual-strategy bot.
+The bar walk is a fixture demonstration. It is not the completed dual-strategy bot. The self-improve command is an offline mutator on synthetic bars; authority stays ABSENT. See [FIXTURE_SELF_IMPROVE.md](docs/FIXTURE_SELF_IMPROVE.md).
 
 Astra Desk has moved into its own private [standalone repository](https://github.com/nrsandoval1231-oss/astra-desk). Athena's local/CI verification now covers Athena only; Astra has an independent Python 3.11/3.12 test and lint gate. See the [extraction receipt](docs/ASTRA_DESK_EXTRACTION.md) and [implementation status](docs/IMPLEMENTATION_STATUS.md).

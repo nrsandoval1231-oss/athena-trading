@@ -43,4 +43,8 @@ At one trade per session, a promoted rule will take substantial time to earn. Th
 
 The trade-to-memory-to-candidate-to-prospective-validation-to-veto path is exercised with fixtures, including a test that a promoted rule changes the actual pilot's behavior. **No live paper session or measured performance improvement has yet been observed.** The general Athena Core service integration, richer strategy lessons, full replay counterfactuals and automatic code/model training remain incomplete.
 
+## Fixture self-improve lab
+
+`paper/self_improve.py` is a separate offline toy. It does not register candidates, promote NO_TRADE rules, or write the experience store. See [FIXTURE_SELF_IMPROVE.md](FIXTURE_SELF_IMPROVE.md).
+
 References: [Alpaca session/order semantics](https://docs.alpaca.markets/us/docs/orders-at-alpaca), [Jev limitations](https://docs.typesafe.ai/model-jaggedness/jev-1.13), [canon](ATHENA_TRADING_CANON.md), [deployment](CLOUD_DEPLOYMENT.md).

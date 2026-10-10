@@ -1,5 +1,13 @@
 # Implementation status
 
+## Fixture self-improve lab — 10 October 2026
+
+Offline evolutionary toy in `paper/self_improve.py` and `scripts/run_fixture_self_improve.py`. Sol's role is a `MutationScope` over scalar `ManagementParameters` fields. A local mutator applies one field through `evolve()`. An Astra-style PASS/FAIL/UNKNOWN gate uses a precommitted policy on a walk-forward slice of synthetic search bars. The paper walker runs only under `ExecutionAuthority.ABSENT`; simulated episode R comes from `run_symbol_session`. A frozen holdout is hashed before search and opened once afterward. Generation receipts record ABSENT authority, zero `FixtureBroker` submissions, and that the AAT-V1 holdout was not consumed. Nothing is promoted into the paper pilot. See [FIXTURE_SELF_IMPROVE.md](FIXTURE_SELF_IMPROVE.md).
+
+This is not broker evidence, LIVE authority, or trading-performance evidence. The lab does not call Alpaca or TypeSafe.
+
+Local gate results for this lab are recorded after the commands below are run on the revision that contains it.
+
 ## Repository split — 7 October 2026
 
 Astra Desk has been independently extracted to private [`nrsandoval1231-oss/astra-desk`](https://github.com/nrsandoval1231-oss/astra-desk) through its [merged PR #1](https://github.com/nrsandoval1231-oss/astra-desk/pull/1). The migration reconstructed 64 tracked files and all three source-directory snapshots with exact Git tree SHA matches. Standalone GitHub Actions passed 158 tests and Ruff on Python 3.11 and 3.12. This repository no longer contains `research/astra-desk/` or installs its test dependencies; Athena has its own CI gate. See [extraction receipt](ASTRA_DESK_EXTRACTION.md).
