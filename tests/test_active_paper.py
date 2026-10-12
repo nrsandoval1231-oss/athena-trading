@@ -13,10 +13,14 @@ import pytest
 from athena_trading.athena_adapter.jev import (
     JEV_ENDPOINT, JEV_MODEL, JevDecisionEngine, ModelError, questions, request_json,
 )
+from athena_trading.execution.authority import (
+    AuthorityError, ExecutionAuthority, parse_authority,
+)
 from athena_trading.paper import cloud
 from athena_trading.paper.journal import PaperJournal
 from athena_trading.paper.live import (
-    ActivePaperPilot, DataDeferral, LivePaperAPI, PilotPolicy, signal_packet,
+    ActivePaperPilot, DataDeferral, LivePaperAPI, PilotPolicy, policy_from_environment,
+    signal_packet,
 )
 
 NOW = datetime(2026, 9, 24, 13, 46, 5, tzinfo=UTC)
@@ -31,6 +35,17 @@ def response(choice="TAKE_TRADE", confidence=0.9):
                               "probabilities": {opt: 0.9 if opt == choice else 0.05
                                                 for opt in ("TAKE_TRADE", "NO_TRADE", "INSUFFICIENT_EVIDENCE")}}
                         for key in questions()}}
+
+
+def scored_response(take, confidence, choice="TAKE_TRADE"):
+    names = ("TAKE_TRADE", "NO_TRADE", "INSUFFICIENT_EVIDENCE")
+    rest = (1.0 - take) / 2.0
+    probabilities = {name: take if name == choice else rest for name in names}
+    return {"model": JEV_MODEL, "usage": {"input_tokens": 300, "output_tokens": 50},
+            "answers": {"entry_decision": {
+                "type": "choice", "choice": choice, "confidence": confidence,
+                "probabilities": probabilities,
+            }}}
 
 
 def market_bars():
@@ -724,3 +739,256 @@ def test_failure_after_reservation_halts_and_does_not_resubmit(tmp_path, monkeyp
     assert "POST" not in calls
     task = cloud.next_session(tmp_path, day)
     assert task.recovery and task.path == journal_path
+
+
+def test_jev_thresholds_default_and_read_environment(monkeypatch, tmp_path):
+    policy = PilotPolicy("SPY")
+    assert (policy.support_min, policy.confidence_min, policy.fallback_after_open_minutes) == (0.6, 0.5, 120)
+    packet = {"candidate_direction": "LONG", "observations": {}}
+
+    def accepted(take, confidence, **overrides):
+        engine = JevDecisionEngine(
+            "fixture-key", transport=lambda *args, **kwargs: scored_response(take, confidence),
+            **overrides,
+        )
+        return engine.decide(packet).accepted
+
+    # Reported best on 2026-10-12. No bar or adjudication fixture for that session is in the repo.
+    assert accepted(0.74, 0.61) is True
+    assert accepted(0.74, 0.61, support_min=0.8, confidence_min=0.6) is False
+    assert accepted(0.6, 0.5) is True
+    assert accepted(0.59, 0.5) is False
+    assert accepted(0.6, 0.49) is False
+
+    monkeypatch.setenv("ATHENA_JEV_MIN_PTAKE", "0.74")
+    monkeypatch.setenv("ATHENA_JEV_MIN_CONFIDENCE", "0.61")
+    monkeypatch.setenv("ATHENA_FALLBACK_AFTER_OPEN_MINUTES", "90")
+    loaded = policy_from_environment("SPY", "iex")
+    assert (loaded.support_min, loaded.confidence_min, loaded.fallback_after_open_minutes) == (0.74, 0.61, 90)
+    monkeypatch.setenv("ATHENA_JEV_MIN_PTAKE", "nope")
+    with pytest.raises(ValueError, match="ATHENA_JEV_MIN_PTAKE"):
+        policy_from_environment("SPY")
+    monkeypatch.setenv("ATHENA_JEV_MIN_PTAKE", "0.6")
+    monkeypatch.setenv("ATHENA_FALLBACK_AFTER_OPEN_MINUTES", "0")
+    with pytest.raises(ValueError, match="fallback cutoff"):
+        policy_from_environment("SPY")
+
+    script = _runner()
+    seen = {}
+    monkeypatch.setenv("ALPACA_API_KEY", "paper-key")
+    monkeypatch.setenv("ALPACA_API_SECRET", "paper-secret")
+    monkeypatch.setenv("TYPESAFE_API_KEY", "model-key")
+    monkeypatch.setenv("ATHENA_JEV_MIN_PTAKE", "0.62")
+    monkeypatch.setenv("ATHENA_JEV_MIN_CONFIDENCE", "0.51")
+    monkeypatch.delenv("ATHENA_FALLBACK_AFTER_OPEN_MINUTES", raising=False)
+
+    class FlatBroker:
+        def snapshot(self):
+            return _flat_snapshot()
+
+    def capture(api_key, *, support_min, confidence_min):
+        seen["support_min"] = support_min
+        seen["confidence_min"] = confidence_min
+        return object()
+
+    monkeypatch.setattr(script.LivePaperAPI, "from_env", lambda: FlatBroker())
+    monkeypatch.setattr(script, "JevDecisionEngine", capture)
+    monkeypatch.setattr(script, "request_json", lambda *args, **kwargs: {"models": ["jev-1.13.0"]})
+    assert script.main([
+        "--symbol", "SPY", "--authority", "PAPER", "--feed", "iex",
+        "--journal", str(tmp_path / "preflight.sqlite"), "--preflight",
+    ]) == 0
+    assert seen == {"support_min": 0.62, "confidence_min": 0.51}
+
+
+def _fallback_pilot(tmp_path, transport, policy, minute=None):
+    journal = PaperJournal(tmp_path / "paper.sqlite")
+    broker = Broker()
+    broker.journal = journal
+    if minute is not None:
+        daily = market_bars()[1]
+
+        def bars(symbol, start, end, timeframe, feed):
+            return minute if timeframe == "1Min" else daily
+
+        broker.bars = bars
+    pilot = ActivePaperPilot(
+        broker, JevDecisionEngine("fixture-key", transport=transport), journal, policy,
+    )
+    return pilot, broker, journal
+
+
+def test_fallback_submits_the_highest_take_once(tmp_path):
+    minute, _daily = market_bars()
+    planned = [(0.55, 0.90), (0.59, 0.85)]
+    calls = {"n": 0}
+
+    def transport(*args, **kwargs):
+        take, confidence = planned[calls["n"]]
+        calls["n"] += 1
+        return scored_response(take, confidence)
+
+    policy = PilotPolicy("AAPL", fallback_after_open_minutes=30)
+    pilot, broker, journal = _fallback_pilot(tmp_path, transport, policy, minute)
+    assert pilot.tick() == "JEV_VETO"
+    minute.append({
+        "t": (OPEN + timedelta(minutes=16)).isoformat(),
+        "o": 101.6, "h": 102.4, "l": 101.4, "c": 102.2, "v": 1000,
+    })
+    broker.state["clock"]["timestamp"] = (OPEN + timedelta(minutes=17, seconds=5)).isoformat()
+    assert pilot.tick() == "JEV_VETO"
+    broker.state["clock"]["timestamp"] = (OPEN + timedelta(minutes=31)).isoformat()
+    assert pilot.tick() == "ENTRY_SUBMITTED"
+    assert pilot.tick() == "ENTRY_WORKING"
+    assert _posts(broker) == 1
+    assert calls["n"] == 2
+    fallbacks = [event for event in journal.events if event["kind"] == "fallback_entry"]
+    assert len(fallbacks) == 1
+    assert fallbacks[0]["reason"] == "NO_ORDER_BY_CUTOFF"
+    assert fallbacks[0]["signal_at"] == (OPEN + timedelta(minutes=16)).isoformat()
+    order = journal.last("entry_intent")["order"]
+    assert order["limit_price"] == "102.20"
+    assert order["qty"] == "1" and order["order_class"] == "bracket"
+    assert order["extended_hours"] is False and order["time_in_force"] == "day"
+    assert journal.last("entry_intent")["fallback"] is True
+    journal.close()
+
+
+def test_fallback_is_skipped_after_a_trade(tmp_path):
+    minute, _daily = market_bars()
+    minute.append({
+        "t": (OPEN + timedelta(minutes=18)).isoformat(),
+        "o": 101.6, "h": 102.4, "l": 101.4, "c": 102.2, "v": 1000,
+    })
+    policy = PilotPolicy("AAPL", fallback_after_open_minutes=20)
+    pilot, broker, journal = _fallback_pilot(
+        tmp_path, lambda *args, **kwargs: response(), policy, minute,
+    )
+    broker.state["clock"]["timestamp"] = (OPEN + timedelta(minutes=19, seconds=20)).isoformat()
+    assert pilot.tick() == "ENTRY_SUBMITTED"
+    broker.state["clock"]["timestamp"] = (OPEN + timedelta(minutes=20, seconds=10)).isoformat()
+    assert pilot.tick() == "ENTRY_WORKING"
+    assert journal.last("fallback_entry") is None
+    assert journal.last("fallback_candidate") is None
+    assert _posts(broker) == 1
+    journal.close()
+
+
+def test_fallback_does_not_promote_no_trade(tmp_path):
+    policy = PilotPolicy("AAPL", fallback_after_open_minutes=30)
+    pilot, broker, journal = _fallback_pilot(
+        tmp_path, lambda *args, **kwargs: response("NO_TRADE"), policy,
+    )
+    assert pilot.tick() == "JEV_VETO"
+    broker.state["clock"]["timestamp"] = (OPEN + timedelta(minutes=31)).isoformat()
+    assert pilot.tick() == "STALE_BAR"
+    assert journal.last("fallback_candidate") is None
+    assert journal.last("fallback_entry") is None
+    assert _posts(broker) == 0
+    journal.close()
+
+
+def test_adjudication_budget_waits_for_the_daily_fallback(tmp_path):
+    minute, _daily = market_bars()
+    calls = {"n": 0}
+
+    def transport(*args, **kwargs):
+        calls["n"] += 1
+        return scored_response(0.55, 0.9)
+
+    policy = PilotPolicy("AAPL", fallback_after_open_minutes=30, max_adjudications=1)
+    pilot, broker, journal = _fallback_pilot(tmp_path, transport, policy, minute)
+    assert pilot.tick() == "JEV_VETO"
+    minute.append({
+        "t": (OPEN + timedelta(minutes=16)).isoformat(),
+        "o": 101.6, "h": 102.4, "l": 101.4, "c": 102.2, "v": 1000,
+    })
+    broker.state["clock"]["timestamp"] = (OPEN + timedelta(minutes=17, seconds=5)).isoformat()
+    assert pilot.tick() == "ADJUDICATION_BUDGET"
+    assert calls["n"] == 1
+    broker.state["clock"]["timestamp"] = (OPEN + timedelta(minutes=31)).isoformat()
+    assert pilot.tick() == "ENTRY_SUBMITTED"
+    assert calls["n"] == 1
+    assert _posts(broker) == 1
+    assert journal.last("fallback_entry")["reason"] == "NO_ORDER_BY_CUTOFF"
+    assert journal.last("entry_intent")["order"]["limit_price"] == "101.50"
+    journal.close()
+
+
+def test_journaled_take_before_this_field_still_falls_back_once(tmp_path):
+    minute, daily = market_bars()
+    packet, _order = signal_packet(minute, daily, now=NOW, session_open=OPEN, policy=POLICY)
+    engine = JevDecisionEngine(
+        "fixture-key", transport=lambda *args, **kwargs: scored_response(0.55, 0.9),
+    )
+    verdict = engine.decide(packet)
+    assert verdict.accepted is False
+    journal = PaperJournal(tmp_path / "paper.sqlite")
+    journal.append(
+        "decision_started", session="2026-09-24", signal_at=packet["signal_at"],
+        packet=packet, market_inputs={"bars": minute, "daily": daily},
+    )
+    journal.append("adjudication", receipt=verdict.receipt)
+    broker = Broker()
+    broker.journal = journal
+    broker.state["clock"]["timestamp"] = (OPEN + timedelta(minutes=31)).isoformat()
+
+    def transport(*args, **kwargs):
+        raise AssertionError("fallback reuses the journaled adjudication")
+
+    policy = PilotPolicy("AAPL", fallback_after_open_minutes=30)
+    pilot = ActivePaperPilot(
+        broker, JevDecisionEngine("fixture-key", transport=transport), journal, policy,
+    )
+    assert pilot.tick() == "ENTRY_SUBMITTED"
+    assert pilot.tick() == "ENTRY_WORKING"
+    assert _posts(broker) == 1
+    assert journal.last("fallback_entry")["reason"] == "NO_ORDER_BY_CUTOFF"
+    assert journal.last("entry_intent")["order"]["qty"] == "1"
+    assert journal.last("entry_intent")["fallback"] is True
+    journal.close()
+
+
+def test_saved_policy_without_fallback_field_still_resumes(tmp_path):
+    saved = asdict(PilotPolicy("AAPL"))
+    saved.update(support_min=0.8, confidence_min=0.6, version="athena-jev-paper-pilot-v2")
+    del saved["fallback_after_open_minutes"]
+    restored = PilotPolicy(**saved)
+    assert (restored.support_min, restored.confidence_min) == (0.8, 0.6)
+    assert restored.fallback_after_open_minutes == 120
+    journal = PaperJournal(tmp_path / "paper.sqlite")
+    journal.append("binding", binding={"account_id": "paper-account", "policy": saved})
+    broker = Broker()
+    broker.journal = journal
+    pilot = ActivePaperPilot(
+        broker, JevDecisionEngine("fixture-key", transport=lambda *args, **kwargs: response("NO_TRADE")),
+        journal, restored,
+    )
+    assert pilot.tick() == "JEV_VETO"
+    journal.close()
+
+
+def test_fallback_and_runner_stay_paper_only(tmp_path):
+    with pytest.raises(AuthorityError, match="LIVE"):
+        parse_authority("LIVE")
+    assert "LIVE" not in {item.value for item in ExecutionAuthority}
+    policy = PilotPolicy("AAPL", fallback_after_open_minutes=30)
+    pilot, broker, journal = _fallback_pilot(
+        tmp_path, lambda *args, **kwargs: scored_response(0.55, 0.9), policy,
+    )
+    assert pilot.tick() == "JEV_VETO"
+    pilot.authority = ExecutionAuthority.ABSENT
+    broker.state["clock"]["timestamp"] = (OPEN + timedelta(minutes=31)).isoformat()
+    with pytest.raises(AuthorityError, match="ABSENT"):
+        pilot.tick()
+    assert _posts(broker) == 0
+    assert journal.last("entry_intent") is None
+    assert journal.last("fallback_entry") is None
+    journal.close()
+    script = _runner()
+    with pytest.raises(SystemExit) as raised:
+        script.main([
+            "--symbol", "AAPL", "--authority", "LIVE",
+            "--journal", str(tmp_path / "live.sqlite"), "--run",
+        ])
+    assert raised.value.code == 2

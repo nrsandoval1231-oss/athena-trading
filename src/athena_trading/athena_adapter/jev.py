@@ -38,7 +38,7 @@ def questions() -> dict[str, Any]:
 
 
 class ModelError(RuntimeError):
-    """Unusable or unavailable model response. No fallback approval."""
+    """Unusable or unavailable model response. Never an approval."""
 
     def __init__(self, message: str, *, status: int | None = None) -> None:
         super().__init__(message)
@@ -89,7 +89,7 @@ class JevDecisionEngine:
     """One bounded decision; deterministic risk remains final authority."""
 
     def __init__(
-        self, api_key: str, *, support_min: float = 0.8, confidence_min: float = 0.6,
+        self, api_key: str, *, support_min: float = 0.6, confidence_min: float = 0.5,
         transport: Callable[..., Any] = request_json,
     ) -> None:
         if not api_key.strip():

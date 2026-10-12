@@ -15,7 +15,7 @@ from athena_trading.execution.authority import parse_authority, require_paper
 from athena_trading.paper.journal import PaperJournal
 from athena_trading.paper.learning import LearningStore
 from athena_trading.paper.live import (
-    ActivePaperPilot, LivePaperAPI, PilotPolicy,
+    ActivePaperPilot, LivePaperAPI, PilotPolicy, policy_from_environment,
 )
 
 
@@ -62,13 +62,14 @@ def main(argv: list[str] | None = None) -> int:
         stopped = True
 
     try:
-        policy = PilotPolicy(symbol=args.symbol, feed=args.feed)
+        policy = policy_from_environment(args.symbol, args.feed)
         broker = LivePaperAPI.from_env()
         if args.run:
             journal = PaperJournal(args.journal)
-            if journal.last("entry_intent"):
-                # Exact old policy binding is retained for recovery, without old model code.
-                policy = PilotPolicy(**journal.last("binding")["binding"]["policy"])
+            stored = journal.last("binding")
+            if stored:
+                # The session keeps the policy it bound, including a pre-fallback journal.
+                policy = PilotPolicy(**stored["binding"]["policy"])
             pilot = ActivePaperPilot(broker, None, journal, policy, session_date=args.session_date)
         if pilot is None or not pilot._entry():
             jev = JevDecisionEngine(os.environ.get("TYPESAFE_API_KEY", ""),

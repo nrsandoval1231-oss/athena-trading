@@ -33,7 +33,7 @@ bash /opt/athena-trading/deploy/install.sh "$athena_revision"
 sudoedit /etc/athena/paper.env
 ```
 
-The installer rejects a dirty or mismatched checkout and an already active service. It installs the package and service definition, creates a restricted runtime user and state directory, and leaves the service stopped. Populate the three credential values (Alpaca key/secret and TypeSafe key) and the explicitly chosen `ATHENA_SYMBOL` in the environment file. No symbol or secret is supplied by the installer.
+The installer rejects a dirty or mismatched checkout and an already active service. It installs the package and service definition, creates a restricted runtime user and state directory, and leaves the service stopped. Populate the three credential values (Alpaca key/secret and TypeSafe key) and the explicitly chosen `ATHENA_SYMBOL` in the environment file. No symbol or secret is supplied by the installer. Optional `ATHENA_JEV_MIN_PTAKE`, `ATHENA_JEV_MIN_CONFIDENCE`, and `ATHENA_FALLBACK_AFTER_OPEN_MINUTES` override the paper gate and the daily fallback cutoff. Leave them unset to use the defaults in [LIVE_PAPER.md](LIVE_PAPER.md).
 
 Terra/OpenAI and Ollama are removed from the active code and environment template. Existing reserved entries retain their original complete policy binding for model-free recovery; old model packages and credentials are not required.
 
@@ -60,7 +60,7 @@ journalctl -u athena-paper.service -f
 cat /var/lib/athena/health.json
 ```
 
-Record the installed commit, successful provider preflight, startup status and actual broker results separately from tests. A running process or heartbeat alone does not prove a trade, confirmed flatness, or adjudication quality. An eligible session can legitimately produce no trade.
+Record the installed commit, successful provider preflight, startup status and actual broker results separately from tests. A running process or heartbeat alone does not prove a trade, confirmed flatness, or adjudication quality. A session that receives at least one TAKE_TRADE label can reserve one paper order through the normal gate or, after the cutoff, through the journaled daily fallback. A session with no TAKE_TRADE label can still finish with no order. A model error is not an approval.
 
 ## Daily operation and recovery
 

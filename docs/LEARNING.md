@@ -18,7 +18,7 @@ This first study can learn only: **temporarily skip this account/symbol/directio
 
 | Stage | Fixed requirement |
 |---|---|
-| Eligible episode | One-share reconciled closed trade, matching current Jev question identity and policy, accepted decision bound to the entry |
+| Eligible episode | One-share reconciled closed trade, matching current Jev question identity and policy, accepted decision bound to the entry. A journaled fallback entry is stored with the session and is not eligible, because its Jev receipt was not accepted |
 | Discovery | First 20 eligible episodes in the cohort; one fixed look |
 | Candidate support | Mean gross return ≤ −0.1R and the 95% Wilson lower bound on the fraction of losing trades > 0.5 |
 | Prospective validation | First 20 additional eligible trades whose entries occur strictly after candidate registration |

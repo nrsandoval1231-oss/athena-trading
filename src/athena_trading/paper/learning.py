@@ -82,9 +82,17 @@ def outcome(journal: PaperJournal, observed_at: datetime) -> dict | None:
     if entry_at > closed_at or closed_at > observed_at:
         raise ValueError("outcome is not available at observation time")
     policy = binding["policy"]
-    adjudication = journal.last("adjudication")
+    adjudications = [event for event in journal.events if event["kind"] == "adjudication"]
+    wanted = entry.get("verdict_hash")
+    if wanted:
+        adjudication = next((event for event in adjudications
+                             if canonical_hash(event["receipt"]) == wanted), None)
+        if adjudication is None:
+            raise ValueError("outcome decision receipt does not match reserved entry")
+    else:
+        adjudication = adjudications[-1] if adjudications else None
     receipt = adjudication["receipt"] if adjudication else {}
-    if receipt and entry.get("verdict_hash") != canonical_hash(receipt):
+    if receipt and wanted != canonical_hash(receipt):
         raise ValueError("outcome decision receipt does not match reserved entry")
     question_hash = receipt.get("question_hash")
     direction = "LONG" if order["side"] == "buy" else "SHORT"
@@ -112,7 +120,7 @@ def outcome(journal: PaperJournal, observed_at: datetime) -> dict | None:
         "sampled_mae_dollars": str(min(sampled)) if sampled else None,
         "excursion_basis": "broker position samples, not complete market path",
         "exit_reason": (journal.last("halt") or {}).get("reason"),
-        "decision": journal.last("adjudication"),
+        "decision": adjudication,
     }
 
 
@@ -265,6 +273,7 @@ def maintain(state_dir: Path, now: datetime):
                     "candidate_reviews": sum(e["kind"] == "decision_started" for e in journal.events),
                     "jev_acceptances": sum(e["kind"] == "adjudication" and e["receipt"]["accepted"]
                                            for e in journal.events),
+                    "fallback_entries": sum(e["kind"] == "fallback_entry" for e in journal.events),
                     "learned_veto_observations": sum(e["kind"] == "learning_veto" for e in journal.events),
                     "entry_reserved": bool(entry), "flat_confirmed": bool(journal.last("flat_confirmed")),
                     "halt": journal.last("halt"),
