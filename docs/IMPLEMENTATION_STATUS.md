@@ -15,7 +15,7 @@ bash -n deploy/install.sh           # clean
 git diff --check                    # clean
 ```
 
-Root pytest does not include Astra Desk; that suite lives in its own repository. The tested runtime commit is recorded in the follow-up line.
+Root pytest does not include Astra Desk; that suite lives in its own repository. Tested revision: `8f868bb16a203940b83d5534fa268c7b7e9d0152`. This sentence is a docs-only follow-up; the runner, tests, and the checks above are that commit.
 
 ## Hostinger paper pilot — 10 October 2026
 
