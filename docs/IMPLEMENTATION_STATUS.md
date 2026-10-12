@@ -1,5 +1,22 @@
 # Implementation status
 
+## Paper daily entry — 12 October 2026
+
+New sessions admit a TAKE_TRADE label when p(TAKE_TRADE) is at least 0.6 and confidence is at least 0.5. `ATHENA_JEV_MIN_PTAKE` and `ATHENA_JEV_MIN_CONFIDENCE` override those floors. If no order is reserved by `ATHENA_FALLBACK_AFTER_OPEN_MINUTES` after the open (default 120), the runner submits the highest-scoring TAKE_TRADE label seen that day, once, and journals `fallback_entry` / `NO_ORDER_BY_CUTOFF`. The score is confidence times p(TAKE_TRADE). The same one-share bracket, notional, stop, buying-power, learned-veto, and one-position limits apply. `LIVE` still raises. A model error is not an approval. A bound journal keeps its saved floors; a missing fallback field resumes at 120 minutes. The 20-review cap waits for that fallback instead of ending the day.
+
+The repository has no 2026-10-12 SPY bars or adjudication journal. That session was not replayed. The reported best label, confidence 0.61 and p(TAKE_TRADE) 0.74, is accepted by the new default gate and rejected by the previous 0.8 / 0.6 gate. That is a threshold check, not a broker fill and not evidence of trading performance. **LIVE remains rejected.**
+
+Observed local checks, Python 3.12. The baseline on `main` `edd80a27a936b5724aba5ca6076d74e21ede7ebb` was 681 passed and 0 failed. No pre-existing failures were present.
+
+```bash
+python -m pytest -q                 # 689 passed in 10.10s
+python -m ruff check .              # clean, ruff 0.15.8
+bash -n deploy/install.sh           # clean
+git diff --check                    # clean
+```
+
+Root pytest does not include Astra Desk; that suite lives in its own repository. Tested revision: `8f868bb16a203940b83d5534fa268c7b7e9d0152`. This sentence is a docs-only follow-up; the runner, tests, and the checks above are that commit.
+
 ## Hostinger paper pilot — 10 October 2026
 
 Nick installed the paper runner on a Hostinger VPS. `athena-paper.service` is enabled. `/etc/athena/paper.env` on that host holds the Alpaca paper and TypeSafe keys. The file is not in git, and its contents are not recorded here. The service was last observed in `WAITING_FOR_MARKET` for Monday open. Pre-Monday fixture, preflight, and health checks passed that day. Those checks are not a broker fill. No broker session has traded, and improved trading performance is not established. **LIVE remains rejected.** The fixture lab is not paper evidence and must not auto-promote. DigitalOcean remains an optional host in [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md). It is not the host of this install. External alerting and backup restore are still not verified. Pilot bounds in [LIVE_PAPER.md](LIVE_PAPER.md) are unchanged.

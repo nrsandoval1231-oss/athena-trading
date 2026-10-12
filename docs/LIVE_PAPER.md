@@ -6,7 +6,9 @@ Nick requested active Jev adjudication and actual broker paper execution, with c
 
 `python scripts/run_athena_paper.py` uses current Alpaca minute bars, existing ORB opening-range/risk functions, **TypeSafe Jev as the only decision model**, deterministic limits and Alpaca paper bracket orders. There is no Terra, OpenAI or Ollama dependency in the active path.
 
-Strategy code supplies a candidate direction and computed observations. Jev selects TAKE_TRADE, NO_TRADE or INSUFFICIENT_EVIDENCE. Entry requires TAKE_TRADE probability at least 0.8 and confidence at least 0.6; these are initial paper thresholds, not measured trading calibration. Full questions, inputs, distributions, policy and broker observations are journaled. Arithmetic, sizing, stops and final authority stay in code.
+Strategy code supplies a candidate direction and computed observations. Jev selects TAKE_TRADE, NO_TRADE or INSUFFICIENT_EVIDENCE. A normal entry requires p(TAKE_TRADE) at least 0.6 and confidence at least 0.5. Override those floors with `ATHENA_JEV_MIN_PTAKE` and `ATHENA_JEV_MIN_CONFIDENCE`. They are paper operating thresholds, not measured trading calibration. Full questions, inputs, distributions, policy and broker observations are journaled. Arithmetic, sizing, stops and final authority stay in code.
+
+If the session still has no reserved order `ATHENA_FALLBACK_AFTER_OPEN_MINUTES` after the broker open (default 120), the runner submits the highest-scoring TAKE_TRADE label seen that day, once. The score is confidence times p(TAKE_TRADE). An earlier label wins a tie. NO_TRADE and INSUFFICIENT_EVIDENCE are not eligible. The order is the original one-share day bracket, rechecked against the same notional, stop, buying-power, account, and learned-veto limits. The journal records `fallback_entry` with reason `NO_ORDER_BY_CUTOFF`. A normal entry skips the fallback. Reaching the 20-review budget does not by itself end the day; the fallback can still use labels already journaled, without another model call. A missing, malformed, or failed model response is still not an approval. A session that never receives a TAKE_TRADE label can still finish with no order.
 
 Reconciled completed trades enter the experience store. Relevant prior experiences inform later Jev decisions; prospectively validated temporary abstention rules are enforced in code. [LEARNING.md](LEARNING.md) defines the exact feedback and nightly validation policy.
 
@@ -22,7 +24,8 @@ Reconciled completed trades enter the experience store. Relevant prior experienc
 | Orders | DAY limit entry with broker-held stop-market and 2R target bracket; no extended-hours orders |
 | Entry timeout | Cancel/close after 60 seconds; partial entry triggers cleanup |
 | Session close | Begin flattening 15 minutes before broker-reported close, including early closes |
-| Model budget | At most 20 candidate reviews per session; no inference retries or fallback approval |
+| Model budget | At most 20 candidate reviews per session; no inference retries. A model error is not an approval. The daily fallback reuses a journaled TAKE_TRADE label and does not spend another call |
+| Daily fallback | One order if none has been reserved by 120 minutes after the open, unless `ATHENA_FALLBACK_AFTER_OPEN_MINUTES` sets another cutoff from 1 to 300. Highest confidence × p(TAKE_TRADE) among TAKE_TRADE labels. Same one-share bracket and risk limits |
 | Data age | Completed bar no more than 90 seconds old; rechecked after model calls |
 
 This uses the ORB trigger as one intraday component. It is not the full historical ORB-M qualification/campaign, continuously updated predictive engine, Earnings Adaptive arm, full APDE ratchet, or complete general Athena Core integration. The initial bounded paper learning loop is implemented; its observed live results remain unverified. No profit or prediction-accuracy claim is made.
@@ -34,6 +37,12 @@ Use a Linux host with persistent storage and Python 3.11+. [CLOUD_DEPLOYMENT.md]
 - `ALPACA_API_KEY`
 - `ALPACA_API_SECRET`
 - `TYPESAFE_API_KEY`
+
+Optional paper policy, also read by the runner when unset values are left blank. These are not secrets:
+
+- `ATHENA_JEV_MIN_PTAKE` (default `0.6`)
+- `ATHENA_JEV_MIN_CONFIDENCE` (default `0.5`)
+- `ATHENA_FALLBACK_AFTER_OPEN_MINUTES` (default `120`)
 
 Use paper-account keys. The order endpoint is fixed to `https://paper-api.alpaca.markets`; there is no real-money endpoint switch. Do not put keys in Git, command arguments, reports, or chat. No keys are required for the test suite.
 
@@ -47,7 +56,7 @@ python scripts/run_athena_paper.py --symbol AAPL --authority PAPER --feed iex --
 python scripts/run_athena_paper.py --symbol AAPL --authority PAPER --feed iex --journal /var/lib/athena/paper.sqlite --run
 ```
 
-Preflight authenticates the broker and TypeSafe's read-only model-list endpoint without an inference or order. It is a connectivity check; current bar availability, asset eligibility, account state, and risk are checked in the active run. `--run` waits for the market and a qualifying fresh signal, then makes actual Jev calls and actual **paper** broker submissions. A signal or accepted proposal is not guaranteed; a legitimate session may produce no trade. Keep the first session attended.
+Preflight authenticates the broker and TypeSafe's read-only model-list endpoint without an inference or order. It is a connectivity check; current bar availability, asset eligibility, account state, and risk are checked in the active run. `--run` waits for the market and a qualifying fresh signal, then makes actual Jev calls and actual **paper** broker submissions. A session with no TAKE_TRADE label can still finish with no order. Keep the first session attended.
 
 ## Recovery and exits
 
@@ -67,7 +76,9 @@ The Jev-only/learning revision of 24 September 2026 passed **657 root tests and 
 
 **Status correction, 10 October 2026.** Astra Desk is no longer in this repository. The audit of main `d36164ef7843d135dbfeea3684be598566abcf33` is [paper-readiness](audits/2026-10-10-paper-readiness.md). GitHub Actions on that push succeeded (run `38073284465`). The recorded root gate on the lab revision is 672 passed; Astra's suite runs in its own repository. A missing opening minute, a stale bar, or a flat startup error no longer finishes the day by itself. A reserved id Alpaca never created is closed out as `BROKER_ORDER_NOT_FOUND` and is not resent. Read the recovery section above before the first attended session.
 
-**Hostinger paper pilot, 10 October 2026.** Nick installed this runner on a Hostinger VPS. `athena-paper.service` is enabled. The host `paper.env` holds the Alpaca paper and TypeSafe keys; those values are not in Git. The service was last observed in `WAITING_FOR_MARKET` for Monday open. Pre-Monday fixture, preflight, and health checks passed that day. That is install and connectivity evidence, not a fill. No broker session has traded. **LIVE remains rejected.** The pilot bounds in the table above are unchanged. Test results and the fixture lab are not observed broker or semantic-accuracy results. The old synthetic demo command now supports fixtures and broker preflight only; it cannot submit an Alpaca demo order. Use this active runner for broker paper operation.
+**Hostinger paper pilot, 10 October 2026.** Nick installed this runner on a Hostinger VPS. `athena-paper.service` is enabled. The host `paper.env` holds the Alpaca paper and TypeSafe keys; those values are not in Git. The service was last observed in `WAITING_FOR_MARKET` for Monday open. Pre-Monday fixture, preflight, and health checks passed that day. That is install and connectivity evidence, not a fill. **LIVE remains rejected.** Test results and the fixture lab are not observed broker or semantic-accuracy results. The old synthetic demo command now supports fixtures and broker preflight only; it cannot submit an Alpaca demo order. Use this active runner for broker paper operation.
+
+**Paper gate, 12 October 2026.** New sessions use p(TAKE_TRADE) >= 0.6 and confidence >= 0.5, overridable with the environment variables above. The once-per-day fallback is journaled and stays inside the same bracket, risk checks, one-position cap, and PAPER authority. `parse_authority("LIVE")` still raises. A journal that already bound a policy keeps that policy's floors; a missing fallback field resumes at 120 minutes. There is no market-data or adjudication fixture for the 12 October 2026 SPY session in this repository, so that session was not replayed. The reported best label from that day, confidence 0.61 and p(TAKE_TRADE) 0.74, clears the new default gate and would be a normal entry. The previous 0.8 / 0.6 gate rejects it. That comparison is not a broker fill.
 
 ## Verified API references
 

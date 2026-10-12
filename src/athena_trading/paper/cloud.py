@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .journal import PaperJournal
 from .learning import maintain
-from .live import LivePaperAPI, PilotPolicy, timestamp, NY
+from .live import LivePaperAPI, PilotPolicy, policy_from_environment, timestamp, NY
 
 
 @dataclass(frozen=True)
@@ -81,8 +81,8 @@ def main() -> int:
     runner = Path("scripts/run_athena_paper.py").resolve()
     if not runner.is_file():
         raise ValueError("run the cloud supervisor from the repository root")
-    policy = PilotPolicy(os.environ.get("ATHENA_SYMBOL", ""),
-                         feed=os.environ.get("ATHENA_FEED", "iex"))
+    policy = policy_from_environment(os.environ.get("ATHENA_SYMBOL", ""),
+                                     os.environ.get("ATHENA_FEED", "iex"))
     stopping = False
     child = None
 
