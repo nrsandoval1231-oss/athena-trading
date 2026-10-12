@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import math
 import sqlite3
 from dataclasses import asdict
 from datetime import UTC, date, datetime, timedelta
@@ -992,3 +993,192 @@ def test_fallback_and_runner_stay_paper_only(tmp_path):
             "--journal", str(tmp_path / "live.sqlite"), "--run",
         ])
     assert raised.value.code == 2
+
+
+def _mass(total, take=0.9, confidence=0.9):
+    body = scored_response(take, confidence)
+    rest = (total - take) / 2.0
+    body["answers"]["entry_decision"]["probabilities"] = {
+        "TAKE_TRADE": take,
+        "NO_TRADE": rest,
+        "INSUFFICIENT_EVIDENCE": rest,
+    }
+    return body
+
+
+def _replace_probability(name, value):
+    body = response()
+    body["answers"]["entry_decision"]["probabilities"][name] = value
+    return body
+
+
+def _drop_probability_label():
+    body = response()
+    del body["answers"]["entry_decision"]["probabilities"]["NO_TRADE"]
+    return body
+
+
+@pytest.mark.parametrize("total", [0.999, 1.01])
+def test_near_unit_probability_sums_pass_after_renormalizing(total):
+    raw = _mass(total)
+    judge = JevDecisionEngine("fixture-key", transport=lambda *args, **kwargs: raw)
+    result = judge.decide({"candidate_direction": "LONG", "observations": {}})
+    assert result.accepted is True
+    assert result.receipt["execution_authorized"] is False
+    check = result.receipt["probability_checks"]["entry_decision"]
+    assert check["renormalized"] is True
+    assert check["raw"]["TAKE_TRADE"] == pytest.approx(0.9)
+    assert math.fsum(check["used"].values()) == 1.0
+    assert check["used"]["TAKE_TRADE"] == pytest.approx(0.9 / total)
+    stored = result.receipt["response"]["answers"]["entry_decision"]["probabilities"]
+    assert stored["TAKE_TRADE"] == pytest.approx(0.9)
+
+
+def test_gate_compares_the_renormalized_take_probability():
+    raw = _mass(1.01, take=0.60, confidence=0.9)
+    judge = JevDecisionEngine("fixture-key", transport=lambda *args, **kwargs: raw)
+    result = judge.decide({"candidate_direction": "LONG", "observations": {}})
+    check = result.receipt["probability_checks"]["entry_decision"]
+    assert check["renormalized"] is True
+    assert check["used"]["TAKE_TRADE"] < 0.6
+    assert math.fsum(check["used"].values()) == 1.0
+    assert result.accepted is False
+    assert result.receipt["execution_authorized"] is False
+
+
+@pytest.mark.parametrize("factory", [
+    lambda: _mass(0.9, take=0.8),
+    lambda: _replace_probability("TAKE_TRADE", -0.1),
+    lambda: _replace_probability("TAKE_TRADE", float("nan")),
+    _drop_probability_label,
+])
+def test_bad_probability_mass_is_never_an_approval(factory):
+    raw = factory()
+    judge = JevDecisionEngine("fixture-key", transport=lambda *args, **kwargs: raw)
+    with pytest.raises(ModelError):
+        judge.decide({"candidate_direction": "LONG", "observations": {}})
+
+
+@pytest.mark.parametrize("total", [0.999, 1.01])
+def test_near_unit_sum_still_submits_and_journals_raw_probabilities(setup, total):
+    pilot, broker, _, journal = setup
+    pilot.jev = JevDecisionEngine("fixture-key", transport=lambda *args, **kwargs: _mass(total))
+    assert pilot.tick() == "ENTRY_SUBMITTED"
+    kinds = [event["kind"] for event in journal.events]
+    assert kinds.index("jev_response") < kinds.index("adjudication")
+    raw_take = journal.last("jev_response")["response"]["answers"]["entry_decision"]["probabilities"]
+    check = journal.last("adjudication")["receipt"]["probability_checks"]["entry_decision"]
+    assert raw_take["TAKE_TRADE"] == pytest.approx(0.9)
+    assert check["raw"]["TAKE_TRADE"] == pytest.approx(0.9)
+    assert check["raw"]["NO_TRADE"] == pytest.approx((total - 0.9) / 2)
+    assert check["raw"]["INSUFFICIENT_EVIDENCE"] == pytest.approx((total - 0.9) / 2)
+    assert check["renormalized"] is True
+    assert math.fsum(check["used"].values()) == 1.0
+    assert journal.last("jev_veto") is None
+    assert _posts(broker) == 1
+
+
+@pytest.mark.parametrize("factory,reason,stored_take", [
+    (lambda: _mass(0.9, take=0.8), "sum to one", 0.8),
+    (lambda: _replace_probability("TAKE_TRADE", -0.1), "finite", -0.1),
+    (lambda: _replace_probability("TAKE_TRADE", float("nan")), "finite", "NaN"),
+    (_drop_probability_label, "option keys", 0.9),
+])
+def test_bad_jev_answer_vetoes_one_setup_and_the_runner_continues(
+    setup, factory, reason, stored_take,
+):
+    pilot, broker, _, journal = setup
+    calls = {"n": 0}
+
+    def transport(*args, **kwargs):
+        calls["n"] += 1
+        return factory()
+
+    pilot.jev = JevDecisionEngine("fixture-key", transport=transport)
+    assert pilot.tick() == "JEV_VETO"
+    assert pilot.tick() == "ALREADY_REVIEWED"
+    assert calls["n"] == 1
+    veto = journal.last("jev_veto")
+    assert veto["accepted"] is False
+    assert reason in veto["reason"]
+    kinds = [event["kind"] for event in journal.events]
+    assert kinds.index("jev_response") < kinds.index("jev_veto")
+    assert "adjudication" not in kinds
+    stored = journal.last("jev_response")["response"]["answers"]["entry_decision"]["probabilities"]
+    if isinstance(stored_take, float):
+        assert stored.get("TAKE_TRADE") == pytest.approx(stored_take)
+    else:
+        assert stored.get("TAKE_TRADE") == stored_take
+    assert journal.last("entry_intent") is None
+    assert journal.last("fallback_candidate") is None
+    assert journal.last("halt") is None
+    assert _posts(broker) == 0
+
+
+def test_runner_keeps_going_and_a_later_take_trade_still_submits(setup):
+    pilot, broker, _, journal = setup
+    minute, daily = market_bars()
+    calls = {"n": 0}
+
+    def bars(symbol, start, end, timeframe, feed):
+        return minute if timeframe == "1Min" else daily
+
+    def transport(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _mass(0.9, take=0.8)
+        return response()
+
+    broker.bars = bars
+    pilot.jev = JevDecisionEngine("fixture-key", transport=transport)
+    assert pilot.tick() == "JEV_VETO"
+    assert journal.last("jev_veto")["accepted"] is False
+    minute.append({
+        "t": (OPEN + timedelta(minutes=16)).isoformat(),
+        "o": 101.6, "h": 102.4, "l": 101.4, "c": 102.2, "v": 1000,
+    })
+    broker.state["clock"]["timestamp"] = (OPEN + timedelta(minutes=17, seconds=5)).isoformat()
+    assert pilot.tick() == "ENTRY_SUBMITTED"
+    assert journal.last("entry_intent")["fallback"] is False
+    assert journal.last("entry_intent")["order"]["limit_price"] == "102.20"
+    assert calls["n"] == 2
+    assert _posts(broker) == 1
+    assert journal.last("halt") is None
+
+
+def test_bad_answer_does_not_block_the_daily_fallback(tmp_path):
+    minute, _daily = market_bars()
+    calls = {"n": 0}
+
+    def transport(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _mass(1.01, take=0.60, confidence=0.9)
+        return _mass(0.9, take=0.8)
+
+    policy = PilotPolicy("AAPL", fallback_after_open_minutes=30)
+    pilot, broker, journal = _fallback_pilot(tmp_path, transport, policy, minute)
+    assert pilot.tick() == "JEV_VETO"
+    check = journal.last("adjudication")["receipt"]["probability_checks"]["entry_decision"]
+    assert check["renormalized"] is True
+    assert journal.last("fallback_candidate")["take_probability"] == pytest.approx(check["used"]["TAKE_TRADE"])
+    assert journal.last("fallback_candidate")["signal_at"] == (OPEN + timedelta(minutes=15)).isoformat()
+    minute.append({
+        "t": (OPEN + timedelta(minutes=16)).isoformat(),
+        "o": 101.6, "h": 102.4, "l": 101.4, "c": 102.2, "v": 1000,
+    })
+    broker.state["clock"]["timestamp"] = (OPEN + timedelta(minutes=17, seconds=5)).isoformat()
+    assert pilot.tick() == "JEV_VETO"
+    assert journal.last("jev_veto")["accepted"] is False
+    assert journal.last("entry_intent") is None
+    candidates = [event for event in journal.events if event["kind"] == "fallback_candidate"]
+    assert [event["signal_at"] for event in candidates] == [(OPEN + timedelta(minutes=15)).isoformat()]
+    broker.state["clock"]["timestamp"] = (OPEN + timedelta(minutes=31)).isoformat()
+    assert pilot.tick() == "ENTRY_SUBMITTED"
+    assert journal.last("fallback_entry")["reason"] == "NO_ORDER_BY_CUTOFF"
+    assert journal.last("fallback_entry")["signal_at"] == (OPEN + timedelta(minutes=15)).isoformat()
+    assert journal.last("entry_intent")["order"]["limit_price"] == "101.50"
+    assert journal.last("entry_intent")["fallback"] is True
+    assert calls["n"] == 2
+    assert _posts(broker) == 1
+    journal.close()

@@ -69,10 +69,62 @@ def request_json(
         raise ModelError(f"request failed: {type(exc).__name__}") from None
 
 
+# Jev sometimes returns a distribution a little off 1. Farther than this is unusable.
+PROBABILITY_SUM_TOLERANCE = 0.02
+
+
 def probability(value: Any) -> float:
     if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= 1:
         raise ModelError("probability/confidence must be finite and in [0, 1]")
     return float(value)
+
+
+def journalable_response(value: Any) -> Any:
+    """Copy a model payload into values the paper journal can store.
+
+    Non-finite floats become text so a bad answer is still inspectable.
+    """
+    if isinstance(value, float):
+        if math.isnan(value):
+            return "NaN"
+        if math.isinf(value):
+            return "Infinity" if value > 0 else "-Infinity"
+        return value
+    if isinstance(value, dict):
+        return {str(key): journalable_response(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [journalable_response(item) for item in value]
+    if value is None or isinstance(value, (str, int, bool)):
+        return value
+    return str(value)
+
+
+def _unit_distribution(
+    distribution: Mapping[str, Any],
+) -> tuple[dict[str, float], dict[str, float], bool]:
+    """Return raw probabilities, values that sum to 1, and whether they were scaled.
+
+    Each label must already be finite and in [0, 1]. The raw sum must lie within
+    ``PROBABILITY_SUM_TOLERANCE`` of 1. Threshold checks use the scaled values.
+    """
+    raw = {key: probability(value) for key, value in distribution.items()}
+    total = math.fsum(raw.values())
+    if not math.isfinite(total) or abs(total - 1.0) > PROBABILITY_SUM_TOLERANCE or total <= 0:
+        raise ModelError("Jev probabilities do not sum to one")
+    if math.isclose(total, 1.0, rel_tol=0, abs_tol=1e-6):
+        return raw, dict(raw), False
+    keys = list(raw)
+    used = {key: raw[key] / total for key in keys}
+    prefix = math.fsum(used[key] for key in keys[:-1])
+    used[keys[-1]] = 1.0 - prefix
+    anchor = used[keys[-1]]
+    if math.isclose(anchor, 0.0, rel_tol=0, abs_tol=1e-12):
+        used[keys[-1]] = 0.0
+    elif math.isclose(anchor, 1.0, rel_tol=0, abs_tol=1e-12):
+        used[keys[-1]] = 1.0
+    if not 0 <= used[keys[-1]] <= 1:
+        raise ModelError("Jev probabilities do not sum to one")
+    return raw, used, True
 
 
 @dataclass(frozen=True)
@@ -101,7 +153,10 @@ class JevDecisionEngine:
             raise ModelError("adjudication thresholds must be positive")
         self._transport = transport
 
-    def decide(self, packet: Mapping[str, Any]) -> JevVerdict:
+    def decide(
+        self, packet: Mapping[str, Any], *,
+        before_validation: Callable[[Any], None] | None = None,
+    ) -> JevVerdict:
         if packet.get("candidate_direction") not in ("LONG", "SHORT"):
             raise ModelError("a bounded candidate direction is required")
         state = json.loads(canonical_json(packet))
@@ -113,21 +168,26 @@ class JevDecisionEngine:
             {"Authorization": f"Bearer {self._key}", "Content-Type": "application/json"},
             request, timeout=4,
         )
+        # The caller journals this before any rejection so a bad answer can be inspected.
+        if before_validation is not None:
+            before_validation(response)
         if not isinstance(response, dict) or response.get("model") != JEV_MODEL:
             raise ModelError("Jev model identity mismatch")
         answers = response.get("answers")
         if not isinstance(answers, dict) or set(answers) != set(request["questions"]):
             raise ModelError("Jev answer keys mismatch")
         accepted = True
-        for answer in answers.values():
+        probability_checks: dict[str, Any] = {}
+        for name, answer in answers.items():
             if not isinstance(answer, dict) or answer.get("type") != "choice":
                 raise ModelError("Jev answer type mismatch")
             distribution = answer.get("probabilities")
             if not isinstance(distribution, dict) or set(distribution) != set(OPTIONS):
                 raise ModelError("Jev option keys mismatch")
-            values = {key: probability(value) for key, value in distribution.items()}
-            if not math.isclose(sum(values.values()), 1.0, rel_tol=0, abs_tol=1e-6):
-                raise ModelError("Jev probabilities do not sum to one")
+            raw, values, renormalized = _unit_distribution(distribution)
+            probability_checks[name] = {
+                "raw": raw, "used": values, "renormalized": renormalized,
+            }
             choice = answer.get("choice")
             if choice not in values or values[choice] + 1e-9 < max(values.values()):
                 raise ModelError("Jev choice is not a highest-probability option")
@@ -147,6 +207,7 @@ class JevDecisionEngine:
             "question_hash": canonical_hash(request["questions"]),
             "request_hash": canonical_hash(request), "request": request,
             "response": response, "response_hash": canonical_hash(response),
+            "probability_checks": probability_checks,
             "policy": {"support_min": self.support_min, "confidence_min": self.confidence_min},
             "accepted": accepted, "execution_authorized": False,
         }
