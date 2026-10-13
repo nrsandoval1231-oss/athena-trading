@@ -285,6 +285,51 @@ def test_promoted_rule_changes_actual_pilot_behavior(tmp_path):
     store.close()
 
 
+def test_earnings_excursion_ignores_other_trades_and_future_samples(tmp_path):
+    from athena_trading.paper.learning import earnings_episode
+
+    journal = PaperJournal(tmp_path / "book.sqlite")
+    policy = asdict(POLICY)
+    journal.append("binding", binding={"account_id": "paper-account", "policy": policy})
+    journal.append("broker_observation", at=datetime(2026, 7, 1, 15, tzinfo=UTC), snapshot={
+        "positions": [{"symbol": "DECK", "unrealized_pl": "9999"}],
+    })
+    journal.append("broker_observation", at=datetime(2026, 7, 1, 16, tzinfo=UTC), snapshot={
+        "positions": [{"symbol": "DECK", "unrealized_pl": "-7777"}],
+    })
+    entry_at = datetime(2026, 10, 13, 13, 40, tzinfo=UTC)
+    order = {"client_order_id": "athe-october", "symbol": "DECK", "side": "buy",
+             "qty": "1", "limit_price": "104", "stop_loss": {"stop_price": "102"}}
+    receipt = {"accepted": True, "question_hash": canonical_hash(questions())}
+    journal.append("adjudication", receipt=receipt)
+    journal.append("entry_intent", session="2026-10-13", at=entry_at, order=order,
+                   verdict_hash=canonical_hash(receipt))
+    journal.append("broker_observation", at=datetime(2026, 10, 13, 14, tzinfo=UTC), snapshot={
+        "positions": [{"symbol": "DECK", "unrealized_pl": "0"}],
+    })
+    journal.append(
+        "broker_observation", at=datetime(2026, 10, 13, 14, 30, tzinfo=UTC),
+        client_order_id="athe-other",
+        snapshot={"positions": [{"symbol": "DECK", "unrealized_pl": "12345"}]},
+    )
+    journal.append("broker_observation", at=datetime(2026, 10, 13, 18, tzinfo=UTC), snapshot={
+        "positions": [{"symbol": "DECK", "unrealized_pl": "5000"}],
+    })
+    journal.append("position_closed", client_order_id="athe-october", symbol="DECK", reason="STOP_FILLED")
+    parent = {"id": "parent", "symbol": "DECK", "side": "buy", "filled_qty": "1", "filled_avg_price": "104"}
+    close = {"id": "stop", "symbol": "DECK", "side": "sell", "filled_qty": "1", "filled_avg_price": "102"}
+    journal.append(
+        "earnings_experience", client_order_id="athe-october", symbol="DECK", reason="STOP_FILLED",
+        parent=parent, close_orders=[close],
+    )
+    observed = datetime(2026, 10, 13, 16, tzinfo=UTC)
+    episode = earnings_episode(journal, "athe-october", observed)
+    assert episode["sampled_mfe_dollars"] == "0"
+    assert episode["sampled_mae_dollars"] == "0"
+    assert "complete market path" in episode["excursion_basis"]
+    journal.close()
+
+
 def test_nested_bracket_exit_reconciles_and_the_next_session_can_start(tmp_path):
     """A filled parent whose exit lives only under legs must not block the next session."""
     from athena_trading.paper.cloud import SessionTask, next_session

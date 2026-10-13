@@ -207,6 +207,31 @@ def _filled_rows(parent: dict | None, close_orders: list) -> list[tuple[str, Dec
     return rows
 
 
+def _lifecycle_samples(
+    journal: PaperJournal, *, symbol: str, client_order_id: str,
+    entry_at: datetime, observed_at: datetime,
+) -> list[Decimal]:
+    """Unrealized samples for this reservation only, from entry through observation."""
+    sampled: list[Decimal] = []
+    for event in journal.events:
+        if event["kind"] != "broker_observation":
+            continue
+        owner = event.get("client_order_id")
+        if isinstance(owner, str) and owner != client_order_id:
+            continue
+        try:
+            at = instant(event["at"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if at < entry_at or at > observed_at:
+            continue
+        for position in event.get("snapshot", {}).get("positions", []):
+            if position.get("symbol") != symbol or "unrealized_pl" not in position:
+                continue
+            sampled.append(decimal(position["unrealized_pl"]))
+    return sampled
+
+
 def earnings_episode(journal: PaperJournal, client_order_id: str, observed_at: datetime) -> dict | None:
     """One closed earnings trade. It is stored and never eligible for the intraday study."""
     binding_event = journal.last("binding")
@@ -284,13 +309,10 @@ def earnings_episode(journal: PaperJournal, client_order_id: str, observed_at: d
         result = "LOSS" if gross < 0 else "GAIN" if gross > 0 else "FLAT"
         gross_r = float(gross / risk) if risk > 0 and status == "CLOSED" else None
         gross_text = str(gross)
-    sampled = []
-    for event in journal.events:
-        if event["kind"] != "broker_observation":
-            continue
-        for position in event.get("snapshot", {}).get("positions", []):
-            if position.get("symbol") == order["symbol"] and "unrealized_pl" in position:
-                sampled.append(decimal(position["unrealized_pl"]))
+    sampled = _lifecycle_samples(
+        journal, symbol=order["symbol"], client_order_id=client_order_id,
+        entry_at=entry_at, observed_at=observed_at,
+    )
     return {
         "id": canonical_hash({
             "arm": "earnings", "account": binding["account_id"], "entry": client_order_id,

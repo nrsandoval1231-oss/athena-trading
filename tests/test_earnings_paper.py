@@ -639,6 +639,65 @@ def realistic_news():
     }
 
 
+def test_out_of_band_gap_is_reconsidered_on_a_later_completed_bar(tmp_path, monkeypatch):
+    """A 3.9% print is temporary. A later 4.2% bar inside the window can still be sent."""
+    book, broker, journal, calls = _book(tmp_path, monkeypatch, close=103.9)
+    assert book.tick() == "NO_CANDIDATE"
+    assert calls["n"] == 0
+    assert _posts(broker) == []
+    assert journal.last("candidate_skipped")["reason"] == "GAP_OR_RISK"
+    assert book.tick() == "WAITING"
+    assert calls["n"] == 0
+    assert sum(event["kind"] == "candidate_skipped" for event in journal.events) == 1
+
+    broker.close = 104.2
+    broker.state["clock"]["timestamp"] = "2026-10-13T13:41:05+00:00"
+
+    def bars(symbol, start, end, timeframe, feed):
+        if timeframe == "1Day":
+            return [{"t": "2026-10-12T20:00:00Z", "o": 100, "h": 103, "l": 99, "c": 100, "v": 2_500_000}]
+        return minute_bars(103.9) + [{
+            "t": "2026-10-13T13:40:00+00:00", "o": 104.0, "h": 104.4, "l": 103.8, "c": 104.2, "v": 14000,
+        }]
+
+    broker.bars = bars
+    assert book.tick() == "ENTRY_SUBMITTED"
+    assert calls["n"] == 1
+    assert _posts(broker)[0]["limit_price"] == "104.20"
+    assert sum(event["kind"] == "decision_started" for event in journal.events) == 1
+    journal.close()
+
+
+def test_preview_expected_and_negated_headlines_are_not_confirmed_releases():
+    start = datetime(2026, 10, 12, 20, tzinfo=UTC)
+    session_open = datetime(2026, 10, 13, 13, 30, tzinfo=UTC)
+
+    def item(headline, summary, created="2026-10-13T12:10:00Z"):
+        return {
+            "id": headline, "headline": headline, "summary": summary, "created_at": created,
+            "source": "benzinga", "symbols": ["DECK"],
+        }
+
+    preview = item(
+        "DECK earnings preview: what analysts expect before the company reports",
+        "Analysts expect earnings growth.",
+    )
+    status, fed = news_for_decision([preview], "DECK", start, session_open)
+    assert status == "unconfirmed"
+    assert fed[0]["source"] == "benzinga" and fed[0]["created_at"] == preview["created_at"]
+    expected = item("DECK earnings expected after the close", "The company is set to report tonight.")
+    assert news_for_decision([expected], "DECK", start, session_open)[0] == "unconfirmed"
+    negated = item("DECK did not report earnings", "The release was delayed.")
+    assert news_for_decision([negated], "DECK", start, session_open)[0] == "unconfirmed"
+    released = item(
+        "Deckers Outdoor Posts Surprise Q2 Profit, Issues Strong Outlook",
+        "Deckers Outdoor reported fiscal second-quarter results before the open.",
+    )
+    status, fed = news_for_decision([released], "DECK", start, session_open)
+    assert status == "confirmed"
+    assert fed[0]["id"] == released["id"]
+
+
 def test_news_confirmation_uses_a_preopen_report_and_ignores_a_later_headline():
     start = datetime(2026, 10, 12, 20, tzinfo=UTC)
     session_open = datetime(2026, 10, 13, 13, 30, tzinfo=UTC)

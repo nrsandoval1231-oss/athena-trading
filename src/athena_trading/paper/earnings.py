@@ -49,6 +49,17 @@ _EARNINGS_NEWS = re.compile(
     r"\b(?:earnings|results|revenue|guidance|outlook|quarter|q[1-4]|eps|profit)\b",
     re.IGNORECASE,
 )
+_RELEASE_VERB = re.compile(
+    r"\b(?:reported|reports|posts|posted|announces|announced|beats|misses|beat|miss)\b",
+    re.IGNORECASE,
+)
+_NOT_A_RELEASE = re.compile(
+    r"\b(?:preview|will report|set to report|upcoming|ahead of|what analysts expect|"
+    r"before the company reports|did not report|does not report|has not reported|"
+    r"hasn't reported|will not report|won't report|delayed|postponed)\b",
+    re.IGNORECASE,
+)
+_TERMINAL_SKIP = {"INTRADAY_SYMBOL", "ASSET_BLOCKED", "SHORT_BLOCKED"}
 
 
 def earnings_questions() -> dict[str, Any]:
@@ -147,7 +158,10 @@ def news_for_decision(
         if not start <= at <= session_open:
             return False
         text = str(item.get("headline") or "") + " " + str(item.get("summary") or "")
-        return _EARNINGS_NEWS.search(text) is not None
+        if _EARNINGS_NEWS.search(text) is None or _RELEASE_VERB.search(text) is None:
+            return False
+        # A preview, a future report, or a negation is not evidence that results were released.
+        return _NOT_A_RELEASE.search(text) is None
 
     confirming = [item for item in matched if confirms(item)]
     chosen: list[dict[str, Any]] = []
@@ -157,12 +171,15 @@ def news_for_decision(
         if identity in seen:
             continue
         seen.add(identity)
-        chosen.append({
+        fed = {
             "headline": item.get("headline"),
             "summary": item.get("summary"),
             "created_at": item.get("created_at"),
             "source": item.get("source"),
-        })
+        }
+        if type(item.get("id")) in {int, str}:
+            fed["id"] = item["id"]
+        chosen.append(fed)
         if len(chosen) == 5:
             break
     return ("confirmed" if confirming else "unconfirmed"), chosen
@@ -941,6 +958,30 @@ class EarningsBook:
         ours = {trade["order"]["symbol"] for trade in self.open_trades().values()}
         return {symbol for symbol in symbols if isinstance(symbol, str)} - ours
 
+    def _temporary_repeat(
+        self, today: str, signal_key: str, bar_at: datetime | None, now: datetime,
+    ) -> bool:
+        """The same completed bar, or the same minute of missing data, is not a new setup."""
+        last = next((
+            event for event in reversed(self.journal.events)
+            if event["kind"] == "candidate_skipped" and event.get("session") == today
+            and event.get("signal_key") == signal_key and event.get("reason") not in _TERMINAL_SKIP
+        ), None)
+        if last is None:
+            return False
+        previous = last.get("bar")
+        if bar_at is not None and isinstance(previous, str):
+            try:
+                return timestamp(previous) == bar_at
+            except ValueError:
+                return False
+        if bar_at is not None:
+            return False
+        try:
+            return now - timestamp(last["at"]) < timedelta(minutes=1)
+        except (KeyError, TypeError, ValueError):
+            return False
+
     def _seek_entry(
         self, snapshot: dict[str, Any], *, now: datetime, today: str, sessions: list[str],
         session_open: datetime, account: dict[str, Any],
@@ -976,7 +1017,10 @@ class EarningsBook:
             return "WAITING"
         reviewed = {
             event.get("signal_key") for event in self.journal.events
-            if event["kind"] in {"decision_started", "candidate_skipped"} and event.get("session") == today
+            if event.get("session") == today and (
+                event["kind"] == "decision_started"
+                or (event["kind"] == "candidate_skipped" and event.get("reason") in _TERMINAL_SKIP)
+            )
         }
         busy = self._busy_symbols(snapshot)
         held = {trade["order"]["symbol"] for trade in self.open_trades().values()}
@@ -988,14 +1032,6 @@ class EarningsBook:
                 continue
             ranked.append(report)
         ranked.sort(key=lambda report: universe.index(report.symbol))
-        pending = [
-            report for report in ranked
-            if report.symbol + ":" + report.report_date not in reviewed
-            and report.symbol not in busy and report.symbol not in held
-            and report.symbol != self.policy.excluded_symbol
-        ]
-        if pending and not self._ensure_decision_model(today):
-            return "JEV_UNAVAILABLE"
         waiting = False
         for report in ranked:
             signal_key = report.symbol + ":" + report.report_date
@@ -1039,9 +1075,11 @@ class EarningsBook:
             raw = self.broker.bars(symbol, session_open, now, "1Min", self.policy.feed)
             completed = self._completed_bar(raw, now=now, session_open=session_open)
         except ValueError as exc:
+            if self._temporary_repeat(today, signal_key, None, now):
+                return "WAITING"
             self.journal.append(
                 "candidate_skipped", session=today, signal_key=signal_key, symbol=symbol,
-                reason=str(exc)[:120],
+                reason=str(exc)[:120], at=now,
             )
             return "NO_CANDIDATE"
         if completed is None:
@@ -1060,9 +1098,11 @@ class EarningsBook:
             target_r=self.policy.target_r,
         )
         if plan is None:
+            if self._temporary_repeat(today, signal_key, bar_at, now):
+                return "WAITING"
             self.journal.append(
                 "candidate_skipped", session=today, signal_key=signal_key, symbol=symbol,
-                reason="GAP_OR_RISK", prior_close=prior, price=price,
+                reason="GAP_OR_RISK", prior_close=prior, price=price, bar=bar_at.isoformat(), at=now,
             )
             return "NO_CANDIDATE"
         if plan["side"] == "sell" and (not asset.get("shortable") or not asset.get("easy_to_borrow")):
@@ -1097,10 +1137,7 @@ class EarningsBook:
             "news_fed", session=today, signal_key=signal_key, symbol=symbol,
             news=news_status, items=fed_items,
         )
-        if self.jev is None:
-            self.journal.append(
-                "jev_unavailable", session=today, signal_key=signal_key, reason="Jev is not configured",
-            )
+        if self.jev is None and not self._ensure_decision_model(today):
             return "JEV_UNAVAILABLE"
         self.journal.append(
             "decision_started", session=today, signal_key=signal_key, signal_at=packet["signal_at"],
