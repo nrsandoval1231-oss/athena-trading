@@ -394,7 +394,10 @@ finally:
     for role, own, ready, peer_ready, out in specs:
         child = env.copy()
         child.update(ROLE=role, OWN=str(own), READY=str(ready), PEER_READY=str(peer_ready), OUT=str(out))
-        procs.append(subprocess.Popen([sys.executable, "-c", script], cwd="/workspace", env=child))
+        procs.append(subprocess.Popen(
+            [sys.executable, "-c", script],
+            cwd=str(Path(__file__).resolve().parents[1]), env=child,
+        ))
     try:
         for proc in procs:
             assert proc.wait(timeout=30) == 0

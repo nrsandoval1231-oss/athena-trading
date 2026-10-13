@@ -1242,7 +1242,10 @@ journal.close()
     env = os.environ.copy()
     env.update(HELD=str(state / "2026-10-13.sqlite"), READY=str(ready), RELEASE=str(release))
     env["PYTHONPATH"] = os.pathsep.join(["src", env.get("PYTHONPATH", "")])
-    proc = subprocess.Popen([sys.executable, "-c", script], cwd="/workspace", env=env)
+    proc = subprocess.Popen(
+        [sys.executable, "-c", script],
+        cwd=str(Path(__file__).resolve().parents[1]), env=env,
+    )
     try:
         deadline = time.time() + 20
         while not ready.exists():

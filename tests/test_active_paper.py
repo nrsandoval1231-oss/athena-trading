@@ -1898,7 +1898,10 @@ journal.close()
     env = os.environ.copy()
     env.update(HELD=str(path), READY=str(ready), RELEASE=str(release))
     env["PYTHONPATH"] = os.pathsep.join(["src", env.get("PYTHONPATH", "")])
-    return subprocess.Popen([sys.executable, "-c", script], cwd="/workspace", env=env)
+    return subprocess.Popen(
+        [sys.executable, "-c", script],
+        cwd=str(Path(__file__).resolve().parents[1]), env=env,
+    )
 
 
 def _wait_ready(path: Path, proc: subprocess.Popen) -> None:
