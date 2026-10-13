@@ -34,6 +34,8 @@ from .journal import PaperJournal
 
 NY = ZoneInfo("America/New_York")
 TERMINAL = {"filled", "canceled", "expired", "rejected", "replaced"}
+# Alpaca keeps a bracket stop leg in status "held". status=open omits that leg.
+PROTECTIVE_STOP_STATUSES = frozenset({"held", "new", "accepted", "pending_new"})
 
 
 class DataDeferral(Exception):
@@ -58,6 +60,75 @@ def number(value: Any, *, positive: bool = False) -> float:
     if not math.isfinite(result) or (positive and result <= 0):
         raise ValueError("invalid market/account number")
     return result
+
+
+def flatten_order_legs(orders: Any) -> list[dict[str, Any]]:
+    """Roll nested bracket legs up so cancel and flat checks see every leg."""
+    if not isinstance(orders, list):
+        raise ValueError("broker open orders are incomplete")
+    visible: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def add(order: Any) -> None:
+        if not isinstance(order, dict):
+            return
+        order_id = order.get("id")
+        if isinstance(order_id, str):
+            if order_id in seen:
+                return
+            seen.add(order_id)
+        visible.append(order)
+        legs = order.get("legs") or []
+        if isinstance(legs, list):
+            for leg in legs:
+                add(leg)
+
+    for order in orders:
+        add(order)
+    return visible
+
+
+def working_orders(orders: Any) -> list[dict[str, Any]]:
+    """Open orders plus nested legs, without terminal parents or legs."""
+    return [order for order in flatten_order_legs(orders) if order.get("status") not in TERMINAL]
+
+
+def cancel_targets(orders: list[dict[str, Any]], close_ids: set[str]) -> list[dict[str, Any]]:
+    """Cancel a working parent once. Its legs go with it."""
+    leg_ids: set[str] = set()
+    for order in orders:
+        if order.get("status") in TERMINAL:
+            continue
+        for leg in order.get("legs") or []:
+            if isinstance(leg, dict) and isinstance(leg.get("id"), str):
+                leg_ids.add(leg["id"])
+    return [
+        order for order in orders
+        if order.get("id") not in close_ids and order.get("id") not in leg_ids
+    ]
+
+
+def protective_stop(
+    order: Any, *, symbol: str, entry_side: str, position_qty: float,
+) -> bool:
+    """True when this order is an opposite-side stop that still covers the position."""
+    if not isinstance(order, dict):
+        return False
+    if order.get("symbol") != symbol or order.get("type") not in {"stop", "stop_limit"}:
+        return False
+    side = order.get("side")
+    if side not in {"buy", "sell"} or side == entry_side:
+        return False
+    if order.get("status") not in PROTECTIVE_STOP_STATUSES:
+        return False
+    if order.get("stop_price") in (None, ""):
+        return False
+    try:
+        number(order["stop_price"], positive=True)
+    except (TypeError, ValueError):
+        return False
+    remaining = number(order["qty"]) - number(order.get("filled_qty", "0"))
+    return remaining >= abs(position_qty)
 
 
 @dataclass(frozen=True)
@@ -217,7 +288,10 @@ class LivePaperAPI(AlpacaPaperBroker):
             "clock": self.call("GET", "/v2/clock"),
             "account": self.call("GET", "/v2/account"),
             "positions": self.call("GET", "/v2/positions"),
-            "orders": self.call("GET", "/v2/orders?status=open&nested=false&limit=500"),
+            # nested=false hides a bracket stop while Alpaca keeps that leg "held".
+            "orders": working_orders(self.call(
+                "GET", "/v2/orders?status=open&nested=true&limit=500",
+            )),
         }
 
 
@@ -378,22 +452,46 @@ class ActivePaperPilot:
         )
         return "ENTRY_NOT_CREATED"
 
+    def _lookup_parent(self) -> tuple[dict[str, Any] | None, Exception | None]:
+        """Fetch the reserved bracket. A lookup error must not block a protective flatten."""
+        if not self._entry() or self.journal.last("entry_not_created"):
+            return None, None
+        try:
+            return self._track_entry(), None
+        except (ModelError, ValueError) as exc:
+            return None, exc
+
+    def _visible_orders(
+        self, orders: Any, parent: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Snapshot orders plus still-working legs from the tracked bracket."""
+        extras: list[Any] = []
+        if parent:
+            extras.append(parent)
+            legs = parent.get("legs") or []
+            if isinstance(legs, list):
+                extras.extend(legs)
+        combined = [*orders, *extras] if isinstance(orders, list) else orders
+        return working_orders(combined)
+
     def flatten_step(self, snapshot: dict[str, Any]) -> bool:
         """Halt first; cancel entry/exit reservations, then close confirmed exposure."""
         self._bind(snapshot)
         self.halt("FLATTEN_REQUESTED")
+        tracked, lookup_error = self._lookup_parent()
+        visible = self._visible_orders(snapshot["orders"], tracked)
         if not self._entry():
-            return not snapshot["positions"] and not snapshot["orders"]
+            return not snapshot["positions"] and not visible
         symbol = self.policy.symbol
-        if any(item["symbol"] != symbol for item in snapshot["positions"] + snapshot["orders"]):
+        if any(item["symbol"] != symbol for item in snapshot["positions"] + visible):
             raise ValueError("unowned exposure is present; refusing account-wide cleanup")
         if self.journal.last("entry_not_created"):
-            if snapshot["positions"] or snapshot["orders"]:
+            if snapshot["positions"] or visible:
                 raise ValueError("exposure remains after a missing-order closeout")
             return True
         close_events = [e for e in self.journal.events if e["kind"] == "close_ack"]
         close_ids = {e["order"]["id"] for e in close_events}
-        working = snapshot["orders"]
+        working = visible
         # After a lost close response, reconcile its broker-created order instead of duplicating it.
         pending_close = self.journal.last("close_intent")
         if pending_close and not any(e["attempt"] == pending_close["attempt"] for e in close_events):
@@ -402,7 +500,7 @@ class ActivePaperPilot:
             if len(candidates) == 1:
                 self.journal.append("close_ack", order=candidates[0], attempt=pending_close["attempt"])
                 close_ids.add(candidates[0]["id"])
-        cancelable = [o for o in working if o["id"] not in close_ids]
+        cancelable = cancel_targets(working, close_ids)
         for order in cancelable:
             self.broker.call("DELETE", "/v2/orders/" + order["id"])
             self.journal.append("cancel_requested", order_id=order["id"])
@@ -420,7 +518,9 @@ class ActivePaperPilot:
             self.journal.append("close_ack", attempt=attempts + 1, order=order)
             return False
         # A possibly accepted entry must be resolved before declaring the account flat.
-        parent = self._track_entry()
+        if lookup_error is not None:
+            raise lookup_error
+        parent = tracked
         if parent is None:
             return self._missing_reserved_order(snapshot) == "ENTRY_NOT_CREATED"
         if parent["status"] not in TERMINAL:
@@ -616,8 +716,11 @@ class ActivePaperPilot:
         now = timestamp(snapshot["clock"]["timestamp"])
         day = now.astimezone(NY).date().isoformat()
         self.journal.append("broker_observation", at=now, snapshot=snapshot)
+        snapshot["orders"] = working_orders(snapshot["orders"])
         if self.journal.last("flat_confirmed"):
-            if snapshot["positions"] or snapshot["orders"]:
+            tracked, lookup_error = self._lookup_parent()
+            visible = self._visible_orders(snapshot["orders"], tracked)
+            if lookup_error is not None or snapshot["positions"] or visible:
                 self.halt("EXPOSURE_AFTER_FLAT")
             else:
                 return "COMPLETE"
@@ -668,17 +771,23 @@ class ActivePaperPilot:
                 else:
                     position = positions[0]
                     expected_sign = 1 if entry["order"]["side"] == "buy" else -1
-                    if number(position["qty"]) * expected_sign <= 0 or abs(number(position["qty"])) > 1:
+                    position_qty = number(position["qty"])
+                    if position_qty * expected_sign <= 0 or abs(position_qty) > 1:
                         self.halt("POSITION_MISMATCH")
-                    # Broker-held stop must be visible after a confirmed entry.
-                    protected = any(o["symbol"] == self.policy.symbol
-                                    and o.get("type") in {"stop", "stop_limit"}
-                                    and o.get("side") != entry["order"]["side"]
-                                    and number(o["qty"]) - number(o.get("filled_qty", "0"))
-                                    >= abs(number(position["qty"]))
-                                    for o in snapshot["orders"])
-                    if not protected:
-                        self.halt("PROTECTION_MISSING")
+                    else:
+                        # status=open omits a bracket stop while that leg is held.
+                        legs = parent.get("legs") or []
+                        if not isinstance(legs, list):
+                            legs = []
+                        protected = any(
+                            protective_stop(
+                                order, symbol=self.policy.symbol,
+                                entry_side=entry["order"]["side"], position_qty=position_qty,
+                            )
+                            for order in (*snapshot["orders"], *legs)
+                        )
+                        if not protected:
+                            self.halt("PROTECTION_MISSING")
             if self.journal.last("halt"):
                 return "COMPLETE" if self.flatten_step(snapshot) else "FLATTENING"
             return "POSITION_OPEN" if qty > 0 else "ENTRY_WORKING"
