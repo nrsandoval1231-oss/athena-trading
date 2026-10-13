@@ -1,5 +1,22 @@
 # Implementation status
 
+## Held bracket stop — 13 October 2026
+
+On 13 October 2026 the first filled bracket was flattened about five seconds after the fill with halt `PROTECTION_MISSING`. Alpaca keeps the bracket stop leg in status `held`, and `GET /v2/orders?status=open&nested=false` does not return that leg. The post-fill check treated the missing row as no protection and `flatten_step` canceled and market-closed the position.
+
+A filled position stays open when the tracked parent order's legs include an opposite-side `stop` or `stop_limit` in `held`, `new`, `accepted`, or `pending_new`, with a stop price and remaining quantity covering the position. A missing, canceled, rejected, or expired stop leg still halts `PROTECTION_MISSING`. Open orders are requested with `nested=true`, and nested legs are included in the snapshot, flatten/cancel, and not-flat checks. Flatten cancels the working parent rather than each of its legs. The per-check status line includes `halt_reason` when a halt is recorded. `parse_authority("LIVE")` still raises. **LIVE remains rejected.** This is not a broker fill and not evidence of trading performance.
+
+Observed local checks, Python 3.12. The baseline on `main` `3db8edca34a6c110086d0ff064a3fa9ea4b013eb` was 704 passed and 0 failed. No pre-existing failures were present. This change adds 12 tests.
+
+```bash
+python -m pytest -q                 # 716 passed in 4.53s
+python -m ruff check .              # clean, ruff 0.15.8
+bash -n deploy/install.sh           # clean
+git diff --check                    # clean
+```
+
+Root pytest does not include Astra Desk; that suite lives in its own repository.
+
 ## Jev probability mass — 12 October 2026
 
 On 12 October 2026 at 08:58 America/Chicago the paper runner raised `ModelError: Jev probabilities do not sum to one` from `JevDecisionEngine.decide`. The sum had to match 1 within `1e-6`. The process exited after `decision_started`, and the restart then returned `ALREADY_REVIEWED` for that setup.

@@ -286,9 +286,206 @@ def test_partially_filled_stop_does_not_protect_its_original_quantity(setup):
     broker.parent.update(status="filled", filled_qty="1")
     broker.state["positions"] = [{"symbol": "AAPL", "qty": "1"}]
     broker.state["orders"] = [{"id": "stop", "symbol": "AAPL", "type": "stop", "side": "sell",
-                               "qty": "1", "filled_qty": "0.5"}]
+                               "qty": "1", "filled_qty": "0.5", "status": "new",
+                               "stop_price": "99"}]
     assert pilot.tick() == "FLATTENING"
     assert journal.last("halt")["reason"] == "PROTECTION_MISSING"
+
+
+def _alpaca_leg(client_order_id, **overrides):
+    """One Alpaca order leg. No account id; those are not part of this payload."""
+    leg = {
+        "id": "leg",
+        "client_order_id": client_order_id,
+        "created_at": "2026-10-13T14:30:05.100000Z",
+        "updated_at": "2026-10-13T14:30:05.100000Z",
+        "submitted_at": "2026-10-13T14:30:05.100000Z",
+        "filled_at": None,
+        "expired_at": None,
+        "canceled_at": None,
+        "failed_at": None,
+        "replaced_at": None,
+        "replaced_by": None,
+        "replaces": None,
+        "symbol": "AAPL",
+        "asset_class": "us_equity",
+        "notional": None,
+        "qty": "1",
+        "filled_qty": "0",
+        "filled_avg_price": None,
+        "order_class": "bracket",
+        "order_type": "limit",
+        "type": "limit",
+        "side": "sell",
+        "time_in_force": "day",
+        "limit_price": "106.50",
+        "stop_price": None,
+        "status": "new",
+        "extended_hours": False,
+        "legs": None,
+    }
+    leg.update(overrides)
+    return leg
+
+
+def _fill_bracket(broker, *, stop_status="held", stop_price="99", stop_qty="1", stop_filled="0"):
+    """Filled bracket whose flat open-order list contains only the take-profit."""
+    submitted = broker.parent
+    client_order_id = submitted["client_order_id"]
+    take_profit = _alpaca_leg(client_order_id + "-tp", id="tp-leg", status="new", type="limit",
+                              order_type="limit", limit_price="106.50", stop_price=None)
+    stop = _alpaca_leg(
+        client_order_id + "-stop", id="stop-leg", status=stop_status, type="stop",
+        order_type="stop", limit_price=None, stop_price=stop_price, qty=stop_qty,
+        filled_qty=stop_filled,
+        canceled_at="2026-10-13T14:30:10Z" if stop_status == "canceled" else None,
+        expired_at="2026-10-13T14:30:10Z" if stop_status == "expired" else None,
+    )
+    broker.parent = {
+        "id": submitted["id"],
+        "client_order_id": client_order_id,
+        "created_at": "2026-10-13T14:30:01.102282Z",
+        "updated_at": "2026-10-13T14:30:04.880000Z",
+        "submitted_at": "2026-10-13T14:30:01.098000Z",
+        "filled_at": "2026-10-13T14:30:04.880000Z",
+        "expired_at": None,
+        "canceled_at": None,
+        "failed_at": None,
+        "replaced_at": None,
+        "replaced_by": None,
+        "replaces": None,
+        "symbol": submitted["symbol"],
+        "asset_class": "us_equity",
+        "notional": None,
+        "qty": submitted["qty"],
+        "filled_qty": "1",
+        "filled_avg_price": "101.5",
+        "order_class": "bracket",
+        "order_type": "limit",
+        "type": "limit",
+        "side": submitted["side"],
+        "time_in_force": "day",
+        "limit_price": "101.50",
+        "stop_price": None,
+        "status": "filled",
+        "extended_hours": False,
+        "legs": [take_profit, stop],
+    }
+    # What GET /v2/orders?status=open&nested=false returns: the held stop is absent.
+    broker.state["orders"] = [take_profit]
+    broker.state["positions"] = [{
+        "symbol": "AAPL", "exchange": "NASDAQ", "asset_class": "us_equity",
+        "avg_entry_price": "101.5", "qty": "1", "side": "long",
+        "market_value": "101.5", "cost_basis": "101.5", "current_price": "101.5",
+        "lastday_price": "100", "change_today": "0.015",
+    }]
+    return stop
+
+
+@pytest.mark.parametrize("stop_status", ["held", "new", "accepted", "pending_new"])
+def test_held_bracket_stop_protects_when_open_orders_omit_it(setup, stop_status):
+    pilot, broker, _, journal = setup
+    pilot.tick()
+    _fill_bracket(broker, stop_status=stop_status)
+    assert [order["id"] for order in broker.state["orders"]] == ["tp-leg"]
+    assert "account_id" not in broker.parent
+    before = len(broker.calls)
+    assert pilot.tick() == "POSITION_OPEN"
+    assert journal.last("halt") is None
+    assert not any(method == "DELETE" for method, _, _ in broker.calls[before:])
+
+
+@pytest.mark.parametrize("stop_status", ["canceled", "rejected", "expired"])
+def test_dead_bracket_stop_leg_halts_protection_missing(setup, stop_status):
+    pilot, broker, _, journal = setup
+    pilot.tick()
+    _fill_bracket(broker, stop_status=stop_status)
+    assert [order["id"] for order in broker.state["orders"]] == ["tp-leg"]
+    assert pilot.tick() == "FLATTENING"
+    assert journal.last("halt")["reason"] == "PROTECTION_MISSING"
+
+
+def test_unpriced_bracket_stop_leg_halts(setup):
+    pilot, broker, _, journal = setup
+    pilot.tick()
+    _fill_bracket(broker, stop_status="held", stop_price=None)
+    assert pilot.tick() == "FLATTENING"
+    assert journal.last("halt")["reason"] == "PROTECTION_MISSING"
+
+
+def test_filled_bracket_without_a_stop_leg_halts(setup):
+    pilot, broker, _, journal = setup
+    pilot.tick()
+    _fill_bracket(broker)
+    broker.parent["legs"] = [leg for leg in broker.parent["legs"] if leg["type"] != "stop"]
+    broker.state["orders"] = [leg for leg in broker.parent["legs"] if leg["type"] == "limit"]
+    assert pilot.tick() == "FLATTENING"
+    assert journal.last("halt")["reason"] == "PROTECTION_MISSING"
+
+
+def test_short_remaining_bracket_stop_does_not_cover_the_position(setup):
+    pilot, broker, _, journal = setup
+    pilot.tick()
+    _fill_bracket(broker, stop_status="held", stop_qty="1", stop_filled="0.5")
+    assert pilot.tick() == "FLATTENING"
+    assert journal.last("halt")["reason"] == "PROTECTION_MISSING"
+
+
+def test_snapshot_nests_open_orders_and_keeps_working_legs():
+    urls = []
+
+    def transport(method, url, headers, payload=None, **kwargs):
+        urls.append(url)
+        if url.endswith("/v2/clock"):
+            return {"timestamp": NOW.isoformat(), "is_open": True}
+        if url.endswith("/v2/account"):
+            return {"id": "paper-account", "status": "ACTIVE"}
+        if url.endswith("/v2/positions"):
+            return []
+        if "/v2/orders?" in url:
+            return [{
+                "id": "parent-1",
+                "client_order_id": "athp-bracket",
+                "symbol": "AAPL",
+                "asset_class": "us_equity",
+                "qty": "1",
+                "filled_qty": "1",
+                "type": "limit",
+                "order_type": "limit",
+                "side": "buy",
+                "order_class": "bracket",
+                "time_in_force": "day",
+                "limit_price": "101.50",
+                "status": "filled",
+                "extended_hours": False,
+                "legs": [
+                    _alpaca_leg("athp-bracket-tp", id="tp-leg"),
+                    _alpaca_leg("athp-bracket-stop", id="stop-leg", type="stop", order_type="stop",
+                                limit_price=None, stop_price="99", status="held"),
+                ],
+            }]
+        raise AssertionError(url)
+
+    broker = LivePaperAPI("key", "secret", transport=transport)
+    snap = broker.snapshot()
+    assert any("status=open" in url and "nested=true" in url for url in urls)
+    assert [order["id"] for order in snap["orders"]] == ["tp-leg", "stop-leg"]
+    assert all("account_id" not in order for order in snap["orders"])
+
+
+def test_flatten_cancels_the_open_parent_and_not_each_leg(setup):
+    pilot, broker, _, journal = setup
+    pilot.tick()
+    stop = _alpaca_leg("athp-stop", id="stop-leg", type="stop", order_type="stop",
+                       limit_price=None, stop_price="99", status="held")
+    take = _alpaca_leg("athp-tp", id="tp-leg", status="held")
+    broker.parent["legs"] = [take, stop]
+    broker.state["orders"] = [copy.deepcopy(broker.parent), take, stop]
+    broker.state["clock"]["timestamp"] = NOW.replace(hour=19, minute=46).isoformat()
+    assert pilot.tick() == "FLATTENING"
+    deletes = [path for method, path, _ in broker.calls if method == "DELETE"]
+    assert deletes == ["/v2/orders/" + broker.parent["id"]]
+    assert journal.last("halt")["reason"] == "SESSION_CLOSE"
 
 
 def test_halt_survives_cleanup_failure(setup):

@@ -98,7 +98,11 @@ def main(argv: list[str] | None = None) -> int:
         while not stopped:
             status = pilot.tick()
             if status != previous_status:
-                print(json.dumps({"mode": "PAPER", "status": status}), flush=True)
+                report = {"mode": "PAPER", "status": status}
+                halt = journal.last("halt")
+                if halt is not None:
+                    report["halt_reason"] = halt["reason"]
+                print(json.dumps(report), flush=True)
                 previous_status = status
             if status in {"COMPLETE", "ENTRY_NOT_CREATED"}:
                 if learning is None:
