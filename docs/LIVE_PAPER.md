@@ -1,8 +1,8 @@
 # Active paper launch
 
-Nick requested active Jev adjudication and actual broker paper execution, with current market data. There is no shadow mode in this runner. Product authority remains [the canon](ATHENA_TRADING_CANON.md), including its Jev amendment.
+Nick requested active Jev adjudication and actual broker paper execution, with current market data. There is no shadow mode in this runner. The [canon](ATHENA_TRADING_CANON.md) now specifies the owner-approved Astra 6 + Jev target; this runbook describes the existing Jev-only runner on main `5708946`.
 
-## What this first slice runs
+## What this existing slice runs
 
 `python scripts/run_athena_paper.py` uses current Alpaca minute bars, existing ORB opening-range/risk functions, **TypeSafe Jev as the only decision model**, deterministic limits and Alpaca paper bracket orders. There is no Terra, OpenAI or Ollama dependency in the active path.
 
@@ -33,7 +33,15 @@ Reconciled completed trades enter the experience store. Relevant prior experienc
 
 This uses the ORB trigger as one intraday component. It is not the full historical ORB-M qualification/campaign, continuously updated predictive engine, Earnings Adaptive arm, full APDE ratchet, or complete general Athena Core integration. The initial bounded paper learning loop is implemented; its observed live results remain unverified. No profit or prediction-accuracy claim is made.
 
-## Configure the runner
+## Hybrid implementation and activation gate
+
+The owner selected **Astra 6** to produce evidence-linked theses/scenarios/plans, with Jev judging original evidence plus the proposal and code owning numbers, validated forecasts, freshness, risk and execution. This capability is not in the current runner. Astra 6's exact provider deployment/API model ID, access and supported interface are unresolved; do not add guessed credentials/flags, substitute a model, or assume an existing chat model is a deployable API.
+
+Before any future hybrid activation, complete the [build acceptance gates](BUILD_PLAN.md) and [contract](HYBRID_MODEL_CONTRACT.md): source and plan validation, expiry/invalidation, no new exposure on either model's failure, bounded event-driven updates, shared portfolio risk and deterministic APDE transitions. Critical protection, mandatory exits and recovery must not wait for either model. The current daily fallback is not a hybrid acceptance rule; it cannot bypass missing/expired proposals or Jev vetoes. No risk limit or order policy changes in this docs PR.
+
+[PR #29](https://github.com/nrsandoval1231-oss/athena-trading/pull/29) remains unmerged. Its `docs/EARNINGS_PAPER.md` is the earnings book's runbook, not a launch procedure for the intraday service and not an Astra 6 deployment. Its multiday holds require an owner decision against the diagram's pre-close-flat rule before adoption. Do not launch a second book from this runbook or infer overnight permission.
+
+## Configure the existing runner
 
 Use a Linux host with persistent storage and Python 3.11+. [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md) is the installation and continuous-operation procedure. The active host example is a Hostinger VPS. A DigitalOcean Droplet remains an optional path with the same `install.sh`, systemd unit, and `paper.env` pattern. Configure only these server-side environment variables through the host's secret settings:
 
@@ -76,6 +84,9 @@ Restart the same `--run` command with the same journal and Alpaca credentials to
 If cleanup cannot finish, it prints `UNRESOLVED_PAPER_EXPOSURE` and exits nonzero. Inspect the paper account and close remaining exposure. A host crash, broker outage, trading halt, or rejected close can prevent flatness; a bracket does not guarantee pre-close liquidation. Model failures never authorize new exposure and never serve as a prerequisite for recovery.
 
 ## Verification and launch status
+
+**Current summary, 13 October 2026.** The [held-bracket incident](IMPLEMENTATION_STATUS.md#held-bracket-stop--13-october-2026) records a filled bracket followed by protective flatten. Earlier installation/waiting/no-fill descriptions below are dated history. This documentation review does not establish the host's present health, deployed SHA or exposure, and does not demonstrate performance improvement. Hybrid entry/management and full APDE/Core learning remain incomplete.
+
 
 The Jev-only/learning revision of 24 September 2026 passed **657 root tests and 158 Astra tests**, with repo-wide Ruff 0.15.8 clean. Tests exercise typed decisions, malformed responses, rechecked risk, broker recovery, checkpoint corruption, point-in-time experience, prospective validation, expiry and learned vetoes. See the immutable revision evidence in [implementation status](IMPLEMENTATION_STATUS.md).
 
