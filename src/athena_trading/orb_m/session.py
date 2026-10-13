@@ -401,6 +401,7 @@ def run_symbol_session(
             break
 
         candidates: list[BreakoutSignal] = []
+        rejected_reentry = False
         for direction in ("LONG", "SHORT"):
             initial = _next_signal(
                 bars, opening_range, constitution, budget, direction=direction,
@@ -434,10 +435,13 @@ def run_symbol_session(
             )
             if not _reentry_retracement_allowed(frac, parameters):
                 cursor[direction] = reentry.signal_minute + 1
+                rejected_reentry = True
                 continue
             candidates.append(reentry)
 
         if not candidates:
+            if rejected_reentry:
+                continue
             break
 
         signal = min(candidates, key=lambda item: (item.signal_minute, item.direction))

@@ -1,5 +1,31 @@
 # Implementation status
 
+## Shared risk, fresh-bar fallback, and evaluation machinery
+
+The earnings review fixes stay on `cursor/earnings-adaptive-paper-a4c7`. This change does not reset that work. It adds the account gate, the opportunity funnel, and an offline comparison that does not read consumed holdouts.
+
+**Implemented and covered by fixtures.** A remembered intraday TAKE_TRADE is submitted at the cutoff only when the fresh completed bar is still that setup. A stale bar records `fallback_no_trade`. A fresh bar in the other direction does not send the old order. Equivalent repeats of one opening-range setup use one reassessment and do not consume the 20-setup budget. `paper/shared_risk.py` refuses a second reservation of the same symbol, combined notional above buying power, an intraday overnight proposal, and a locked other journal. Partial residual quantity is what the gate counts. `paper/evaluation.py` fills at the next open, records a gap through the stop in adverse excursion, draws down in time order, and resamples whole sessions. `compare_policies` reports deterministic, Jev without memory, and Jev with memory on the same opportunities, split by long and short. Its performance field is `unverified`. The research ORB-M re-entry scan continues after an excluded retracement. Earnings headlines that are a split, dividend, or distribution stay `news=unconfirmed`.
+
+**Deployed.** The intraday Hostinger unit from 10 October 2026 is unchanged by this commit. The earnings unit is not installed. Nothing here was deployed.
+
+**Empirically supported.** Not this change. The 13 October paper fill, flattened seconds later with `PROTECTION_MISSING`, is one observed broker event and the reason the held-stop check exists. It is not an edge. The 4–12% earnings screen remains a watchlist heuristic. Jev action probability is not a calibrated probability of profit. Fresh market data for the three-way comparison was not available, so the machinery runs on supplied opportunities and does not claim a result. Consumed holdouts and INVALID_EVIDENCE artifacts were not read or rewritten.
+
+**Inactive until the owner sets a number.** Correlation, concentration, weekly loss, monthly loss, portfolio drawdown, and overnight stress. The earnings multi-day GTC hold stays the existing paper exception for that arm. It does not extend overnight authority to the intraday book, and the canon's flat-by-close rule is unchanged. Live PROTECT, HARVEST, and DEFEND ratchets stay off the one-share pilot. Research `ManagementParameters` still drive only the ORB-M simulator. There is no earnings promotion protocol.
+
+### Strategy contract
+
+| Capability | Execution path | What a test shows | Standing |
+|---|---|---|---|
+| Intraday one-share ORB bracket, 2R, day order | `paper/live.py` | Active paper fixtures submit qty 1 and flatten the pilot's own symbol | Implemented. One broker fill observed and flattened. Not an edge |
+| ORB-M qualification, trail, controlled re-entry | `orb_m/session.py` | An excluded retracement does not stop a later valid reset | Research simulator. Not the live order path |
+| Earnings 4–12% screen | `plan_entry` | An out-of-band bar is temporary; a later in-band bar can be judged | Watchlist heuristic. Not a continuation result |
+| Earnings post-entry bracket | GTC stop at half the gap, 2R, hold 3 sessions | Long and short follow the sign of the gap under the same caps | Implemented paper rule. Not measured by side |
+| Shared account gate | `paper/shared_risk.py` | Same symbol, buying power, locked journal, residual shares | Active for those checks. Portfolio numbers inactive |
+| Fresh-evidence comparison | `paper/evaluation.py` | Next-open fill, gap excursion, time-ordered drawdown, session resample | Machinery only. Performance unverified |
+| Learning | `paper/learning.py` | Nested legs reconcile; fallback and earnings stay out of the intraday study | Intraday study implemented. Earnings stored, not promoted |
+
+`LIVE` still raises. Approved dollar caps are unchanged.
+
 ## Earnings Adaptive paper book — 13 October 2026
 
 The earnings arm is a second PAPER book. It reads a free Nasdaq earnings calendar and an operator copy of the screener's `universe_75.txt`. It submits a GTC bracket only when the live gap is inside the screener's 4–12% band, Jev accepts it on the same floors as the intraday arm, and the dollar caps allow the share count. `parse_authority("LIVE")` still raises. Client order ids start with `athe-`. The book file is separate from the dated intraday journals. A restart reconciles those ids and does not resubmit them. SIGTERM does not flatten. The intraday runner ignores `athe-` orders and symbols in the earnings ledger, and it still refuses any other foreign symbol.

@@ -1272,7 +1272,7 @@ def _fallback_pilot(tmp_path, transport, policy, minute=None):
     return pilot, broker, journal
 
 
-def test_fallback_submits_the_highest_take_once(tmp_path):
+def test_stale_fallback_does_not_submit_a_remembered_take(tmp_path):
     minute, _daily = market_bars()
     planned = [(0.55, 0.90), (0.59, 0.85)]
     calls = {"n": 0}
@@ -1292,19 +1292,62 @@ def test_fallback_submits_the_highest_take_once(tmp_path):
     broker.state["clock"]["timestamp"] = (OPEN + timedelta(minutes=17, seconds=5)).isoformat()
     assert pilot.tick() == "JEV_VETO"
     broker.state["clock"]["timestamp"] = (OPEN + timedelta(minutes=31)).isoformat()
-    assert pilot.tick() == "ENTRY_SUBMITTED"
-    assert pilot.tick() == "ENTRY_WORKING"
-    assert _posts(broker) == 1
+    assert pilot.tick() == "FALLBACK_NO_TRADE"
+    assert _posts(broker) == 0
     assert calls["n"] == 2
-    fallbacks = [event for event in journal.events if event["kind"] == "fallback_entry"]
-    assert len(fallbacks) == 1
-    assert fallbacks[0]["reason"] == "NO_ORDER_BY_CUTOFF"
-    assert fallbacks[0]["signal_at"] == (OPEN + timedelta(minutes=16)).isoformat()
-    order = journal.last("entry_intent")["order"]
-    assert order["limit_price"] == "102.20"
-    assert order["qty"] == "1" and order["order_class"] == "bracket"
-    assert order["extended_hours"] is False and order["time_in_force"] == "day"
+    assert journal.last("fallback_entry") is None
+    assert journal.last("entry_intent") is None
+    assert journal.last("fallback_no_trade")["reason"] == "STALE_BAR"
+    remembered = [event["signal_at"] for event in journal.events if event["kind"] == "fallback_candidate"]
+    assert remembered == [
+        (OPEN + timedelta(minutes=15)).isoformat(),
+        (OPEN + timedelta(minutes=16)).isoformat(),
+    ]
+    journal.close()
+
+
+def test_fallback_submits_only_while_the_same_setup_is_fresh(tmp_path):
+    minute, _daily = market_bars()
+    policy = PilotPolicy("AAPL", fallback_after_open_minutes=17)
+    pilot, broker, journal = _fallback_pilot(
+        tmp_path, lambda *args, **kwargs: scored_response(0.55, 0.9), policy, minute,
+    )
+    assert pilot.tick() == "JEV_VETO"
+    broker.state["clock"]["timestamp"] = (OPEN + timedelta(minutes=17, seconds=5)).isoformat()
+    assert pilot.tick() == "ENTRY_SUBMITTED"
+    assert _posts(broker) == 1
+    assert journal.last("fallback_entry")["reason"] == "NO_ORDER_BY_CUTOFF"
     assert journal.last("entry_intent")["fallback"] is True
+    assert journal.last("entry_intent")["order"]["limit_price"] == "101.50"
+    assert journal.last("entry_intent")["order"]["qty"] == "1"
+    journal.close()
+
+
+def test_old_long_is_not_sent_when_the_fresh_bar_is_short(tmp_path):
+    minute, _daily = market_bars()
+    calls = {"n": 0}
+
+    def transport(*args, **kwargs):
+        calls["n"] += 1
+        return scored_response(0.55, 0.9) if calls["n"] == 1 else response("NO_TRADE")
+
+    policy = PilotPolicy("AAPL", fallback_after_open_minutes=30)
+    pilot, broker, journal = _fallback_pilot(tmp_path, transport, policy, minute)
+    assert pilot.tick() == "JEV_VETO"
+    minute.append({
+        "t": (OPEN + timedelta(minutes=29)).isoformat(),
+        "o": 99.0, "h": 99.2, "l": 98.1, "c": 98.5, "v": 1000,
+    })
+    broker.state["clock"]["timestamp"] = (OPEN + timedelta(minutes=30, seconds=5)).isoformat()
+    assert pilot.tick() == "JEV_VETO"
+    assert calls["n"] == 2
+    assert _posts(broker) == 0
+    assert journal.last("entry_intent") is None
+    assert journal.last("fallback_entry") is None
+    skipped = journal.last("fallback_no_trade")
+    assert skipped["reason"] == "DIRECTION_CHANGED"
+    assert skipped["remembered_direction"] == "LONG"
+    assert skipped["current_direction"] == "SHORT"
     journal.close()
 
 
@@ -1342,7 +1385,7 @@ def test_fallback_does_not_promote_no_trade(tmp_path):
     journal.close()
 
 
-def test_adjudication_budget_waits_for_the_daily_fallback(tmp_path):
+def test_equivalent_setup_keeps_a_slot_for_a_new_direction(tmp_path):
     minute, _daily = market_bars()
     calls = {"n": 0}
 
@@ -1358,18 +1401,34 @@ def test_adjudication_budget_waits_for_the_daily_fallback(tmp_path):
         "o": 101.6, "h": 102.4, "l": 101.4, "c": 102.2, "v": 1000,
     })
     broker.state["clock"]["timestamp"] = (OPEN + timedelta(minutes=17, seconds=5)).isoformat()
+    assert pilot.tick() == "JEV_VETO"
+    assert calls["n"] == 2
+    minute.append({
+        "t": (OPEN + timedelta(minutes=17)).isoformat(),
+        "o": 102.0, "h": 102.4, "l": 101.6, "c": 102.1, "v": 1000,
+    })
+    broker.state["clock"]["timestamp"] = (OPEN + timedelta(minutes=18, seconds=5)).isoformat()
+    assert pilot.tick() == "ALREADY_REVIEWED"
+    assert calls["n"] == 2
+    assert journal.last("opportunity")["reason"] == "EQUIVALENT_SETUP"
+    minute.append({
+        "t": (OPEN + timedelta(minutes=18)).isoformat(),
+        "o": 99.2, "h": 99.4, "l": 98.2, "c": 98.5, "v": 1000,
+    })
+    broker.state["clock"]["timestamp"] = (OPEN + timedelta(minutes=19, seconds=5)).isoformat()
     assert pilot.tick() == "ADJUDICATION_BUDGET"
-    assert calls["n"] == 1
+    assert calls["n"] == 2
+    assert journal.last("opportunity")["stage"] == "budget_limited"
+    assert _posts(broker) == 0
     broker.state["clock"]["timestamp"] = (OPEN + timedelta(minutes=31)).isoformat()
-    assert pilot.tick() == "ENTRY_SUBMITTED"
-    assert calls["n"] == 1
-    assert _posts(broker) == 1
-    assert journal.last("fallback_entry")["reason"] == "NO_ORDER_BY_CUTOFF"
-    assert journal.last("entry_intent")["order"]["limit_price"] == "101.50"
+    assert pilot.tick() == "FALLBACK_NO_TRADE"
+    assert journal.last("fallback_entry") is None
+    assert journal.last("entry_intent") is None
+    assert _posts(broker) == 0
     journal.close()
 
 
-def test_journaled_take_before_this_field_still_falls_back_once(tmp_path):
+def test_journaled_take_is_not_sent_when_the_bar_is_stale(tmp_path):
     minute, daily = market_bars()
     packet, _order = signal_packet(minute, daily, now=NOW, session_open=OPEN, policy=POLICY)
     engine = JevDecisionEngine(
@@ -1394,12 +1453,11 @@ def test_journaled_take_before_this_field_still_falls_back_once(tmp_path):
     pilot = ActivePaperPilot(
         broker, JevDecisionEngine("fixture-key", transport=transport), journal, policy,
     )
-    assert pilot.tick() == "ENTRY_SUBMITTED"
-    assert pilot.tick() == "ENTRY_WORKING"
-    assert _posts(broker) == 1
-    assert journal.last("fallback_entry")["reason"] == "NO_ORDER_BY_CUTOFF"
-    assert journal.last("entry_intent")["order"]["qty"] == "1"
-    assert journal.last("entry_intent")["fallback"] is True
+    assert pilot.tick() == "FALLBACK_NO_TRADE"
+    assert _posts(broker) == 0
+    assert journal.last("fallback_entry") is None
+    assert journal.last("entry_intent") is None
+    assert journal.last("fallback_no_trade")["reason"] == "STALE_BAR"
     journal.close()
 
 
@@ -1627,13 +1685,15 @@ def test_bad_answer_does_not_block_the_daily_fallback(tmp_path):
     candidates = [event for event in journal.events if event["kind"] == "fallback_candidate"]
     assert [event["signal_at"] for event in candidates] == [(OPEN + timedelta(minutes=15)).isoformat()]
     broker.state["clock"]["timestamp"] = (OPEN + timedelta(minutes=31)).isoformat()
-    assert pilot.tick() == "ENTRY_SUBMITTED"
-    assert journal.last("fallback_entry")["reason"] == "NO_ORDER_BY_CUTOFF"
-    assert journal.last("fallback_entry")["signal_at"] == (OPEN + timedelta(minutes=15)).isoformat()
-    assert journal.last("entry_intent")["order"]["limit_price"] == "101.50"
-    assert journal.last("entry_intent")["fallback"] is True
+    assert pilot.tick() == "FALLBACK_NO_TRADE"
+    assert journal.last("fallback_entry") is None
+    assert journal.last("entry_intent") is None
+    assert journal.last("fallback_no_trade")["reason"] == "STALE_BAR"
+    assert journal.last("fallback_no_trade")["remembered_signal_at"] == (
+        OPEN + timedelta(minutes=15)
+    ).isoformat()
     assert calls["n"] == 2
-    assert _posts(broker) == 1
+    assert _posts(broker) == 0
     journal.close()
 
 

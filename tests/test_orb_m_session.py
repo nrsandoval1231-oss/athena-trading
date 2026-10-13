@@ -126,6 +126,27 @@ def test_both_sides_can_attempt_independently():
     assert "LONG" in directions and "SHORT" in directions
 
 
+def test_excluded_retracement_does_not_end_the_reentry_scan():
+    """A retracement inside the open band is skipped. A later valid reset still runs."""
+    bars = opening_range_bars()
+    bars += [
+        bar(15, 100.5, 101.2, 100.4, 101.1),
+        bar(16, 101.2, 102.2, 101.0, 101.5),
+        bar(17, 101.0, 101.2, 98.8, 99.4),
+        bar(18, 101.4, 102.0, 101.2, 101.90),
+        bar(19, 100.2, 100.6, 99.8, 100.2),
+        bar(20, 100.1, 100.4, 99.6, 100.0),
+        bar(22, 101.2, 101.6, 101.1, 101.50),
+    ]
+    result = run_symbol_session(bars, PRIOR, Constitution(slippage_bps=0.0), PARAMS)
+    reentries = [
+        episode for episode in result.episodes
+        if episode.signal.direction == "LONG" and episode.signal.is_reentry
+    ]
+    assert [episode.signal.signal_minute for episode in reentries] == [22]
+    assert all(episode.signal.signal_minute != 18 for episode in result.episodes)
+
+
 def test_attempt_budget_blocks_a_second_initial_long():
     bars = opening_range_bars()
     bars += [
