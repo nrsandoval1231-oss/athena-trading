@@ -35,7 +35,9 @@ from ..orb_m.entry import build_risk_frame, detect_breakout, freeze_opening_rang
 from ..orb_m.market import Bar, average_true_range
 from .alpaca import PAPER_API_BASE, AlpacaPaperBroker
 from .journal import PaperJournal
-from .ownership import earnings_state_dir, intraday_book, load_ownership_symbols
+from .ownership import (
+    earnings_state_dir, intraday_book, load_ownership_symbols, terminal_learning_history,
+)
 
 NY = ZoneInfo("America/New_York")
 TERMINAL = {"filled", "canceled", "expired", "rejected", "replaced"}
@@ -680,7 +682,21 @@ class ActivePaperPilot:
         }))
         if not isinstance(history, list) or len(history) >= 500:
             raise ValueError("terminal broker order history is incomplete")
-        self.journal.append("flat_confirmed", parent=parent, snapshot=snapshot, order_history=history)
+        owned_ids = {
+            event["order"]["id"] for event in self.journal.events
+            if event["kind"] == "close_ack" and isinstance(event.get("order"), dict)
+            and isinstance(event["order"].get("id"), str)
+        }
+        if isinstance(parent.get("id"), str):
+            owned_ids.add(parent["id"])
+        learning_history = terminal_learning_history(
+            history, own_symbol=symbol, owned_ids=owned_ids,
+            ledger_symbols=load_ownership_symbols(earnings_state_dir()),
+        )
+        self.journal.append(
+            "flat_confirmed", parent=parent, snapshot=snapshot,
+            order_history=learning_history, account_order_history=history,
+        )
         return True
 
     def _fallback_due(self, now: datetime, session_open: datetime) -> bool:

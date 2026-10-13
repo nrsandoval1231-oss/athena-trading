@@ -387,6 +387,11 @@ class LearningStore:
         episode = earnings_episode(source, client_order_id, now)
         if episode is None:
             return False
+        # An unmeasured close stays out of the store so a later fill can replace it.
+        if episode.get("result") == "UNMEASURED" or (
+            episode.get("status") == "CLOSED" and episode.get("gross_pnl") is None
+        ):
+            return False
         if episode_arm(episode) != "earnings" or episode["eligible"]:
             raise ValueError("earnings outcome must stay ineligible for the intraday study")
         existing = next((e for e in self.experiences() if e["id"] == episode["id"]), None)

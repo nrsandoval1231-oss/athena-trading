@@ -109,3 +109,78 @@ def intraday_book(
     kept_positions = [item for item in positions if item.get("symbol") not in foreign]
     kept_orders = [item for item in orders if item.get("symbol") not in foreign]
     return kept_positions, kept_orders
+
+
+def _prefixed_tree(order: dict[str, Any], prefix: str) -> bool:
+    client_order_id = order.get("client_order_id")
+    if isinstance(client_order_id, str) and client_order_id.startswith(prefix):
+        return True
+    legs = order.get("legs") or []
+    if isinstance(legs, list):
+        return any(isinstance(leg, dict) and _prefixed_tree(leg, prefix) for leg in legs)
+    return False
+
+
+def _tree_ids(order: dict[str, Any]) -> set[str]:
+    found: set[str] = set()
+    if isinstance(order.get("id"), str):
+        found.add(order["id"])
+    legs = order.get("legs") or []
+    if isinstance(legs, list):
+        for leg in legs:
+            if isinstance(leg, dict):
+                found.update(_tree_ids(leg))
+    return found
+
+
+def _ledger_symbol(order: dict[str, Any], ledger_symbols: set[str], own_symbol: str) -> bool:
+    symbol = order.get("symbol")
+    if isinstance(symbol, str) and symbol in ledger_symbols and symbol != own_symbol:
+        return True
+    legs = order.get("legs") or []
+    if isinstance(legs, list):
+        return any(
+            isinstance(leg, dict) and _ledger_symbol(leg, ledger_symbols, own_symbol)
+            for leg in legs
+        )
+    return False
+
+
+def _terminal_role(
+    order: dict[str, Any], *, own_symbol: str, owned_ids: set[str], ledger_symbols: set[str],
+) -> str:
+    """Classify one top-level broker order, including its nested legs."""
+    if _prefixed_tree(order, EARNINGS_ORDER_PREFIX):
+        return "earnings"
+    if _prefixed_tree(order, INTRADAY_ORDER_PREFIX) or bool(_tree_ids(order) & owned_ids):
+        return "intraday"
+    if _ledger_symbol(order, ledger_symbols, own_symbol):
+        return "earnings"
+    return "unexplained"
+
+
+def terminal_learning_history(
+    history: Any, *, own_symbol: str, owned_ids: set[str], ledger_symbols: set[str],
+) -> list[Any]:
+    """Learning input for one arm. Account evidence stays with the caller.
+
+    Nested legs remain inside their parent. An owned close is kept even when the
+    broker assigned its client id. Anything this arm cannot attribute is an error,
+    not a silent omission.
+    """
+    if not isinstance(history, list):
+        raise ValueError("terminal broker order history is incomplete")
+    learning: list[Any] = []
+    for order in history:
+        if not isinstance(order, dict) or not isinstance(order.get("id"), str):
+            raise ValueError("terminal broker order history is incomplete")
+        role = _terminal_role(
+            order, own_symbol=own_symbol, owned_ids=owned_ids, ledger_symbols=ledger_symbols,
+        )
+        if role == "earnings":
+            continue
+        if role == "intraday":
+            learning.append(order)
+            continue
+        raise ValueError("unexplained exposure in terminal broker order history")
+    return learning

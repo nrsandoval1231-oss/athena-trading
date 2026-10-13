@@ -21,6 +21,7 @@ import re
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -34,7 +35,7 @@ from .earnings_calendar import (
     NASDAQ_HEADERS, EarningsReport, nasdaq_earnings_url, normalize_symbol, parse_nasdaq_calendar,
 )
 from .journal import PaperJournal
-from .learning import LearningStore
+from .learning import LearningStore, _filled_rows
 from .live import (
     NY, LivePaperAPI, bracket_exit_reason, cancel_targets, normalize_news_page, number,
     protective_stop, timestamp, transient_broker_failure, working_orders,
@@ -598,6 +599,46 @@ class EarningsBook:
                 found.add(order["id"])
         return found
 
+    def _proven_working(
+        self, snapshot: dict[str, Any], symbol: str, parent: dict[str, Any] | None,
+        close_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Orders this book can prove it owns. Unidentified orders are left out."""
+        acknowledged = close_ids or set()
+        known: set[str] = set()
+
+        def collect(order: Any) -> None:
+            if not isinstance(order, dict):
+                return
+            if isinstance(order.get("id"), str):
+                known.add(order["id"])
+            legs = order.get("legs") or []
+            if isinstance(legs, list):
+                for leg in legs:
+                    collect(leg)
+
+        extras: list[Any] = []
+        if parent:
+            collect(parent)
+            extras.append(parent)
+            legs = parent.get("legs") or []
+            if isinstance(legs, list):
+                extras.extend(legs)
+        proven: list[dict[str, Any]] = []
+        for order in working_orders([*snapshot["orders"], *extras]):
+            if order.get("symbol") != symbol:
+                continue
+            client_order_id = str(order.get("client_order_id") or "")
+            if client_order_id.startswith(INTRADAY_ORDER_PREFIX):
+                raise ValueError("intraday order shares an earnings symbol; refusing to cancel it")
+            if (
+                client_order_id.startswith(EARNINGS_ORDER_PREFIX)
+                or order.get("id") in known
+                or order.get("id") in acknowledged
+            ):
+                proven.append(order)
+        return proven
+
     def _owned_working(
         self, snapshot: dict[str, Any], symbol: str, parent: dict[str, Any] | None,
         close_ids: set[str] | None = None,
@@ -660,6 +701,80 @@ class EarningsBook:
                 reason=reason, at=datetime.now(UTC), apde_state="EXIT",
             )
 
+    def _pending_close(self, client_order_id: str) -> dict[str, Any] | None:
+        """Latest close send whose acknowledgement never arrived."""
+        pending = [
+            event for event in self.journal.events
+            if event["kind"] == "close_intent" and event.get("client_order_id") == client_order_id
+        ]
+        if not pending:
+            return None
+        latest = pending[-1]
+        acknowledged = any(
+            event["kind"] == "close_ack"
+            and event.get("client_order_id") == client_order_id
+            and event.get("attempt") == latest.get("attempt")
+            for event in self.journal.events
+        )
+        return None if acknowledged else latest
+
+    def _market_close_candidates(
+        self, snapshot: dict[str, Any], symbol: str,
+    ) -> list[dict[str, Any]]:
+        """Working broker market closes on this symbol that this book did not reserve."""
+        found: list[dict[str, Any]] = []
+        for order in working_orders(snapshot["orders"]):
+            if order.get("symbol") != symbol or not isinstance(order.get("id"), str):
+                continue
+            client_order_id = str(order.get("client_order_id") or "")
+            if (
+                client_order_id.startswith(EARNINGS_ORDER_PREFIX)
+                or client_order_id.startswith(INTRADAY_ORDER_PREFIX)
+            ):
+                continue
+            if order.get("type") != "market" or order.get("order_class", "simple") != "simple":
+                continue
+            found.append(order)
+        return found
+
+    def _note_close_uncertain(
+        self, client_order_id: str, attempt: Any, candidates: int,
+    ) -> None:
+        last = self._last("close_unresolved", client_order_id)
+        if last and last.get("attempt") == attempt and last.get("candidates") == candidates:
+            return
+        self.journal.append(
+            "close_unresolved", client_order_id=client_order_id, attempt=attempt,
+            candidates=candidates,
+        )
+
+    def _adopt_lost_close(
+        self, trade: dict[str, Any], snapshot: dict[str, Any],
+    ) -> str | None:
+        """Wait for a close the broker accepted after its response was lost.
+
+        One unique market close is adopted and then left working. Zero or several
+        matches are not adopted, canceled, or replaced. Returning FLATTENING
+        leaves every other symbol free to keep its own protection.
+        """
+        client_order_id = trade["order"]["client_order_id"]
+        pending = self._pending_close(client_order_id)
+        if pending is None:
+            return None
+        symbol = trade["order"]["symbol"]
+        candidates = self._market_close_candidates(snapshot, symbol)
+        if len(candidates) == 1:
+            self.journal.append(
+                "close_ack", client_order_id=client_order_id, attempt=pending.get("attempt"),
+                order=candidates[0],
+            )
+            return None
+        position_open = any(item.get("symbol") == symbol for item in snapshot["positions"])
+        if len(candidates) > 1 or position_open:
+            self._note_close_uncertain(client_order_id, pending.get("attempt"), len(candidates))
+            return "FLATTENING"
+        return None
+
     def _close_step(
         self, trade: dict[str, Any], snapshot: dict[str, Any], parent: dict[str, Any] | None,
     ) -> str:
@@ -668,12 +783,23 @@ class EarningsBook:
         symbol = trade["order"]["symbol"]
         if self._last("trade_halt", client_order_id):
             return "POSITION_MISMATCH"
+        uncertain = self._adopt_lost_close(trade, snapshot) == "FLATTENING"
         close_ids = self._acknowledged_close_ids(client_order_id)
-        owned = self._owned_working(snapshot, symbol, parent, close_ids)
+        if uncertain:
+            # Cancel only orders this book can prove it owns. Leave the unidentified
+            # close, and any unrelated order, untouched and do not send another close.
+            owned = self._proven_working(snapshot, symbol, parent, close_ids)
+        else:
+            owned = self._owned_working(snapshot, symbol, parent, close_ids)
         cancelable = cancel_targets(owned, close_ids)
+        if uncertain:
+            blocked = {
+                order["id"] for order in self._market_close_candidates(snapshot, symbol)
+            }
+            cancelable = [order for order in cancelable if order.get("id") not in blocked]
         for order in cancelable:
             self._delete_order(str(order["id"]))
-        if cancelable or any(order.get("id") in close_ids for order in owned):
+        if uncertain or cancelable or any(order.get("id") in close_ids for order in owned):
             self._flat_counts[client_order_id] = 0
             return "FLATTENING"
         positions = [item for item in snapshot["positions"] if item.get("symbol") == symbol]
@@ -710,22 +836,73 @@ class EarningsBook:
         self._record_close(client_order_id, symbol, reason, parent)
         return "FLAT"
 
+    def _close_view_is_final(self, view: dict[str, Any]) -> bool:
+        """A new acknowledgement with zero shares is not fill evidence."""
+        try:
+            qty = number(view.get("filled_qty") or 0)
+        except (TypeError, ValueError):
+            return False
+        price = view.get("filled_avg_price")
+        return qty > 0 and price not in (None, "") and view.get("status") in {
+            "filled", "partially_filled", "canceled", "expired", "rejected", "replaced",
+        }
+
+    def _refresh_close_view(self, order: Any) -> dict[str, Any] | None:
+        view = fill_view(order)
+        if view is None:
+            return None
+        if self._close_view_is_final(view):
+            return view
+        order_id = view.get("id")
+        if not isinstance(order_id, str) or not order_id:
+            return None
+        try:
+            fresh = self.broker.call("GET", "/v2/orders/" + order_id)
+        except ModelError:
+            return None
+        refreshed = fill_view(fresh)
+        if refreshed is None or not self._close_view_is_final(refreshed):
+            return None
+        return refreshed
+
+    def _fills_balance(
+        self, parent: dict[str, Any] | None, close_orders: list[dict[str, Any]],
+    ) -> bool:
+        if not isinstance(parent, dict):
+            return not close_orders
+        try:
+            filled = Decimal(str(parent.get("filled_qty") or 0))
+        except (ArithmeticError, ValueError):
+            return False
+        if filled == 0:
+            return True
+        measured = _filled_rows(parent, close_orders)
+        if measured is None:
+            return False
+        buys = sum((qty for side, qty, _price in measured if side == "buy"), Decimal(0))
+        sells = sum((qty for side, qty, _price in measured if side == "sell"), Decimal(0))
+        return buys == sells == filled
+
     def _record_close(
         self, client_order_id: str, symbol: str, reason: str, parent: dict[str, Any] | None,
     ) -> None:
-        """Journal the close and the fill facts the shared store will read."""
+        """Journal the close only after terminal fills reconcile. Otherwise retry."""
         if any(
             event["kind"] == "position_closed" and event.get("client_order_id") == client_order_id
             for event in self.journal.events
         ):
             return
-        close_orders = []
+        close_orders: list[dict[str, Any]] = []
         for event in self.journal.events:
             if event["kind"] != "close_ack" or event.get("client_order_id") != client_order_id:
                 continue
-            view = fill_view(event.get("order"))
-            if view:
-                close_orders.append(view)
+            refreshed = self._refresh_close_view(event.get("order"))
+            if refreshed is None:
+                return
+            close_orders.append(refreshed)
+        parent_view = fill_view(parent)
+        if not self._fills_balance(parent_view, close_orders):
+            return
         self.journal.append(
             "position_closed", client_order_id=client_order_id, symbol=symbol, reason=reason,
             parent_id=None if parent is None else parent.get("id"),
@@ -734,7 +911,7 @@ class EarningsBook:
         self.journal.append(
             "earnings_experience", client_order_id=client_order_id, symbol=symbol, reason=reason,
             arm="earnings", eligible_for_intraday_study=False,
-            parent=fill_view(parent), close_orders=close_orders,
+            parent=parent_view, close_orders=close_orders,
         )
 
     def _delete_order(self, order_id: str) -> None:
@@ -1389,8 +1566,9 @@ class EarningsBook:
         done: list[str] = []
         try:
             for client_order_id in pending:
+                # False keeps an incomplete close retryable. It is not recorded.
                 if not store.ingest_earnings(self.journal, client_order_id, now):
-                    raise ValueError("earnings close was not stored")
+                    continue
                 done.append(client_order_id)
         except Exception as exc:
             self._defer_learning(now, exc)
@@ -1410,8 +1588,15 @@ class EarningsBook:
         self.journal.append("learning_deferred", at=now, reason=str(exc)[:250])
 
     def request_flatten_owned(self) -> None:
-        """Operator exit for earnings symbols only. Does not mark intraday exposure."""
-        if self.journal.last("entries_halt") is None:
+        """Operator exit for earnings symbols only. Does not mark intraday exposure.
+
+        The halt is recorded even when an older daily-loss halt is already in the
+        lifetime journal. That older halt expires with its session; this one does not.
+        """
+        if not any(
+            event["kind"] == "entries_halt" and event.get("reason") == "OPERATOR_FLATTEN"
+            for event in self.journal.events
+        ):
             self.journal.append("entries_halt", reason="OPERATOR_FLATTEN", at=datetime.now(UTC))
         for trade in self.open_trades().values():
             self._begin_close(trade, "OPERATOR_FLATTEN")

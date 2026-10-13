@@ -98,6 +98,7 @@ class BookBroker:
         self.news_items = []
         self.fail_news = None
         self.news_calls = []
+        self.order_by_id = {}
 
     def news(self, symbols, start, end):
         self.news_calls.append((list(symbols), start.isoformat()))
@@ -143,13 +144,32 @@ class BookBroker:
             return None
         if method == "DELETE" and path.startswith("/v2/positions/"):
             symbol = path.rsplit("/", 1)[-1]
-            return {
-                "id": "c0ffee00-0000-4000-8000-000000000001",
+            held = next((item for item in self.state["positions"] if item.get("symbol") == symbol), None)
+            qty = held.get("qty") if isinstance(held, dict) else "0"
+            price = held.get("avg_entry_price") if isinstance(held, dict) else None
+            order_id = (
+                "c0ffee00-0000-4000-8000-000000000001" if symbol == "DECK"
+                else "c0ffee00-0000-4000-8000-000000000002"
+            )
+            ack = {
+                "id": order_id,
                 "client_order_id": "broker-close-" + symbol,
-                "symbol": symbol, "qty": "4", "filled_qty": "0", "side": "sell",
-                "type": "market", "order_class": "simple", "time_in_force": "day",
-                "status": "new", "extended_hours": False,
+                "symbol": symbol, "qty": qty, "filled_qty": "0", "filled_avg_price": None,
+                "side": "sell", "type": "market", "order_class": "simple",
+                "time_in_force": "day", "status": "new", "extended_hours": False,
             }
+            # The acknowledgement is not the fill. A later read returns the terminal order.
+            terminal = dict(ack)
+            if qty not in (None, "", "0") and price not in (None, ""):
+                terminal.update(status="filled", filled_qty=qty, filled_avg_price=price)
+            self.order_by_id[order_id] = terminal
+            return ack
+        if method == "GET" and path.startswith("/v2/orders/") and "?" not in path:
+            order_id = path.rsplit("/", 1)[-1]
+            stored = self.order_by_id.get(order_id)
+            if stored is None:
+                raise AssertionError((method, path))
+            return copy.deepcopy(stored)
         if path.startswith("/v2/orders?"):
             return [copy.deepcopy(order) for order in self.parents.values()]
         raise AssertionError((method, path))
@@ -1174,3 +1194,319 @@ def test_news_refreshes_after_an_empty_premarket_pull(tmp_path, monkeypatch):
     assert journal.last("news_fed")["items"][0]["headline"].startswith("Deckers Outdoor")
     assert sum(event["kind"] == "news_context" for event in journal.events) == 3
     journal.close()
+
+
+def _operator_halt(events):
+    return any(
+        event["kind"] == "entries_halt" and event.get("reason") == "OPERATOR_FLATTEN"
+        for event in events
+    )
+
+
+def test_operator_flatten_persists_after_a_prior_session_daily_halt(tmp_path, monkeypatch):
+    """An older daily-loss halt must not swallow the operator halt."""
+    book, broker, journal, _calls = _book(tmp_path, monkeypatch)
+    journal.append(
+        "entries_halt", reason="DAILY_LOSS_LIMIT", session="2026-10-12",
+        at=datetime(2026, 10, 12, 19, tzinfo=UTC),
+    )
+    book.request_flatten_owned()
+    assert _operator_halt(journal.events)
+    assert book.tick() == "ENTRIES_BLOCKED"
+    assert _posts(broker) == []
+    journal.close()
+
+    restarted_journal = PaperJournal(tmp_path / "book.sqlite")
+    restarted = EarningsBook(
+        broker, JevDecisionEngine("fixture-key", transport=lambda *a, **k: jev_response()),
+        restarted_journal, EarningsPolicy(str(tmp_path / "universe_75.txt")),
+        calendar_transport=nasdaq(),
+    )
+    assert restarted.tick() == "ENTRIES_BLOCKED"
+    assert _posts(broker) == []
+    broker.state["clock"]["timestamp"] = "2026-10-14T13:40:05Z"
+    broker.state["clock"]["next_close"] = "2026-10-14T20:00:00Z"
+    assert restarted.tick() == "ENTRIES_BLOCKED"
+    assert _posts(broker) == []
+    restarted_journal.close()
+
+
+def test_cli_flatten_owned_records_operator_halt_after_a_prior_daily_loss(tmp_path, monkeypatch):
+    book, broker, journal, _calls = _book(tmp_path, monkeypatch)
+    journal.append(
+        "entries_halt", reason="DAILY_LOSS_LIMIT", session="2026-10-12",
+        at=datetime(2026, 10, 12, 19, tzinfo=UTC),
+    )
+    journal.close()
+    script = _earnings_script()
+    real_book = script.EarningsBook
+
+    def book_with_calendar(*args, **kwargs):
+        kwargs["calendar_transport"] = nasdaq()
+        return real_book(*args, **kwargs)
+
+    monkeypatch.setenv("ALPACA_API_KEY", "paper-key")
+    monkeypatch.setenv("ALPACA_API_SECRET", "paper-secret")
+    monkeypatch.setenv("ATHENA_EARNINGS_UNIVERSE", str(tmp_path / "universe_75.txt"))
+    monkeypatch.setattr(script, "EarningsBook", book_with_calendar)
+    monkeypatch.setattr(script.LivePaperAPI, "from_env", lambda: broker)
+    monkeypatch.setattr(script.time, "sleep", lambda *_args: signal.raise_signal(signal.SIGTERM))
+    previous = signal.getsignal(signal.SIGTERM)
+    try:
+        code = script.main([
+            "--authority", "PAPER", "--journal", str(tmp_path / "book.sqlite"),
+            "--flatten-owned",
+        ])
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    assert code == 0
+    assert _posts(broker) == []
+    reopened = PaperJournal(tmp_path / "book.sqlite")
+    try:
+        assert _operator_halt(reopened.events)
+        resumed = EarningsBook(
+            broker, JevDecisionEngine("fixture-key", transport=lambda *a, **k: jev_response()),
+            reopened, EarningsPolicy(str(tmp_path / "universe_75.txt")),
+            calendar_transport=nasdaq(),
+        )
+        assert resumed.tick() == "ENTRIES_BLOCKED"
+        broker.state["clock"]["timestamp"] = "2026-10-14T13:40:05Z"
+        broker.state["clock"]["next_close"] = "2026-10-14T20:00:00Z"
+        assert resumed.tick() == "ENTRIES_BLOCKED"
+        assert _posts(broker) == []
+    finally:
+        reopened.close()
+
+
+def _both_reports():
+    def transport(method, url, headers, payload=None, timeout=5):
+        body = nasdaq()(method, url, headers, payload, timeout)
+        if "date=2026-10-13" in url:
+            body["data"]["rows"].append(
+                {"symbol": "CROX", "time": "time-pre-market", "name": "Crocs", "epsForecast": "$2"},
+            )
+        return body
+    return transport
+
+
+def _occupy(broker, client_order_id, *, stop_status="held"):
+    parent = broker.parents[client_order_id]
+    symbol = parent["symbol"]
+    qty = parent["qty"]
+    suffix = "000000000001" if symbol == "DECK" else "000000000002"
+    parent.update(
+        status="filled", filled_qty=qty, filled_avg_price=parent["limit_price"],
+        filled_at="2026-10-13T13:40:04.880000Z",
+    )
+    take = _leg(
+        client_order_id + "-tp", id="11111111-1111-4111-8111-" + suffix, symbol=symbol,
+        qty=qty, status="new", type="limit", order_type="limit", limit_price="108.00",
+        stop_price=None,
+    )
+    stop = _leg(
+        client_order_id + "-stop", id="22222222-2222-4222-8222-" + suffix, symbol=symbol,
+        qty=qty, status=stop_status, type="stop", order_type="stop", limit_price=None,
+        stop_price="102.00",
+    )
+    parent["legs"] = [take, stop]
+    broker.state["positions"] = [
+        item for item in broker.state["positions"] if item.get("symbol") != symbol
+    ]
+    broker.state["positions"].append({
+        "symbol": symbol, "qty": qty, "side": "long", "asset_class": "us_equity",
+        "avg_entry_price": parent["limit_price"],
+    })
+    return parent
+
+
+def _open_two_symbols(tmp_path, monkeypatch):
+    universe = tmp_path / "universe_75.txt"
+    universe.write_text("DECK\nCROX\n")
+    journal = PaperJournal(tmp_path / "book.sqlite")
+    broker = BookBroker()
+    policy = EarningsPolicy(str(universe), max_new_entries_per_day=2)
+    book = EarningsBook(
+        broker, JevDecisionEngine("fixture-key", transport=lambda *a, **k: jev_response()),
+        journal, policy, calendar_transport=_both_reports(),
+    )
+    assert book.tick() == "ENTRY_SUBMITTED"
+    deck_id = _posts(broker)[0]["client_order_id"]
+    _occupy(broker, deck_id)
+    assert book.tick() == "ENTRY_SUBMITTED"
+    crox_id = _posts(broker)[1]["client_order_id"]
+    _occupy(broker, crox_id, stop_status="canceled")
+    for client_order_id in (deck_id, crox_id):
+        for leg in broker.parents[client_order_id]["legs"]:
+            leg["status"] = "canceled"
+    broker.state["orders"] = []
+    return book, broker, journal, deck_id, crox_id
+
+
+def _lose_deck_close(broker):
+    """Broker accepts the DECK close, then the response never reaches the book."""
+    original = broker.call
+    lost = {"order": None}
+
+    def call(method, path, payload=None):
+        if method == "DELETE" and path == "/v2/positions/DECK" and lost["order"] is None:
+            order = original(method, path, payload)
+            lost["order"] = copy.deepcopy(order)
+            broker.state["orders"].append(copy.deepcopy(order))
+            raise ModelError("timeout")
+        return original(method, path, payload)
+
+    broker.call = call
+    return lost
+
+
+def test_lost_close_response_waits_and_still_protects_the_other_symbol(tmp_path, monkeypatch):
+    book, broker, journal, deck_id, crox_id = _open_two_symbols(tmp_path, monkeypatch)
+    lost = _lose_deck_close(broker)
+    with pytest.raises(ModelError, match="timeout"):
+        book.tick()
+    assert journal.last("close_intent")["client_order_id"] == deck_id
+    assert not any(
+        event["kind"] == "close_ack" and event.get("client_order_id") == deck_id
+        for event in journal.events
+    )
+    assert lost["order"]["id"]
+    deck_deletes = [
+        path for method, path, _payload in broker.calls
+        if method == "DELETE" and path == "/v2/positions/DECK"
+    ]
+    assert deck_deletes == ["/v2/positions/DECK"]
+    journal.close()
+
+    restarted_journal = PaperJournal(tmp_path / "book.sqlite")
+    restarted = EarningsBook(
+        broker, None, restarted_journal, book.policy, calendar_transport=_both_reports(),
+    )
+    assert restarted.tick() == "FLATTENING"
+    assert any(
+        event["kind"] == "close_ack" and event.get("client_order_id") == deck_id
+        and event["order"]["id"] == lost["order"]["id"]
+        for event in restarted_journal.events
+    )
+    assert [
+        path for method, path, _payload in broker.calls
+        if method == "DELETE" and path == "/v2/positions/DECK"
+    ] == ["/v2/positions/DECK"]
+    assert not any(
+        method == "DELETE" and lost["order"]["id"] in path
+        for method, path, _payload in broker.calls
+    )
+    assert any(
+        method == "DELETE" and path == "/v2/positions/CROX"
+        for method, path, _payload in broker.calls
+    )
+    assert restarted_journal.last("trade_exit")["client_order_id"] == crox_id
+    assert restarted_journal.last("trade_exit")["reason"] == "PROTECTION_MISSING"
+    restarted_journal.close()
+
+
+def test_uncertain_close_does_not_block_or_adopt_unrelated_orders(tmp_path, monkeypatch):
+    book, broker, journal, deck_id, _crox_id = _open_two_symbols(tmp_path, monkeypatch)
+    lost = _lose_deck_close(broker)
+    with pytest.raises(ModelError, match="timeout"):
+        book.tick()
+    extra = {
+        "id": "c0ffee00-0000-4000-8000-000000000099",
+        "client_order_id": "broker-close-extra", "symbol": "DECK", "qty": "19",
+        "filled_qty": "0", "side": "sell", "type": "market", "order_class": "simple",
+        "time_in_force": "day", "status": "new", "extended_hours": False,
+    }
+    unrelated = {
+        "id": "abababab-0000-4000-8000-0000000000ab",
+        "client_order_id": "manual-limit", "symbol": "DECK", "qty": "1",
+        "filled_qty": "0", "side": "sell", "type": "limit", "order_class": "simple",
+        "time_in_force": "day", "status": "new", "limit_price": "110.00",
+    }
+    broker.state["orders"] = [copy.deepcopy(lost["order"]), extra, unrelated]
+    journal.close()
+    restarted_journal = PaperJournal(tmp_path / "book.sqlite")
+    restarted = EarningsBook(
+        broker, None, restarted_journal, book.policy, calendar_transport=_both_reports(),
+    )
+    assert restarted.tick() == "FLATTENING"
+    assert not any(
+        event["kind"] == "close_ack" and event.get("client_order_id") == deck_id
+        for event in restarted_journal.events
+    )
+    deleted = [path for method, path, _payload in broker.calls if method == "DELETE"]
+    assert "/v2/positions/DECK" in deleted
+    assert deleted.count("/v2/positions/DECK") == 1
+    assert "/v2/positions/CROX" in deleted
+    assert all(extra["id"] not in path and unrelated["id"] not in path for path in deleted)
+    restarted_journal.close()
+
+
+def test_terminal_market_close_fill_is_refreshed_before_the_earnings_outcome(tmp_path, monkeypatch):
+    """A zero-fill acknowledgement is not the close. 19 shares from 104 to 106 is $38."""
+    book, broker, journal, _calls = _book(tmp_path, monkeypatch)
+    assert book.tick() == "ENTRY_SUBMITTED"
+    client_order_id = _posts(broker)[0]["client_order_id"]
+    fill_bracket(broker, client_order_id)
+    for leg in broker.parents[client_order_id]["legs"]:
+        leg["status"] = "canceled"
+    broker.state["orders"] = []
+    assert book.tick() == "FLATTENING"
+    assert any(path == "/v2/positions/DECK" for method, path, _payload in broker.calls if method == "DELETE")
+    close_id = journal.last("close_ack")["order"]["id"]
+    broker.state["positions"] = []
+    broker.state["orders"] = []
+    broker.order_by_id = {
+        close_id: {
+            "id": close_id, "client_order_id": "broker-close-DECK", "symbol": "DECK",
+            "qty": "19", "filled_qty": "0", "filled_avg_price": None, "side": "sell",
+            "type": "market", "order_class": "simple", "status": "new",
+        },
+    }
+    original = broker.call
+
+    def call(method, path, payload=None):
+        if method == "GET" and path == "/v2/orders/" + close_id:
+            return copy.deepcopy(broker.order_by_id[close_id])
+        return original(method, path, payload)
+
+    broker.call = call
+    assert book.tick() == "FLATTENING"
+    book.tick()
+    assert journal.last("position_closed") is None
+    assert journal.last("earnings_experience") is None
+    assert journal.last("learning_recorded") is None
+    store = LearningStore(tmp_path / "athena-state")
+    try:
+        assert store.experiences() == []
+    finally:
+        store.close()
+    journal.close()
+
+    restarted_journal = PaperJournal(tmp_path / "book.sqlite")
+    restarted = EarningsBook(
+        broker, None, restarted_journal, EarningsPolicy(str(tmp_path / "universe_75.txt")),
+        calendar_transport=nasdaq(),
+    )
+    restarted.tick()
+    assert restarted_journal.last("position_closed") is None
+    broker.order_by_id[close_id] = {
+        "id": close_id, "client_order_id": "broker-close-DECK", "symbol": "DECK",
+        "qty": "19", "filled_qty": "19", "filled_avg_price": "106.00", "side": "sell",
+        "type": "market", "order_class": "simple", "status": "filled",
+    }
+    restarted.tick()
+    restarted.tick()
+    experience = restarted_journal.last("earnings_experience")
+    assert experience["client_order_id"] == client_order_id
+    assert experience["close_orders"][0]["filled_qty"] == "19"
+    assert experience["close_orders"][0]["filled_avg_price"] == "106.00"
+    assert restarted_journal.last("learning_recorded")["client_order_ids"] == [client_order_id]
+    store = LearningStore(tmp_path / "athena-state")
+    try:
+        episodes = [item for item in store.experiences() if item["arm"] == "earnings"]
+        assert len(episodes) == 1
+        assert episodes[0]["result"] != "UNMEASURED"
+        assert episodes[0]["gross_pnl"] == "38.00"
+        assert episodes[0]["quantity"] == "19"
+    finally:
+        store.close()
+    restarted_journal.close()
