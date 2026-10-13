@@ -53,9 +53,9 @@ git diff --check                    # clean
 python3 -m pip install .            # imports shared_risk, evaluation, funnel, live, and earnings
 ```
 
-No type checker is configured in `pyproject.toml` or `.github/workflows/ci.yml`. Tested revision of this repair is recorded after the commit that contains the runner and tests. The 785-passed sentence above is historical and is not this repair.
+No type checker is configured in `pyproject.toml` or `.github/workflows/ci.yml`. Tested revision of this repair: `19402ce3d100a5a28a83f3c23dadc2b17164aa5d`. The 785-passed result on `ba032129b7900cafec2535fde0db902eae715b36` is historical and is not this repair.
 
-GitHub Actions on that SHA did not run the test job. Push run `38448610766` and pull-request run `38448676036` both failed in a few seconds with empty steps. The annotation says the job was not started because recent account payments have failed or the spending limit needs to be increased. That is a billing block, not a pytest or ruff failure. The Ubuntu 26 runner notice is not a failure. Later empty commits retriggered CI after the repository was public; those runs are recorded on the pull request and are not a substitute for the review repairs.
+GitHub Actions on `ba032129b7900cafec2535fde0db902eae715b36` did not run the test job. Push run `38448610766` and pull-request run `38448676036` both failed in a few seconds with empty steps. The annotation says the job was not started because recent account payments have failed or the spending limit needs to be increased. That is a billing block, not a pytest or ruff failure. Later empty commits retriggered CI after the repository was public. Those runs are not a substitute for this repair. CI for `19402ce3d100a5a28a83f3c23dadc2b17164aa5d` is separate and is recorded on the pull request.
 
 ## Earnings Adaptive paper book — 13 October 2026
 
