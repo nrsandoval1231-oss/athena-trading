@@ -4,14 +4,14 @@ Nick confirmed on 13 October 2026 that he does not want to hold overnight. Both 
 
 PAPER only. `parse_authority("LIVE")` raises `AuthorityError`. The order endpoint stays `https://paper-api.alpaca.markets`. This arm does not grant real-money authority, and it does not rerun the frozen earnings-universe study.
 
-The screener in `research/earnings-universe/universe_screener.py` ranks about 75 names that historically move 4–12% from the close before a report to the close after it. This book does not import that script. It trades a name from the operator's copy of `universe_75.txt` only when the live gap, on the first regular session after a known report, lands inside that same band.
+The screener in `research/earnings-universe/universe_screener.py` ranks about 75 names that historically move 4–12% from the close before a report to the close after it. That screen is a watchlist heuristic. It does not establish that the move continues after entry, and this book does not rerun or relabel that study. The book trades a name from the operator's copy of `universe_75.txt` only when the live gap, on the first regular session after a known report, lands inside that same band. The order that can actually be filled is the post-entry bracket below. Longs and shorts use the sign of the gap and the same stop and target shape. Their results are not pooled into one claim, and neither side has a measured edge.
 
 ## Rule set
 
 | Rule | Value |
 |---|---|
 | Direction | Sign of the gap from the prior regular close to the latest completed minute inside the entry window |
-| Gap band | 4% to 12% absolute, inclusive. Outside the band is no trade. The band is not an environment setting |
+| Gap band | 4% to 12% absolute, inclusive. A watchlist screen, not a profit result. Outside the band is no trade for that bar. The band is not an environment setting |
 | Entry window | 5 to 30 minutes after the regular open, on the first session the report is public |
 | Before the open (BMO) | Entry session is the report date |
 | After the close (AMC) | Entry session is the next regular session |
@@ -83,7 +83,7 @@ Intraday orders start with `athp-`. The intraday runner's flat check and `flatte
 
 Closed earnings trades are copied into the shared learning store at `ATHENA_STATE_DIR/learning` (default `/var/lib/athena/learning`) with `arm=earnings`. They keep fill quantity, gross P&L when the entry and exit cashflows balance, the decision receipt, and source hashes. `eligible` is false. The intraday discovery, validation, promotion, and context retrieval ignore `arm=earnings`, so these fills do not train or skew that study. A locked store is retried; it does not block a protective exit.
 
-Before the open, and again until the entry window ends, the book calls Alpaca `GET /v1beta1/news` with the paper keys for that day's candidates, starting at the prior regular close. A successful snapshot is kept for fifteen minutes and then refreshed; each snapshot records the time it was available. An empty early pull does not freeze the session. Headlines and summaries are journaled as `news_context` and, when a name is adjudicated, as `news_fed` inside the Jev packet, with source and publication time. `news=confirmed` requires a headline in that window that reads as a released report. A preview, a future or expected report, or a statement that results were delayed or not released stays `news=unconfirmed`. That flag does not authorize the trade. The Nasdaq calendar remains the schedule. Rate limits use the same GET retry as other broker reads. If news is down or unusable, the book journals `news_unavailable` and continues with `news=unavailable`.
+Before the open, and again until the entry window ends, the book calls Alpaca `GET /v1beta1/news` with the paper keys for that day's candidates, starting at the prior regular close. A successful snapshot is kept for fifteen minutes and then refreshed; each snapshot records the time it was available. An empty early pull does not freeze the session. Headlines and summaries are journaled as `news_context` and, when a name is adjudicated, as `news_fed` inside the Jev packet, with source, id, and publication time. `news=confirmed` requires a headline in that window that reads as a released report. A preview, a future or expected report, a negation, a split, a dividend, or a distribution stays `news=unconfirmed`. Confirmation is headline-shaped evidence in the pre-open window. It is not a filing receipt, and it does not authorize the trade. The Nasdaq calendar remains the schedule. The book does not call Alpaca's corporate-actions endpoint. Prices are the broker's unadjusted IEX or SIP prints. A split or distribution is not adjusted in the journal, so a comparable-price series is not claimed. Rate limits use the same GET retry as other broker reads. If news is down or unusable, the book journals `news_unavailable` and continues with `news=unavailable`.
 
 A completed bar outside the 4–12% band is a temporary skip. A later completed bar inside the entry window is judged again. An untradable asset, a blocked short, or the intraday symbol is skipped for the session. A name is adjudicated once. The resulting reservation is not sent twice.
 
@@ -92,6 +92,10 @@ The entry window and the age of the minute bar are checked again after Jev retur
 A 0.5% daily loss blocks new entries for that broker session only. The event stays in the journal. The next session evaluates equity again. An operator flatten halt stays in force until the book is replaced.
 
 On restart, risk and notional caps may be tightened. A looser cap, or a change to the feed, universe, or any other setting, refuses startup. Existing reservations keep the order that was already journaled. The tightened caps are stored as `policy_tightened` and apply to later entries.
+
+Both arms share one account gate in `paper/shared_risk.py`. One account-specific mutex serializes fresh broker sampling, peer/own exposure checks and durable entry reservation. A repeated symbol or insufficient unreserved buying power returns `SHARED_RISK_BLOCKED`. A busy/unavailable coordinator or unreadable/integrity-failed peer also blocks new entry. The peer journal's lifetime writer lock does not block read-only access. Pending shares plus held residuals, legacy GTC `done_for_day` orders and unresolved prior-session journals remain counted. Protective management and session exits do not acquire the entry mutex. Both arms reject overnight proposals. Correlation, concentration, weekly/monthly loss, portfolio drawdown and overnight stress thresholds remain inactive; this is not the complete portfolio gate. See [shared coordination setup](CLOUD_DEPLOYMENT.md#shared-account-entry-coordination).
+
+Each watched name records an `opportunity` row when the book can see the outcome: temporarily outside the gap band, rejected by asset or short or the intraday symbol, vetoed by Jev, blocked by the shared gate, or submitted. Closed earnings episodes stay in the learning store with `arm=earnings` and `eligible` false. They are not added to the intraday study and they are not promoted.
 
 ## Run
 

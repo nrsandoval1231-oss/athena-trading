@@ -7,10 +7,14 @@ symbol. This runner still flattens only its own symbol.
 
 A TAKE_TRADE label clears the gate at p(TAKE_TRADE) >= 0.6 and confidence >= 0.5
 unless the operator overrides those floors. Probability mass within 0.02 of 1 is
-renormalized before that comparison. If the session still has no order at the
-fallback cutoff, the highest-scoring TAKE_TRADE label seen that day is submitted
-once. A malformed Jev answer vetoes that setup only and is not an approval.
-Risk, the bracket, and PAPER authority still apply.
+renormalized before that comparison. At the fallback cutoff, a remembered
+TAKE_TRADE is submitted only when the fresh completed bar is still that same
+setup. A stale bar records a no-trade. A fresh bar in another direction does
+not send the old order; that new setup is judged on its own, and a no-trade is
+recorded when it does not qualify. Equivalent repeats of one opening-range
+setup do not each spend an adjudication. A malformed Jev answer vetoes that
+setup only and is not an approval. Risk, the bracket, and PAPER authority
+still apply.
 """
 from __future__ import annotations
 
@@ -34,10 +38,15 @@ from ..orb_m.constitution import Constitution
 from ..orb_m.entry import build_risk_frame, detect_breakout, freeze_opening_range
 from ..orb_m.market import Bar, average_true_range
 from .alpaca import PAPER_API_BASE, AlpacaPaperBroker
+from .funnel import record_opportunity
 from .journal import PaperJournal
 from .ownership import (
     earnings_state_dir, intraday_book, load_ownership_orders, load_ownership_symbols,
     terminal_learning_history,
+)
+from .shared_risk import (
+    SharedBookBusy, SharedExposureUnreadable, authorize_entry, entry_coordination, other_arm_exposure,
+    reflected_exposure,
 )
 
 NY = ZoneInfo("America/New_York")
@@ -403,12 +412,15 @@ class LivePaperAPI(AlpacaPaperBroker):
     def snapshot(self) -> dict[str, Any]:
         return {
             "clock": self.call("GET", "/v2/clock"),
-            "account": self.call("GET", "/v2/account"),
             "positions": self.call("GET", "/v2/positions"),
             # nested=false hides a bracket stop while Alpaca keeps that leg "held".
             "orders": working_orders(self.call(
                 "GET", "/v2/orders?status=open&nested=true&limit=500",
             )),
+            # Buying-power exemptions may use only exposure observed BEFORE this
+            # account sample. An order appearing after an older account read is
+            # not proof that its cost was deducted from that earlier balance.
+            "account": self.call("GET", "/v2/account"),
         }
 
 
@@ -483,6 +495,22 @@ def signal_packet(
         "take_profit": {"limit_price": f"{price + sign * 2 * risk:.2f}"},
     }
     return packet, order
+
+
+def setup_identity(packet: dict[str, Any]) -> tuple[Any, ...]:
+    """Opening-range setup, without the completed bar's timestamp.
+
+    A later minute of the same direction, range, price, and stop is the same
+    setup. The timestamp stays on the packet for freshness checks.
+    """
+    observations = packet.get("observations") if isinstance(packet.get("observations"), dict) else {}
+    return (
+        packet.get("candidate_direction"),
+        observations.get("opening_range_high"),
+        observations.get("opening_range_low"),
+        observations.get("latest_completed_close"),
+        observations.get("risk_stop"),
+    )
 
 
 class ActivePaperPilot:
@@ -674,6 +702,7 @@ class ActivePaperPilot:
         if parent["status"] not in TERMINAL:
             self._delete_order(parent["id"])
             return False
+        self._record_terminal_unfilled(parent, timestamp(snapshot["clock"]["timestamp"]))
         self._flat_observations += 1
         if self._flat_observations < 2:
             return False
@@ -699,6 +728,28 @@ class ActivePaperPilot:
             order_history=learning_history, account_order_history=history,
         )
         return True
+
+    def _record_terminal_unfilled(self, parent: dict[str, Any], now: datetime) -> None:
+        """A timeout or cleanup that ends with no fill is still one funnel outcome."""
+        if parent.get("status") not in {"canceled", "expired", "rejected", "replaced"}:
+            return
+        try:
+            filled = number(parent.get("filled_qty"))
+        except (TypeError, ValueError):
+            return
+        if filled != 0:
+            return
+        entry = self._entry()
+        client_order_id = None
+        if entry and isinstance(entry.get("order"), dict):
+            client_order_id = entry["order"].get("client_order_id")
+        if not isinstance(client_order_id, str):
+            return
+        halt = self.journal.last("halt")
+        reason = "ENTRY_TIMEOUT" if halt and halt.get("reason") == "ENTRY_TIMEOUT" else "ENTRY_TERMINATED"
+        record_opportunity(
+            self.journal, stage="unfilled", reason=reason, at=now, client_order_id=client_order_id,
+        )
 
     def _fallback_due(self, now: datetime, session_open: datetime) -> bool:
         return now >= session_open + timedelta(minutes=self.policy.fallback_after_open_minutes)
@@ -757,25 +808,81 @@ class ActivePaperPilot:
             return None
         return min(takes, key=lambda event: (-event["score"], event["signal_at"]))
 
+    def _peek_fresh(
+        self, now: datetime, day: str, session_open: datetime,
+    ) -> tuple[tuple[dict[str, Any], dict[str, Any]] | None, DataDeferral | None]:
+        calendar = self.broker.call("GET", "/v2/calendar?" + urlencode({
+            "start": (now.astimezone(NY).date() - timedelta(days=10)).isoformat(), "end": day,
+        }))
+        prior_sessions = [item["date"] for item in calendar if item["date"] < day]
+        if not prior_sessions:
+            raise ValueError("broker calendar unavailable")
+        if self.daily is None:
+            self.daily = self.broker.bars(
+                self.policy.symbol, session_open - timedelta(days=60),
+                session_open, "1Day", self.policy.feed,
+            )
+        prior_dates = [
+            timestamp(item["t"]).astimezone(NY).date().isoformat() for item in self.daily
+            if timestamp(item["t"]).astimezone(NY).date().isoformat() < day
+        ]
+        if not prior_dates or max(prior_dates) != max(prior_sessions):
+            raise ValueError("prior daily data is stale")
+        raw = self.broker.bars(self.policy.symbol, session_open, now, "1Min", self.policy.feed)
+        try:
+            return signal_packet(
+                raw, self.daily, now=now, session_open=session_open, policy=self.policy,
+            ), None
+        except DataDeferral as deferred:
+            return None, deferred
+
     def _finish_veto(
         self, day: str, now: datetime, session_open: datetime, account: dict[str, Any],
     ) -> str:
-        """This setup is declined. Other journaled TAKE_TRADE labels stay eligible."""
+        """This setup is declined. A stale remembered take is not sent from here."""
         if self._fallback_due(now, session_open):
-            fallback_status = self._submit_fallback(day, now, account)
+            fallback_status = self._submit_fallback(day, now, session_open, account)
             if fallback_status is not None:
                 return fallback_status
         return "JEV_VETO"
 
-    def _submit_fallback(self, day: str, now: datetime, account: dict[str, Any]) -> str | None:
-        """Submit the best TAKE_TRADE label once. No order means try again next tick."""
-        if self._entry():
+    def _submit_fallback(
+        self, day: str, now: datetime, session_open: datetime, account: dict[str, Any],
+    ) -> str | None:
+        """Submit only when the fresh bar is still the accepted setup."""
+        if self._entry() or self.journal.last("fallback_entry") or self.journal.last("fallback_no_trade"):
             return None
         candidate = self._best_take(day)
         if candidate is None:
             return None
         require_paper(self.authority)
-        order = candidate["order"]
+        fresh, error = self._peek_fresh(now, day, session_open)
+        remembered = candidate["packet"].get("candidate_direction")
+        if error is not None or fresh is None:
+            reason = error.reason if error is not None else "NO_CURRENT_SETUP"
+            self.journal.append(
+                "fallback_no_trade", session=day, at=now, reason=reason,
+                remembered_direction=remembered, remembered_signal_at=candidate["signal_at"],
+            )
+            record_opportunity(
+                self.journal, stage="fallback", reason=reason, at=now, signal_at=candidate["signal_at"],
+            )
+            return "FALLBACK_NO_TRADE"
+        packet, order = fresh
+        remembered_packet = candidate.get("packet") if isinstance(candidate.get("packet"), dict) else {}
+        if packet["candidate_direction"] != remembered or setup_identity(packet) != setup_identity(remembered_packet):
+            reason = "DIRECTION_CHANGED" if packet["candidate_direction"] != remembered else "SETUP_CHANGED"
+            self.journal.append(
+                "fallback_no_trade", session=day, at=now, reason=reason,
+                remembered_direction=remembered, current_direction=packet["candidate_direction"],
+                remembered_signal_at=candidate["signal_at"], current_signal_at=packet["signal_at"],
+            )
+            record_opportunity(
+                self.journal, stage="fallback", reason=reason, at=now,
+                signal_at=candidate["signal_at"],
+            )
+            return None
+        require_paper(self.authority)
         if (order.get("qty") != "1" or order.get("order_class") != "bracket"
                 or order.get("extended_hours") is not False or order.get("time_in_force") != "day"):
             raise ValueError("fallback order violates the paper bracket limits")
@@ -786,7 +893,6 @@ class ActivePaperPilot:
             return "NOTIONAL_BLOCKED"
         if abs(price - stop) > min(self.policy.max_stop_risk, equity * 0.001):
             return "STOP_RISK_BLOCKED"
-        packet = candidate["packet"]
         if self.learning is not None:
             context = self.learning.context(
                 account["id"], self.policy.symbol, packet["candidate_direction"], now,
@@ -805,7 +911,7 @@ class ActivePaperPilot:
             return "SHORT_BLOCKED"
         return self._commit_order(
             order, packet, session_day=day, account_id=account["id"], observed_at=now,
-            verdict_hash=candidate["verdict_hash"], allow_stale=True,
+            verdict_hash=candidate["verdict_hash"], allow_stale=False,
             fallback={
                 "session": day, "reason": "NO_ORDER_BY_CUTOFF",
                 "signal_at": candidate["signal_at"], "score": candidate["score"],
@@ -822,7 +928,28 @@ class ActivePaperPilot:
     ) -> str:
         """Recheck risk, reserve one bracket, then send it. PAPER only."""
         require_paper(self.authority)
-        current = self._without_earnings(self.broker.snapshot())
+        try:
+            with entry_coordination(self.journal, account_id):
+                return self._commit_order_coordinated(
+                    order, packet, session_day=session_day, account_id=account_id,
+                    observed_at=observed_at, verdict_hash=verdict_hash,
+                    allow_stale=allow_stale, fallback=fallback,
+                )
+        except (SharedBookBusy, SharedExposureUnreadable) as exc:
+            record_opportunity(
+                self.journal, stage="rejected", at=observed_at,
+                reason="SHARED_BOOK_BUSY" if isinstance(exc, SharedBookBusy) else "SHARED_EXPOSURE_UNREADABLE",
+                signal_at=packet.get("signal_at"),
+            )
+            return "SHARED_RISK_BLOCKED"
+
+    def _commit_order_coordinated(
+        self, order: dict[str, Any], packet: dict[str, Any], *, session_day: str,
+        account_id: str, observed_at: datetime, verdict_hash: str, allow_stale: bool,
+        fallback: dict[str, Any] | None,
+    ) -> str:
+        raw = self.broker.snapshot()
+        current = self._without_earnings(raw)
         current_now = timestamp(current["clock"]["timestamp"])
         if current_now < observed_at:
             raise ValueError("broker clock moved backwards during adjudication")
@@ -854,6 +981,35 @@ class ActivePaperPilot:
         stop_too_wide = abs(price - stop) > min(self.policy.max_stop_risk, current_equity * 0.001)
         if too_large or stop_too_wide:
             return "RISK_CHANGED"
+        try:
+            other = other_arm_exposure(
+                "intraday", today=current_now.astimezone(NY).date(), account_id=account_id,
+            )
+        except SharedBookBusy:
+            record_opportunity(
+                self.journal, stage="rejected", reason="SHARED_BOOK_BUSY", at=current_now,
+                signal_at=packet.get("signal_at"),
+            )
+            return "SHARED_RISK_BLOCKED"
+        except SharedExposureUnreadable:
+            record_opportunity(
+                self.journal, stage="rejected", reason="SHARED_EXPOSURE_UNREADABLE", at=current_now,
+                signal_at=packet.get("signal_at"),
+            )
+            return "SHARED_RISK_BLOCKED"
+        reflected_ids, reflected_symbols = reflected_exposure(raw)
+        shared = authorize_entry(
+            arm="intraday", symbol=str(order["symbol"]), notional=price, stop_risk=abs(price - stop),
+            overnight=False, buying_power=number(current["account"]["buying_power"]),
+            open_exposure=other, reflected_client_order_ids=reflected_ids,
+            reflected_symbols=reflected_symbols,
+        )
+        if not shared.allowed:
+            record_opportunity(
+                self.journal, stage="rejected", reason=shared.reason, at=current_now,
+                signal_at=packet.get("signal_at"),
+            )
+            return "SHARED_RISK_BLOCKED"
         if fallback is not None and self.journal.last("fallback_entry") is None:
             self.journal.append("fallback_entry", **fallback, at=current_now)
         reserved = {
@@ -870,6 +1026,10 @@ class ActivePaperPilot:
         # A lost response leaves a durable reservation. Recovery only queries this ID, never resends.
         ack = self.broker.call("POST", "/v2/orders", reserved)
         self.journal.append("entry_ack", order=ack)
+        record_opportunity(
+            self.journal, stage="eligible", reason="ENTRY_SUBMITTED", at=current_now,
+            signal_at=packet.get("signal_at"), client_order_id=reserved["client_order_id"],
+        )
         return "ENTRY_SUBMITTED"
 
     def tick(self) -> str:
@@ -922,10 +1082,18 @@ class ActivePaperPilot:
             if parent["status"] == "partially_filled" or (qty > 0 and parent["status"] != "filled"):
                 self.halt("PARTIAL_ENTRY")
             elif parent["status"] in {"canceled", "expired", "rejected", "replaced"}:
+                record_opportunity(
+                    self.journal, stage="unfilled", reason="ENTRY_TERMINATED", at=now,
+                    client_order_id=entry["order"].get("client_order_id"),
+                )
                 self.halt("ENTRY_TERMINATED")
             elif parent["status"] != "filled" and (now - timestamp(entry["at"])).total_seconds() > 60:
                 self.halt("ENTRY_TIMEOUT")
             elif parent["status"] == "filled":
+                record_opportunity(
+                    self.journal, stage="executed", reason="FILLED", at=now,
+                    client_order_id=entry["order"].get("client_order_id"),
+                )
                 positions = snapshot["positions"]
                 if any(p["symbol"] != self.policy.symbol for p in positions):
                     raise ValueError("unowned position encountered")
@@ -971,7 +1139,7 @@ class ActivePaperPilot:
             raise ValueError("broker calendar unavailable")
         session_open = datetime.fromisoformat(day + "T" + current_session[0]["open"]).replace(tzinfo=NY)
         if self._fallback_due(now, session_open):
-            fallback_status = self._submit_fallback(day, now, account)
+            fallback_status = self._submit_fallback(day, now, session_open, account)
             if fallback_status is not None:
                 return fallback_status
         if self.daily is None:
@@ -994,7 +1162,25 @@ class ActivePaperPilot:
         attempts = [e for e in self.journal.events if e["kind"] == "decision_started" and e["session"] == day]
         if any(e["signal_at"] == packet["signal_at"] for e in attempts):
             return "ALREADY_REVIEWED"
-        if len(attempts) >= self.policy.max_adjudications:
+        setup_key = canonical_hash({
+            "direction": packet["candidate_direction"],
+            "opening_range_high": packet["observations"]["opening_range_high"],
+            "opening_range_low": packet["observations"]["opening_range_low"],
+        })
+        same_setup = [event for event in attempts if event.get("setup_key") == setup_key]
+        if len(same_setup) >= 2:
+            record_opportunity(
+                self.journal, stage="temporarily_ineligible", reason="EQUIVALENT_SETUP", at=now,
+                signal_at=packet["signal_at"],
+            )
+            return "ALREADY_REVIEWED"
+        distinct = {event.get("setup_key") for event in attempts if event.get("setup_key")}
+        legacy = sum(1 for event in attempts if not event.get("setup_key"))
+        if not same_setup and len(distinct) + legacy >= self.policy.max_adjudications:
+            record_opportunity(
+                self.journal, stage="budget_limited", reason="ADJUDICATION_BUDGET", at=now,
+                signal_at=packet["signal_at"],
+            )
             return "ADJUDICATION_BUDGET"
         asset = self.broker.call("GET", "/v2/assets/" + self.policy.symbol)
         if asset.get("status") != "active" or asset.get("tradable") is not True or asset.get("class") != "us_equity":
@@ -1015,8 +1201,10 @@ class ActivePaperPilot:
             if packet["context"]["validated_rules"]:
                 self.journal.append("learning_veto", session=day, packet=packet)
                 return "LEARNED_VETO"
-        self.journal.append("decision_started", session=day, signal_at=packet["signal_at"],
-                            packet=packet, market_inputs={"bars": raw, "daily": self.daily})
+        self.journal.append(
+            "decision_started", session=day, signal_at=packet["signal_at"], setup_key=setup_key,
+            packet=packet, market_inputs={"bars": raw, "daily": self.daily},
+        )
         answered = False
 
         def before_validation(response: Any) -> None:
@@ -1036,6 +1224,10 @@ class ActivePaperPilot:
                 "jev_veto", session=day, signal_at=packet["signal_at"],
                 reason=str(exc)[:250], accepted=False,
             )
+            record_opportunity(
+                self.journal, stage="model_vetoed", reason="JEV_VETO", at=now,
+                signal_at=packet["signal_at"],
+            )
             return self._finish_veto(day, now, session_open, account)
         self.journal.append("adjudication", receipt=verdict.receipt)
         rank = take_trade_rank(verdict.receipt)
@@ -1050,4 +1242,8 @@ class ActivePaperPilot:
             return status
         if rank is not None:
             self._remember_take(day, packet, order, rank[1], rank[2], verdict_hash)
+        record_opportunity(
+            self.journal, stage="model_vetoed", reason="JEV_VETO", at=now,
+            signal_at=packet["signal_at"],
+        )
         return self._finish_veto(day, now, session_open, account)

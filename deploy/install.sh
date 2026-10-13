@@ -32,6 +32,7 @@ fi
 install -d -m 0700 -o athena -g athena /var/lib/athena
 install -d -m 0700 -o athena -g athena /var/lib/athena/learning
 install -d -m 0700 -o athena -g athena /var/lib/athena-earnings
+install -d -m 0700 -o athena -g athena /var/lib/athena-risk
 install -d -m 0700 /etc/athena
 python3 -m venv "$athena_repo/.venv"
 "$athena_repo/.venv/bin/python" -m pip install "$athena_repo"

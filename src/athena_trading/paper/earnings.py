@@ -34,8 +34,13 @@ from ..execution.authority import ExecutionAuthority, require_paper
 from .earnings_calendar import (
     NASDAQ_HEADERS, EarningsReport, nasdaq_earnings_url, normalize_symbol, parse_nasdaq_calendar,
 )
+from .funnel import record_opportunity
 from .journal import PaperJournal
 from .learning import LearningStore, _filled_rows
+from .shared_risk import (
+    SharedBookBusy, SharedExposureUnreadable, authorize_entry, entry_coordination, exposures_from_journal,
+    other_arm_exposure, reflected_exposure,
+)
 from .live import (
     NY, LivePaperAPI, bracket_exit_reason, cancel_targets, normalize_news_page, number,
     protective_stop, timestamp, transient_broker_failure, working_orders,
@@ -57,7 +62,8 @@ _RELEASE_VERB = re.compile(
 _NOT_A_RELEASE = re.compile(
     r"\b(?:preview|will report|set to report|upcoming|ahead of|what analysts expect|"
     r"before the company reports|did not report|does not report|has not reported|"
-    r"hasn't reported|will not report|won't report|delayed|postponed)\b",
+    r"hasn't reported|will not report|won't report|delayed|postponed|"
+    r"split|dividend|distribution|ex-dividend)\b",
     re.IGNORECASE,
 )
 _TERMINAL_SKIP = {"INTRADAY_SYMBOL", "ASSET_BLOCKED", "SHORT_BLOCKED"}
@@ -1451,6 +1457,10 @@ class EarningsBook:
                     "candidate_skipped", session=today, signal_key=signal_key,
                     symbol=report.symbol, reason="INTRADAY_SYMBOL",
                 )
+                record_opportunity(
+                    self.journal, stage="rejected", reason="INTRADAY_SYMBOL", at=now,
+                    signal_key=signal_key,
+                )
                 continue
             status = self._adjudicate(
                 report, signal_key, snapshot, now=now, today=today, sessions=sessions,
@@ -1477,6 +1487,10 @@ class EarningsBook:
             self.journal.append(
                 "candidate_skipped", session=today, signal_key=signal_key, symbol=symbol,
                 reason="ASSET_BLOCKED",
+            )
+            record_opportunity(
+                self.journal, stage="rejected", reason="ASSET_BLOCKED", at=now,
+                signal_key=signal_key,
             )
             return "NO_CANDIDATE"
         try:
@@ -1513,11 +1527,19 @@ class EarningsBook:
                 "candidate_skipped", session=today, signal_key=signal_key, symbol=symbol,
                 reason="GAP_OR_RISK", prior_close=prior, price=price, bar=bar_at.isoformat(), at=now,
             )
+            record_opportunity(
+                self.journal, stage="temporarily_ineligible", reason="GAP_OR_RISK", at=now,
+                signal_key=signal_key,
+            )
             return "NO_CANDIDATE"
         if plan["side"] == "sell" and (not asset.get("shortable") or not asset.get("easy_to_borrow")):
             self.journal.append(
                 "candidate_skipped", session=today, signal_key=signal_key, symbol=symbol,
                 reason="SHORT_BLOCKED",
+            )
+            record_opportunity(
+                self.journal, stage="rejected", reason="SHORT_BLOCKED", at=now,
+                signal_key=signal_key,
             )
             return "NO_CANDIDATE"
         order = bracket_order(symbol, plan)
@@ -1575,9 +1597,15 @@ class EarningsBook:
             self.journal.append(
                 "jev_veto", session=today, signal_key=signal_key, reason=str(exc)[:250], accepted=False,
             )
+            record_opportunity(
+                self.journal, stage="model_vetoed", reason="JEV_VETO", at=now, signal_key=signal_key,
+            )
             return "JEV_VETO"
         self.journal.append("adjudication", signal_key=signal_key, receipt=verdict.receipt)
         if not verdict.accepted:
+            record_opportunity(
+                self.journal, stage="model_vetoed", reason="JEV_VETO", at=now, signal_key=signal_key,
+            )
             return "JEV_VETO"
         return self._commit(
             order, packet, plan, report, account_id=account["id"], observed_at=now, session_day=today,
@@ -1590,6 +1618,25 @@ class EarningsBook:
         verdict_hash: str,
     ) -> str:
         require_paper(self.authority)
+        try:
+            with entry_coordination(self.journal, account_id):
+                return self._commit_coordinated(
+                    order, packet, plan, report, account_id=account_id,
+                    observed_at=observed_at, session_day=session_day, verdict_hash=verdict_hash,
+                )
+        except (SharedBookBusy, SharedExposureUnreadable) as exc:
+            record_opportunity(
+                self.journal, stage="rejected", at=observed_at,
+                reason="SHARED_BOOK_BUSY" if isinstance(exc, SharedBookBusy) else "SHARED_EXPOSURE_UNREADABLE",
+                signal_key=order["symbol"],
+            )
+            return "SHARED_RISK_BLOCKED"
+
+    def _commit_coordinated(
+        self, order: dict[str, Any], packet: dict[str, Any], plan: dict[str, Any],
+        report: EarningsReport, *, account_id: str, observed_at: datetime, session_day: str,
+        verdict_hash: str,
+    ) -> str:
         current = self.broker.snapshot()
         current_now = timestamp(current["clock"]["timestamp"])
         if current_now < observed_at:
@@ -1636,6 +1683,36 @@ class EarningsBook:
         )
         if recheck is None or recheck["shares"] != plan["shares"] or recheck["side"] != plan["side"]:
             return "RISK_CHANGED"
+        try:
+            other = other_arm_exposure(
+                "earnings", today=current_now.astimezone(NY).date(), account_id=account_id,
+            )
+            own = exposures_from_journal(self.journal, "earnings")
+        except SharedBookBusy:
+            record_opportunity(
+                self.journal, stage="rejected", reason="SHARED_BOOK_BUSY", at=current_now,
+                signal_key=order["symbol"],
+            )
+            return "SHARED_RISK_BLOCKED"
+        except SharedExposureUnreadable:
+            record_opportunity(
+                self.journal, stage="rejected", reason="SHARED_EXPOSURE_UNREADABLE", at=current_now,
+                signal_key=order["symbol"],
+            )
+            return "SHARED_RISK_BLOCKED"
+        reflected_ids, reflected_symbols = reflected_exposure(current)
+        shared = authorize_entry(
+            arm="earnings", symbol=str(order["symbol"]), notional=float(recheck["notional"]),
+            stop_risk=float(recheck["risk"]), overnight=False, buying_power=buying_power,
+            open_exposure=[*own, *other], reflected_client_order_ids=reflected_ids,
+            reflected_symbols=reflected_symbols,
+        )
+        if not shared.allowed:
+            record_opportunity(
+                self.journal, stage="rejected", reason=shared.reason, at=current_now,
+                signal_key=order["symbol"],
+            )
+            return "SHARED_RISK_BLOCKED"
         client_order_id = earnings_client_order_id(account_id, order["symbol"], report.report_date)
         if any(event["kind"] == "entry_intent" and event["order"]["client_order_id"] == client_order_id
                for event in self.journal.events):
@@ -1651,6 +1728,11 @@ class EarningsBook:
         self.publish_ledger()
         ack = self.broker.call("POST", "/v2/orders", reserved)
         self.journal.append("entry_ack", client_order_id=client_order_id, order=ack)
+        record_opportunity(
+            self.journal, stage="eligible", reason="ENTRY_SUBMITTED", at=current_now,
+            signal_key=str(order["symbol"]) + ":" + report.report_date,
+            client_order_id=client_order_id,
+        )
         return "ENTRY_SUBMITTED"
 
     def _ensure_decision_model(self, today: str) -> bool:

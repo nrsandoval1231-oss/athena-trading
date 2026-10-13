@@ -4,7 +4,11 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import os
 import signal
+import subprocess
+import sys
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -715,6 +719,10 @@ def test_preview_expected_and_negated_headlines_are_not_confirmed_releases():
     assert news_for_decision([expected], "DECK", start, session_open)[0] == "unconfirmed"
     negated = item("DECK did not report earnings", "The release was delayed.")
     assert news_for_decision([negated], "DECK", start, session_open)[0] == "unconfirmed"
+    split = item("DECK announces a 6-for-1 stock split", "The split is effective next month.")
+    assert news_for_decision([split], "DECK", start, session_open)[0] == "unconfirmed"
+    dividend = item("DECK declares a special dividend", "The distribution is not an earnings release.")
+    assert news_for_decision([dividend], "DECK", start, session_open)[0] == "unconfirmed"
     released = item(
         "Deckers Outdoor Posts Surprise Q2 Profit, Issues Strong Outlook",
         "Deckers Outdoor reported fiscal second-quarter results before the open.",
@@ -1199,6 +1207,80 @@ def test_news_refreshes_after_an_empty_premarket_pull(tmp_path, monkeypatch):
     assert journal.last("news_fed")["news"] == "confirmed"
     assert journal.last("news_fed")["items"][0]["headline"].startswith("Deckers Outdoor")
     assert sum(event["kind"] == "news_context" for event in journal.events) == 3
+    journal.close()
+
+
+def test_earnings_entry_stops_when_intraday_reserved_the_symbol(tmp_path, monkeypatch):
+    intraday = PaperJournal(tmp_path / "athena-state" / "2026-10-13.sqlite")
+    intraday.append("entry_intent", order={
+        "client_order_id": "athp-deck", "symbol": "DECK", "side": "buy", "qty": "1",
+        "limit_price": "100", "stop_loss": {"stop_price": "99"},
+    })
+    intraday.close()
+    book, broker, journal, calls = _book(tmp_path, monkeypatch)
+    assert book.tick() == "SHARED_RISK_BLOCKED"
+    assert calls["n"] == 1
+    assert _posts(broker) == []
+    assert journal.last("opportunity")["reason"] == "SYMBOL_ALREADY_RESERVED"
+    assert journal.last("entry_intent") is None
+    journal.close()
+
+
+def test_empty_locked_intraday_journal_does_not_block_earnings_entry(tmp_path, monkeypatch):
+    """An open intraday runner with no reservation must not stop an earnings entry."""
+    state = tmp_path / "athena-state"
+    state.mkdir()
+    ready, release = tmp_path / "ready", tmp_path / "release"
+    script = """
+import os, time
+from pathlib import Path
+from athena_trading.paper.journal import PaperJournal
+journal = PaperJournal(Path(os.environ["HELD"]))
+journal.append("binding", binding={"arm": "intraday"})
+Path(os.environ["READY"]).write_text("up")
+deadline = time.time() + 30
+while not Path(os.environ["RELEASE"]).exists():
+    if time.time() > deadline:
+        break
+    time.sleep(0.02)
+journal.close()
+"""
+    env = os.environ.copy()
+    env.update(HELD=str(state / "2026-10-13.sqlite"), READY=str(ready), RELEASE=str(release))
+    env["PYTHONPATH"] = os.pathsep.join(["src", env.get("PYTHONPATH", "")])
+    proc = subprocess.Popen(
+        [sys.executable, "-c", script],
+        cwd=str(Path(__file__).resolve().parents[1]), env=env,
+    )
+    try:
+        deadline = time.time() + 20
+        while not ready.exists():
+            if time.time() > deadline or proc.poll() is not None:
+                raise AssertionError("intraday peer did not become ready")
+            time.sleep(0.02)
+        book, broker, journal, _calls = _book(tmp_path, monkeypatch)
+        assert book.tick() == "ENTRY_SUBMITTED"
+        assert _posts(broker)
+    finally:
+        release.write_text("go")
+        proc.wait(timeout=20)
+        if "journal" in locals():
+            journal.close()
+
+
+def test_earnings_entry_sees_an_intraday_reservation_while_that_journal_is_open(
+    tmp_path, monkeypatch,
+):
+    held = PaperJournal(tmp_path / "athena-state" / "2026-10-13.sqlite")
+    held.append("entry_intent", order={
+        "client_order_id": "athp-deck", "symbol": "DECK", "side": "buy", "qty": "1",
+        "limit_price": "100", "stop_loss": {"stop_price": "99"},
+    })
+    book, broker, journal, _calls = _book(tmp_path, monkeypatch)
+    assert book.tick() == "SHARED_RISK_BLOCKED"
+    assert journal.last("opportunity")["reason"] == "SYMBOL_ALREADY_RESERVED"
+    assert _posts(broker) == []
+    held.close()
     journal.close()
 
 

@@ -24,7 +24,7 @@ A Hostinger VPS with a persistent disk fits the existing SQLite runtime. A Digit
 
 ## Future hybrid deployment gate
 
-Resolve and pin the owner-selected **Astra 6** provider deployment/API model ID, access and interface before creating an integration. No Astra 6 endpoint, SDK or credential name is prescribed here because none has been verified. No silent model substitution is allowed. Existing `paper.env` and the service/installer are unchanged; they do not configure Astra 6.
+Resolve and pin the owner-selected **Astra 6** provider deployment/API model ID, access and interface before creating an integration. No Astra 6 endpoint, SDK or credential name is prescribed here because none has been verified. No silent model substitution is allowed. The environment files and service/installer do not configure Astra 6. The shared-risk repair only adds the dedicated entry coordination path described below.
 
 Extend this runtime with bounded event-driven Astra 6 proposals and Jev judgments, separate call/cost/latency budgets, evidence and plan expiry, identity/version health and operator alerts. Neither model may stall broker protection, mandatory exits or restart recovery. Add shared portfolio accounting before treating two books' individual limits as a portfolio guarantee. Keep one reconciled source of account exposure; do not launch parallel services from a future architecture description.
 
@@ -46,6 +46,16 @@ sudoedit /etc/athena/paper.env
 The installer rejects a dirty or mismatched checkout and an already active service. It installs the package and service definition, creates a restricted runtime user and state directory, and leaves the service stopped. Populate the three credential values (Alpaca key/secret and TypeSafe key) and the explicitly chosen `ATHENA_SYMBOL` in the environment file. No symbol or secret is supplied by the installer. Optional `ATHENA_JEV_MIN_PTAKE`, `ATHENA_JEV_MIN_CONFIDENCE`, and `ATHENA_FALLBACK_AFTER_OPEN_MINUTES` override the paper gate and the daily fallback cutoff. Leave them unset to use the defaults in [LIVE_PAPER.md](LIVE_PAPER.md).
 
 Terra/OpenAI and Ollama are removed from the active code and environment template. Existing reserved entries retain their original complete policy binding for model-free recovery; old model packages and credentials are not required.
+
+## Shared-account entry coordination
+
+Both services on this single Linux host must use the same absolute `ATHENA_SHARED_RISK_DIR=/var/lib/athena-risk` and the actual peer journal paths (`ATHENA_STATE_DIR` and `ATHENA_EARNINGS_STATE_DIR`). The units set these paths. The installer creates the separate shared directory with mode 0700, owned by `athena`; files remain mode 0600 under UMask 0077. `ProtectSystem=strict` stays enabled. Each service retains its existing own write paths and adds only `/var/lib/athena-risk`; neither gains write access to the peer's trading journal directory.
+
+New entry acquires a nonblocking account-specific file lock before fresh broker reads, exposure checks and durable intent. A contender defers entry. The mutex remains held through submission/acknowledgement; a crash releases only the lock, while the durable intent continues reserving capacity. Buying power is sampled after positions and orders, so an order seen later cannot be exempted from an older balance. Pending and unacknowledged intents remain counted. Peer reads verify the hash chain and durable checkpoint without taking the peer's writer lock or writing its files. Prior-session unresolved journals and GTC `done_for_day` reservations are retained.
+
+For direct CLI use, export the same `ATHENA_SHARED_RISK_DIR` explicitly, including when only one arm runs. Missing, relative, inaccessible or inconsistent coordination paths fail closed for new entry. The provider preflight alone does not establish coordination readiness. A durable journal binding records account and resolved coordination directory; changing it requires stopping both services and reconciling the existing state, not deleting the binding or starting a fresh journal. Do not remove a live lock file, run mixed old/new entry code, or split these file-based books across hosts. This is single-host coordination, not a distributed lock service.
+
+Protective management, kill switches and same-session exits never acquire the entry mutex or wait for a model. A failed coordinator blocks new risk, not management of existing exposure. The permission tests use an unprivileged process with read-only peer files; no real systemd service was launched as part of this repair. Stop and reconcile both services before any separately authorized upgrade, retain their journals and checkpoint sidecars, then verify the exact installed revision and operator-visible state. This documentation does not authorize deployment.
 
 ## Preflight and activate
 
@@ -72,7 +82,7 @@ journalctl -u athena-paper.service -f
 cat /var/lib/athena/health.json
 ```
 
-Record the installed commit, successful provider preflight, startup status and actual broker results separately from tests. A running process or heartbeat alone does not prove a trade, confirmed flatness, or adjudication quality. A session that receives at least one TAKE_TRADE label can reserve one paper order through the normal gate or, after the cutoff, through the journaled daily fallback. A session with no TAKE_TRADE label can still finish with no order. A model error is not an approval. A malformed Jev answer is journaled and vetoes that setup; it does not stop the daily fallback from using other TAKE_TRADE labels.
+Record the installed commit, successful provider preflight, startup status and actual broker results separately from tests. A running process or heartbeat alone does not prove a trade, confirmed flatness, or adjudication quality. A session that receives at least one TAKE_TRADE label can reserve one paper order through the normal gate. After the cutoff, the journaled fallback submits only when the fresh bar is still that setup. A stale bar or a changed direction records a no-trade and does not send the old order. A session with no TAKE_TRADE label can still finish with no order. A model error is not an approval. A malformed Jev answer is journaled and vetoes that setup; it does not by itself delete other TAKE_TRADE labels. On 13 October 2026 one paper bracket filled and was flattened seconds later by a held-stop visibility bug. That event is recorded in [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md). It is not a performance result.
 
 ## Daily operation and recovery
 
