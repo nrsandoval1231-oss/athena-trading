@@ -1,7 +1,12 @@
 """Shared account gate and fresh-evidence comparison. No broker and no holdout rerun."""
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import os
+import stat
+import subprocess
+import sys
+from datetime import UTC, date, datetime
+from pathlib import Path
 
 import pytest
 
@@ -14,7 +19,7 @@ from athena_trading.paper.funnel import record_opportunity
 from athena_trading.paper.journal import PaperJournal
 from athena_trading.paper.learning import LearningStore
 from athena_trading.paper.shared_risk import (
-    UNRESOLVED_SHARED_POLICY, OpenExposure, SharedBookBusy, authorize_entry,
+    UNRESOLVED_SHARED_POLICY, OpenExposure, authorize_entry,
     exposures_from_journal, other_arm_exposure,
 )
 
@@ -68,15 +73,20 @@ def test_partial_fill_keeps_only_the_residual_shares(tmp_path):
     journal.close()
 
 
-def test_locked_other_journal_fails_closed(tmp_path, monkeypatch):
+def test_locked_other_journal_stays_readable(tmp_path, monkeypatch):
+    """A peer can read while the owner holds the writer lock. An empty book is empty."""
     root = tmp_path / "earnings"
     monkeypatch.setenv("ATHENA_EARNINGS_STATE_DIR", str(root))
     held = PaperJournal(root / "book.sqlite")
     held.append("binding", binding={"arm": "earnings"})
-    with pytest.raises(SharedBookBusy):
-        other_arm_exposure("intraday")
-    held.close()
     assert other_arm_exposure("intraday") == []
+    held.append("entry_intent", order={
+        "client_order_id": "athe-deck", "symbol": "DECK", "side": "buy", "qty": "10",
+        "limit_price": "100", "stop_loss": {"stop_price": "98"},
+    })
+    assert other_arm_exposure("intraday")[0].notional == pytest.approx(1000.0)
+    held.close()
+    assert other_arm_exposure("intraday")[0].symbol == "DECK"
 
 
 def test_funnel_rejects_an_unknown_stage_and_does_not_repeat(tmp_path):
@@ -200,3 +210,242 @@ def test_outcome_ingestion_keeps_earnings_out_of_the_intraday_study(tmp_path):
     assert stored[0].get("arm") is None
     source.close()
     store.journal.close()
+
+
+def _entry(symbol, client_order_id, qty, price="100"):
+    return {
+        "client_order_id": client_order_id, "symbol": symbol, "side": "buy", "qty": qty,
+        "limit_price": price, "stop_loss": {"stop_price": "98"},
+    }
+
+
+def _peer_env(earnings: Path, intraday: Path) -> dict[str, str]:
+    env = os.environ.copy()
+    env["ATHENA_EARNINGS_STATE_DIR"] = str(earnings)
+    env["ATHENA_STATE_DIR"] = str(intraday)
+    env["PYTHONPATH"] = os.pathsep.join(["src", env.get("PYTHONPATH", "")])
+    return env
+
+
+def _lock_readonly(root: Path) -> None:
+    """Match a systemd peer mount: the directory and files can be read, not written."""
+    for path in root.iterdir():
+        path.chmod(0o444)
+    root.chmod(0o555)
+
+
+def test_working_zero_fill_still_reserves_the_whole_order(tmp_path):
+    """A 19-share working order with no fills still occupies all 19 shares."""
+    journal = PaperJournal(tmp_path / "book.sqlite")
+    journal.append("entry_intent", order=_entry("DECK", "athe-deck", "19"))
+    journal.append("entry_observation", client_order_id="athe-deck", order={
+        **_entry("DECK", "athe-deck", "19"), "status": "new", "filled_qty": "0", "legs": [],
+    })
+    rows = exposures_from_journal(journal, "earnings")
+    assert len(rows) == 1
+    assert rows[0].notional == pytest.approx(1900.0)
+    decision = authorize_entry(
+        arm="intraday", symbol="DECK", notional=100.0, stop_risk=1.0, overnight=False,
+        buying_power=100_000.0, open_exposure=rows,
+    )
+    assert decision.reason == "SYMBOL_ALREADY_RESERVED"
+    journal.append("entry_observation", client_order_id="athe-deck", order={
+        **_entry("DECK", "athe-deck", "19"), "status": "canceled", "filled_qty": "0", "legs": [],
+    })
+    assert exposures_from_journal(journal, "earnings") == []
+    journal.close()
+
+
+def test_partial_fill_keeps_the_position_and_the_unfilled_remainder(tmp_path):
+    journal = PaperJournal(tmp_path / "book.sqlite")
+    journal.append("entry_intent", order=_entry("DECK", "athe-deck", "19"))
+    journal.append("entry_observation", client_order_id="athe-deck", order={
+        **_entry("DECK", "athe-deck", "19"), "status": "partially_filled", "filled_qty": "10",
+        "legs": [{"side": "sell", "filled_qty": "0"}],
+    })
+    rows = exposures_from_journal(journal, "earnings")
+    assert rows[0].notional == pytest.approx(1900.0)
+    crowded = authorize_entry(
+        arm="intraday", symbol="AAPL", notional=100.0, stop_risk=1.0, overnight=False,
+        buying_power=1950.0, open_exposure=rows,
+    )
+    assert crowded.reason == "BUYING_POWER"
+    journal.append("entry_observation", client_order_id="athe-deck", order={
+        **_entry("DECK", "athe-deck", "19"), "status": "partially_filled", "filled_qty": "10",
+        "legs": [{"side": "sell", "filled_qty": "5"}],
+    })
+    residual = exposures_from_journal(journal, "earnings")
+    # 5 shares still held plus 9 shares still working.
+    assert residual[0].notional == pytest.approx(1400.0)
+    journal.close()
+
+
+def test_malformed_fill_evidence_does_not_become_zero_exposure(tmp_path):
+    journal = PaperJournal(tmp_path / "book.sqlite")
+    journal.append("entry_intent", order=_entry("DECK", "athe-deck", "19"))
+    journal.append("entry_observation", client_order_id="athe-deck", order={
+        **_entry("DECK", "athe-deck", "19"), "status": "new", "filled_qty": "not-a-number",
+    })
+    with pytest.raises(Exception, match="malformed"):
+        exposures_from_journal(journal, "earnings")
+    journal.close()
+
+
+def test_held_writer_lock_still_returns_a_consistent_peer_snapshot(tmp_path, monkeypatch):
+    """The other runner may keep its journal open. Reading it must not take that lock."""
+    root = tmp_path / "earnings"
+    monkeypatch.setenv("ATHENA_EARNINGS_STATE_DIR", str(root))
+    held = PaperJournal(root / "book.sqlite")
+    held.append("entry_intent", order=_entry("DECK", "athe-deck", "19"))
+    rows = other_arm_exposure("intraday")
+    assert [row.symbol for row in rows] == ["DECK"]
+    assert rows[0].notional == pytest.approx(1900.0)
+    held.close()
+
+
+def test_read_only_peer_directories_expose_both_books(tmp_path, monkeypatch):
+    earnings = tmp_path / "earnings"
+    intraday = tmp_path / "athena"
+    book = PaperJournal(earnings / "book.sqlite")
+    book.append("entry_intent", order=_entry("DECK", "athe-deck", "19"))
+    book.close()
+    day = PaperJournal(intraday / "2026-10-13.sqlite")
+    day.append("entry_intent", order=_entry("AAPL", "athp-aapl", "1", "101.50"))
+    day.close()
+    _lock_readonly(earnings)
+    _lock_readonly(intraday)
+    monkeypatch.setenv("ATHENA_EARNINGS_STATE_DIR", str(earnings))
+    monkeypatch.setenv("ATHENA_STATE_DIR", str(intraday))
+    earnings_rows = other_arm_exposure("intraday")
+    intraday_rows = other_arm_exposure("earnings", today=date(2026, 10, 13))
+    assert [(row.symbol, row.notional) for row in earnings_rows] == [("DECK", pytest.approx(1900.0))]
+    assert [(row.symbol, row.notional) for row in intraday_rows] == [("AAPL", pytest.approx(101.50))]
+    assert stat.S_IMODE(earnings.stat().st_mode) == 0o555
+
+
+def test_unreadable_peer_snapshot_fails_closed_without_rewriting_it(tmp_path, monkeypatch):
+    root = tmp_path / "earnings"
+    book = PaperJournal(root / "book.sqlite")
+    book.append("entry_intent", order=_entry("DECK", "athe-deck", "19"))
+    book.close()
+    sqlite = root / "book.sqlite"
+    sqlite.chmod(0)
+    monkeypatch.setenv("ATHENA_EARNINGS_STATE_DIR", str(root))
+    with pytest.raises(Exception) as caught:
+        other_arm_exposure("intraday")
+    assert type(caught.value).__name__ in {"SharedExposureUnreadable", "SharedBookBusy"}
+    assert "another paper runner holds" not in str(caught.value)
+    assert stat.S_IMODE(sqlite.stat().st_mode) == 0
+
+
+def test_both_runners_read_each_other_while_both_journals_stay_open(tmp_path):
+    earnings = tmp_path / "earnings"
+    intraday = tmp_path / "athena"
+    earnings.mkdir()
+    intraday.mkdir()
+    ready_e = tmp_path / "ready-earnings"
+    ready_i = tmp_path / "ready-intraday"
+    out_e = tmp_path / "out-earnings"
+    out_i = tmp_path / "out-intraday"
+    script = """
+import os, time
+from datetime import date
+from pathlib import Path
+from athena_trading.paper.journal import PaperJournal
+from athena_trading.paper.shared_risk import other_arm_exposure
+role = os.environ["ROLE"]
+order = {
+    "client_order_id": "athe-deck" if role == "earnings" else "athp-aapl",
+    "symbol": "DECK" if role == "earnings" else "AAPL",
+    "side": "buy", "qty": "19" if role == "earnings" else "1",
+    "limit_price": "100" if role == "earnings" else "101.50",
+    "stop_loss": {"stop_price": "98"},
+}
+path = Path(os.environ["OWN"])
+journal = PaperJournal(path)
+journal.append("entry_intent", order=order)
+Path(os.environ["READY"]).write_text("up")
+deadline = time.time() + 20
+while time.time() < deadline:
+    if Path(os.environ["PEER_READY"]).exists():
+        break
+    time.sleep(0.02)
+else:
+    Path(os.environ["OUT"]).write_text("peer did not start")
+    journal.close()
+    raise SystemExit(1)
+try:
+    if role == "earnings":
+        rows = other_arm_exposure("earnings", today=date(2026, 10, 13))
+    else:
+        rows = other_arm_exposure("intraday")
+    Path(os.environ["OUT"]).write_text(",".join(f"{row.symbol}:{row.notional}" for row in rows))
+except Exception as exc:
+    Path(os.environ["OUT"]).write_text(type(exc).__name__ + ": " + str(exc))
+finally:
+    journal.close()
+"""
+    env = _peer_env(earnings, intraday)
+    procs = []
+    specs = (
+        ("earnings", earnings / "book.sqlite", ready_e, ready_i, out_e),
+        ("intraday", intraday / "2026-10-13.sqlite", ready_i, ready_e, out_i),
+    )
+    for role, own, ready, peer_ready, out in specs:
+        child = env.copy()
+        child.update(ROLE=role, OWN=str(own), READY=str(ready), PEER_READY=str(peer_ready), OUT=str(out))
+        procs.append(subprocess.Popen([sys.executable, "-c", script], cwd="/workspace", env=child))
+    try:
+        for proc in procs:
+            assert proc.wait(timeout=30) == 0
+    finally:
+        for proc in procs:
+            if proc.poll() is None:
+                proc.kill()
+    assert out_i.read_text() == "DECK:1900.0"
+    assert out_e.read_text() == "AAPL:101.5"
+
+
+def test_uncertainty_uses_the_same_population_as_expectancy():
+    """Abstentions are zero returns. Skipped sessions stay in the common blocks."""
+    taken = _item(
+        opportunity_id="1", session="2026-01-01", at="2026-01-01T15:00:00Z",
+        decision_close=100.0, next_open=100.0, next_close=110.0, stop=90.0, target=130.0,
+        jev_without_memory="TAKE_TRADE", jev_with_memory="NO_TRADE",
+    )
+    skipped = _item(
+        opportunity_id="2", session="2026-01-02", at="2026-01-02T15:00:00Z",
+        decision_close=100.0, next_open=100.0, next_close=110.0, stop=90.0, target=130.0,
+        jev_without_memory="NO_TRADE", jev_with_memory="NO_TRADE",
+    )
+    report = compare_policies([taken, skipped], resamples=40, seed=7)
+    selective = report["policies"]["jev_without_memory"]
+    assert selective["expectancy_per_opportunity"] == pytest.approx(5.0)
+    assert selective["uncertainty"]["mean"] == pytest.approx(5.0)
+    assert selective["uncertainty"]["sessions"] == 2
+    assert selective["uncertainty"]["n"] == 2
+    assert selective["uncertainty"]["lower"] != pytest.approx(10.0)
+    assert report["policies"]["deterministic"]["uncertainty"]["sessions"] == 2
+    paired = report["paired_session_differences"]["jev_without_memory_minus_deterministic"]
+    assert paired["sessions"] == 2
+    assert paired["mean"] == pytest.approx(-5.0)
+
+
+def test_untouched_stop_is_not_an_observed_adverse_excursion():
+    flat = _item(
+        decision_close=100.0, next_open=100.0, next_close=100.0, stop=90.0, direction="LONG",
+    )
+    moved = _item(
+        decision_close=100.0, next_open=100.0, next_close=100.0, stop=80.0, direction="LONG",
+    )
+    assert adverse_excursion(flat) == adverse_excursion(moved)
+    assert adverse_excursion(flat) != pytest.approx(-10.0)
+    from athena_trading.paper import evaluation
+    detail = getattr(evaluation, "adverse_excursion_detail", None)
+    assert detail is not None
+    first, second = detail(flat), detail(moved)
+    assert first["observed"] == second["observed"]
+    assert first["path"] == "unavailable"
+    assert first["kind"] == "close_only"
+    assert first["stop_distance_bound"] != second["stop_distance_bound"]
+    assert first["observed"] != first["stop_distance_bound"]

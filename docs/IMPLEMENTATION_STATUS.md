@@ -11,7 +11,7 @@
 | Main entry path | Narrow ORB candidate → Jev-only judgment → deterministic pilot risk → Alpaca paper bracket/recovery; Astra 6 and hybrid entry are not implemented |
 | Operational evidence | The 13 October held-bracket incident below records a first filled bracket and protective flatten. Earlier no-traded-session statements are historical. Current deployed host SHA, health and exposure were not checked by this repair |
 | Earnings | PR #29's Jev-only paper book, including lifecycle repair `5baae398e05c5a31b956280a002641694a4a4052`. Not source intelligence or thesis generation. Not merged and not deployed |
-| Shared gate and evaluation | Partial symbol and buying-power checks, fresh-bar fallback, and offline comparison machinery. Not the hybrid portfolio gate, and not a performance result |
+| Shared gate and evaluation | Partial symbol and buying-power checks, fresh-bar fallback, and offline comparison machinery. Peer reads do not take the other runner's writer lock. Not the hybrid portfolio gate, and not a performance result |
 | Holding policy | Current product guardrail is pre-close flat and no overnight exposure. The earnings book still uses a three-session default hold (five-session ceiling). That conflict is unresolved |
 | Forecasting / APDE / portfolio risk | Comprehensive validated forecasts, full shared EXPLORE/PROTECT/HARVEST/DEFEND/EXIT management, hybrid management and complete cross-arm portfolio controls remain incomplete |
 | Learning / Core | Current trading-specific outcome store, retrieval and prospective temporary veto study exist; general Core context/replay/validation/knowledge integration and measured performance improvement are not established |
@@ -21,7 +21,7 @@
 
 The earnings review fixes stay on `cursor/earnings-adaptive-paper-a4c7`. This change does not reset that work. It adds the account gate, the opportunity funnel, and an offline comparison that does not read consumed holdouts.
 
-**Implemented and covered by fixtures.** A remembered intraday TAKE_TRADE is submitted at the cutoff only when the fresh completed bar is still that setup. A stale bar records `fallback_no_trade`. A fresh bar in the other direction does not send the old order. Equivalent repeats of one opening-range setup use one reassessment and do not consume the 20-setup budget. `paper/shared_risk.py` refuses a second reservation of the same symbol, combined notional above buying power, an intraday overnight proposal, and a locked other journal. Partial residual quantity is what the gate counts. `paper/evaluation.py` fills at the next open, records a gap through the stop in adverse excursion, draws down in time order, and resamples whole sessions. `compare_policies` reports deterministic, Jev without memory, and Jev with memory on the same opportunities, split by long and short. Its performance field is `unverified`. The research ORB-M re-entry scan continues after an excluded retracement. Earnings headlines that are a split, dividend, or distribution stay `news=unconfirmed`.
+**Implemented and covered by fixtures.** A remembered intraday TAKE_TRADE is submitted at the cutoff only when the fresh completed bar is still that setup. Setup identity is direction, opening range, price, and stop. A later minute of that same setup is not `SETUP_CHANGED`. A stale bar records `fallback_no_trade` and does not send the old order. A fresh bar in the other direction does not send the old order. Equivalent repeats of one opening-range setup use one reassessment and do not consume the 20-setup budget. `paper/shared_risk.py` refuses a second reservation of the same symbol, an intraday overnight proposal, and combined notional above buying power. Buying power is the broker snapshot: an acknowledged order already visible there is not added again, and a local reservation the snapshot does not show still counts. A working entry reserves its unfilled quantity plus shares still held. A terminal order releases the unfilled remainder. Malformed fill evidence fails closed. Each arm reads the other book without taking its writer lock, including when that directory is readable and not writable. An unreadable snapshot fails closed. `paper/evaluation.py` fills at the next open. A gap through the stop is an observed adverse move. A configured stop is a labeled bound, not an observed touch, when no price path is present. Drawdown follows time. Uncertainty resamples the same opportunity population as expectancy, with abstentions as zero returns and skipped sessions retained, and reports paired session differences. `compare_policies` reports deterministic, Jev without memory, and Jev with memory. Its performance field is `unverified`. An entry that times out and ends canceled with zero fills records one unfilled funnel outcome, including after restart. The research ORB-M re-entry scan continues after an excluded retracement. Earnings headlines that are a split, dividend, or distribution stay `news=unconfirmed`.
 
 **Deployed.** The intraday Hostinger unit from 10 October 2026 is unchanged by this commit. The earnings unit is not installed. Nothing here was deployed.
 
@@ -37,23 +37,23 @@ The earnings review fixes stay on `cursor/earnings-adaptive-paper-a4c7`. This ch
 | ORB-M qualification, trail, controlled re-entry | `orb_m/session.py` | An excluded retracement does not stop a later valid reset | Research simulator. Not the live order path |
 | Earnings 4–12% screen | `plan_entry` | An out-of-band bar is temporary; a later in-band bar can be judged | Watchlist heuristic. Not a continuation result |
 | Earnings post-entry bracket | GTC stop at half the gap, 2R, hold 3 sessions | Long and short follow the sign of the gap under the same caps | Implemented paper rule. Not measured by side |
-| Shared account gate | `paper/shared_risk.py` | Same symbol, buying power, locked journal, residual shares | Active for those checks. Portfolio numbers inactive |
-| Fresh-evidence comparison | `paper/evaluation.py` | Next-open fill, gap excursion, time-ordered drawdown, session resample | Machinery only. Performance unverified |
+| Shared account gate | `paper/shared_risk.py` | Same symbol, snapshot buying power, working quantity, read-only peer book | Active for those checks. Portfolio numbers inactive |
+| Fresh-evidence comparison | `paper/evaluation.py` | Next-open fill, observed excursion, common-session uncertainty | Machinery only. Performance unverified |
 | Learning | `paper/learning.py` | Nested legs reconcile; fallback and earnings stay out of the intraday study | Intraday study implemented. Earnings stored, not promoted |
 
 `LIVE` still raises. Approved dollar caps are unchanged.
 
-Observed local checks, Python 3.12. The parent revision `cd3034c63bd4303da51ae96f24f0f60299779251` was 771 passed and 0 failed. No pre-existing failures were present. This change adds 14 tests.
+Observed local checks, Python 3.12. The pre-repair count on `ba032129b7900cafec2535fde0db902eae715b36` was 785 passed. That count did not include these review repairs. No pre-existing failures were present. Root pytest does not include `research/astra-desk/tests`.
 
 ```bash
-python3 -m pytest -q                # 785 passed in 5.15s
+python3 -m pytest -q                # 807 passed in 6.24s
 python3 -m ruff check .             # clean, ruff 0.15.8
 bash -n deploy/install.sh           # clean
 git diff --check                    # clean
-python3 -m pip install .            # imports shared_risk, evaluation, and funnel
+python3 -m pip install .            # imports shared_risk, evaluation, funnel, live, and earnings
 ```
 
-No type checker is configured in `pyproject.toml` or `.github/workflows/ci.yml`. Root pytest does not include Astra Desk. Tested revision: `ba032129b7900cafec2535fde0db902eae715b36`. This sentence is a docs-only follow-up; the runner, tests, and the checks above are that commit.
+No type checker is configured in `pyproject.toml` or `.github/workflows/ci.yml`. Tested revision of this repair is recorded after the commit that contains the runner and tests. The 785-passed sentence above is historical and is not this repair.
 
 GitHub Actions on that SHA did not run the test job. Push run `38448610766` and pull-request run `38448676036` both failed in a few seconds with empty steps. The annotation says the job was not started because recent account payments have failed or the spending limit needs to be increased. That is a billing block, not a pytest or ruff failure. The Ubuntu 26 runner notice is not a failure. Later empty commits retriggered CI after the repository was public; those runs are recorded on the pull request and are not a substitute for the review repairs.
 

@@ -74,14 +74,36 @@ def fill_from_next_bar(item: Opportunity) -> dict[str, Any]:
     }
 
 
-def adverse_excursion(item: Opportunity) -> float:
-    """The worst signed move from the next open, including a gap through the stop."""
+def adverse_excursion_detail(item: Opportunity) -> dict[str, Any]:
+    """Observed adverse move from prices the record actually contains.
+
+    A gap through the stop is observed at the next open. Otherwise only the
+    next close is observed. The configured stop is a labeled bound, not a touch,
+    because this record has no intrabar path.
+    """
     side = _side(item.direction)
-    gap = (item.stop - item.next_open) * side
+    entry = item.next_open
+    gap = (item.stop - entry) * side
+    close_move = (item.next_close - entry) * side
+    stop_bound = min(0.0, (item.stop - entry) * side)
     if gap >= 0:
-        return (item.next_open - item.decision_close) * side
-    close_move = (item.next_close - item.next_open) * side
-    return min(0.0, close_move, (item.stop - item.next_open) * side)
+        return {
+            "observed": (entry - item.decision_close) * side,
+            "kind": "gap_through_stop",
+            "path": "next_open",
+            "stop_distance_bound": stop_bound,
+        }
+    return {
+        "observed": min(0.0, close_move),
+        "kind": "close_only",
+        "path": "unavailable",
+        "stop_distance_bound": stop_bound,
+    }
+
+
+def adverse_excursion(item: Opportunity) -> float:
+    """Observed adverse move. This is not the configured stop distance."""
+    return float(adverse_excursion_detail(item)["observed"])
 
 
 def chronological_drawdown(rows: list[dict[str, Any]]) -> float:
@@ -147,11 +169,21 @@ def compare_policies(
                     "reason": fill["reason"],
                     "gapped_through_stop": fill["gapped_through_stop"],
                     "adverse_excursion": adverse_excursion(item),
+                    "adverse_excursion_kind": adverse_excursion_detail(item)["kind"],
+                    "adverse_path": adverse_excursion_detail(item)["path"],
+                    "stop_distance_bound": adverse_excursion_detail(item)["stop_distance_bound"],
                 })
             else:
                 skipped.append(item.opportunity_id)
         grosses = [row["gross"] for row in taken]
         expectancy = sum(grosses) / len(opportunities) if opportunities else None
+        taken_gross = {row["opportunity_id"]: row["gross"] for row in taken}
+        population = [
+            (item.session, taken_gross.get(item.opportunity_id, 0.0)) for item in opportunities
+        ]
+        session_totals: dict[str, float] = defaultdict(float)
+        for session, value in population:
+            session_totals[session] += value
         by_direction = {}
         for direction in ("LONG", "SHORT"):
             subset = [row for row in taken if row["direction"] == direction]
@@ -170,12 +202,23 @@ def compare_policies(
             "turnover": len(taken),
             "by_direction": by_direction,
             "uncertainty": session_uncertainty(
-                [(row["session"], row["gross"]) for row in taken],
-                resamples=resamples, confidence=confidence, seed=seed,
+                population, resamples=resamples, confidence=confidence, seed=seed,
             ),
+            "session_totals": dict(session_totals),
         }
+    paired = {}
+    names = ("deterministic", "jev_without_memory", "jev_with_memory")
+    for left_name, right_name in ((names[1], names[0]), (names[2], names[0]), (names[2], names[1])):
+        left = reports[left_name]["session_totals"]
+        right = reports[right_name]["session_totals"]
+        sessions = sorted(set(left) | set(right))
+        paired[f"{left_name}_minus_{right_name}"] = session_uncertainty(
+            [(session, left.get(session, 0.0) - right.get(session, 0.0)) for session in sessions],
+            resamples=resamples, confidence=confidence, seed=seed,
+        )
     return {
         "policies": reports,
+        "paired_session_differences": paired,
         "cost_per_share": cost_per_share,
         "fill_assumption": "next bar open; decision close is not a fill",
         "paper_fill_limitation": "broker paper fills are not this simulation",

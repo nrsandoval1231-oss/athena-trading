@@ -38,7 +38,8 @@ from .funnel import record_opportunity
 from .journal import PaperJournal
 from .learning import LearningStore, _filled_rows
 from .shared_risk import (
-    SharedBookBusy, authorize_entry, exposures_from_journal, other_arm_exposure,
+    SharedBookBusy, SharedExposureUnreadable, authorize_entry, exposures_from_journal,
+    other_arm_exposure, reflected_exposure,
 )
 from .live import (
     NY, LivePaperAPI, bracket_exit_reason, cancel_targets, normalize_news_page, number,
@@ -1433,16 +1434,25 @@ class EarningsBook:
             return "RISK_CHANGED"
         try:
             other = other_arm_exposure("earnings", today=current_now.astimezone(NY).date())
+            own = exposures_from_journal(self.journal, "earnings")
         except SharedBookBusy:
             record_opportunity(
                 self.journal, stage="rejected", reason="SHARED_BOOK_BUSY", at=current_now,
                 signal_key=order["symbol"],
             )
             return "SHARED_RISK_BLOCKED"
+        except SharedExposureUnreadable:
+            record_opportunity(
+                self.journal, stage="rejected", reason="SHARED_EXPOSURE_UNREADABLE", at=current_now,
+                signal_key=order["symbol"],
+            )
+            return "SHARED_RISK_BLOCKED"
+        reflected_ids, reflected_symbols = reflected_exposure(current)
         shared = authorize_entry(
             arm="earnings", symbol=str(order["symbol"]), notional=float(recheck["notional"]),
             stop_risk=float(recheck["risk"]), overnight=True, buying_power=buying_power,
-            open_exposure=[*exposures_from_journal(self.journal, "earnings"), *other],
+            open_exposure=[*own, *other], reflected_client_order_ids=reflected_ids,
+            reflected_symbols=reflected_symbols,
         )
         if not shared.allowed:
             record_opportunity(

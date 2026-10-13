@@ -43,7 +43,10 @@ from .journal import PaperJournal
 from .ownership import (
     earnings_state_dir, intraday_book, load_ownership_symbols, terminal_learning_history,
 )
-from .shared_risk import SharedBookBusy, authorize_entry, other_arm_exposure
+from .shared_risk import (
+    SharedBookBusy, SharedExposureUnreadable, authorize_entry, other_arm_exposure,
+    reflected_exposure,
+)
 
 NY = ZoneInfo("America/New_York")
 TERMINAL = {"filled", "canceled", "expired", "rejected", "replaced"}
@@ -490,6 +493,22 @@ def signal_packet(
     return packet, order
 
 
+def setup_identity(packet: dict[str, Any]) -> tuple[Any, ...]:
+    """Opening-range setup, without the completed bar's timestamp.
+
+    A later minute of the same direction, range, price, and stop is the same
+    setup. The timestamp stays on the packet for freshness checks.
+    """
+    observations = packet.get("observations") if isinstance(packet.get("observations"), dict) else {}
+    return (
+        packet.get("candidate_direction"),
+        observations.get("opening_range_high"),
+        observations.get("opening_range_low"),
+        observations.get("latest_completed_close"),
+        observations.get("risk_stop"),
+    )
+
+
 class ActivePaperPilot:
     def __init__(
         self, broker: LivePaperAPI, jev: JevDecisionEngine | None,
@@ -679,6 +698,7 @@ class ActivePaperPilot:
         if parent["status"] not in TERMINAL:
             self._delete_order(parent["id"])
             return False
+        self._record_terminal_unfilled(parent, timestamp(snapshot["clock"]["timestamp"]))
         self._flat_observations += 1
         if self._flat_observations < 2:
             return False
@@ -704,6 +724,28 @@ class ActivePaperPilot:
             order_history=learning_history, account_order_history=history,
         )
         return True
+
+    def _record_terminal_unfilled(self, parent: dict[str, Any], now: datetime) -> None:
+        """A timeout or cleanup that ends with no fill is still one funnel outcome."""
+        if parent.get("status") not in {"canceled", "expired", "rejected", "replaced"}:
+            return
+        try:
+            filled = number(parent.get("filled_qty"))
+        except (TypeError, ValueError):
+            return
+        if filled != 0:
+            return
+        entry = self._entry()
+        client_order_id = None
+        if entry and isinstance(entry.get("order"), dict):
+            client_order_id = entry["order"].get("client_order_id")
+        if not isinstance(client_order_id, str):
+            return
+        halt = self.journal.last("halt")
+        reason = "ENTRY_TIMEOUT" if halt and halt.get("reason") == "ENTRY_TIMEOUT" else "ENTRY_TERMINATED"
+        record_opportunity(
+            self.journal, stage="unfilled", reason=reason, at=now, client_order_id=client_order_id,
+        )
 
     def _fallback_due(self, now: datetime, session_open: datetime) -> bool:
         return now >= session_open + timedelta(minutes=self.policy.fallback_after_open_minutes)
@@ -823,7 +865,8 @@ class ActivePaperPilot:
             )
             return "FALLBACK_NO_TRADE"
         packet, order = fresh
-        if packet["candidate_direction"] != remembered or packet["signal_at"] != candidate["signal_at"]:
+        remembered_packet = candidate.get("packet") if isinstance(candidate.get("packet"), dict) else {}
+        if packet["candidate_direction"] != remembered or setup_identity(packet) != setup_identity(remembered_packet):
             reason = "DIRECTION_CHANGED" if packet["candidate_direction"] != remembered else "SETUP_CHANGED"
             self.journal.append(
                 "fallback_no_trade", session=day, at=now, reason=reason,
@@ -881,7 +924,8 @@ class ActivePaperPilot:
     ) -> str:
         """Recheck risk, reserve one bracket, then send it. PAPER only."""
         require_paper(self.authority)
-        current = self._without_earnings(self.broker.snapshot())
+        raw = self.broker.snapshot()
+        current = self._without_earnings(raw)
         current_now = timestamp(current["clock"]["timestamp"])
         if current_now < observed_at:
             raise ValueError("broker clock moved backwards during adjudication")
@@ -921,10 +965,18 @@ class ActivePaperPilot:
                 signal_at=packet.get("signal_at"),
             )
             return "SHARED_RISK_BLOCKED"
+        except SharedExposureUnreadable:
+            record_opportunity(
+                self.journal, stage="rejected", reason="SHARED_EXPOSURE_UNREADABLE", at=current_now,
+                signal_at=packet.get("signal_at"),
+            )
+            return "SHARED_RISK_BLOCKED"
+        reflected_ids, reflected_symbols = reflected_exposure(raw)
         shared = authorize_entry(
             arm="intraday", symbol=str(order["symbol"]), notional=price, stop_risk=abs(price - stop),
             overnight=False, buying_power=number(current["account"]["buying_power"]),
-            open_exposure=other,
+            open_exposure=other, reflected_client_order_ids=reflected_ids,
+            reflected_symbols=reflected_symbols,
         )
         if not shared.allowed:
             record_opportunity(
