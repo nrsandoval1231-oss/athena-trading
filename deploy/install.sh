@@ -30,6 +30,7 @@ if ! id athena >/dev/null 2>&1; then
   useradd --system --home-dir /var/lib/athena --shell /usr/sbin/nologin athena
 fi
 install -d -m 0700 -o athena -g athena /var/lib/athena
+install -d -m 0700 -o athena -g athena /var/lib/athena/learning
 install -d -m 0700 -o athena -g athena /var/lib/athena-earnings
 install -d -m 0700 /etc/athena
 python3 -m venv "$athena_repo/.venv"

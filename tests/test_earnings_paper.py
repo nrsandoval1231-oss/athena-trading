@@ -2,19 +2,25 @@
 from __future__ import annotations
 
 import copy
+import importlib.util
 import json
+import signal
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
+from athena_trading.athena_adapter.contracts import canonical_hash
 from athena_trading.athena_adapter.jev import JEV_MODEL, JevDecisionEngine, ModelError, questions
 from athena_trading.execution.authority import AuthorityError, ExecutionAuthority, parse_authority
 from athena_trading.paper.earnings import (
     EarningsBook, EarningsPolicy, bracket_order, earnings_client_order_id, earnings_questions,
-    entry_session, hold_action, load_universe, plan_entry, policy_from_environment,
+    entry_session, hold_action, load_universe, news_for_decision, plan_entry, policy_from_environment,
 )
+from athena_trading.paper.learning import LearningStore
 from athena_trading.paper.earnings_calendar import EarningsReport, parse_nasdaq_calendar
 from athena_trading.paper.journal import PaperJournal
+from athena_trading.paper.live import LivePaperAPI, normalize_news_page
 from athena_trading.paper.ownership import EARNINGS_ORDER_PREFIX, INTRADAY_ORDER_PREFIX
 
 NOW = datetime(2026, 10, 13, 13, 40, 5, tzinfo=UTC)
@@ -88,6 +94,15 @@ class BookBroker:
         self.drop_submit = False
         self.hidden = set()
         self.fail_get = None
+        self.news_items = []
+        self.fail_news = None
+        self.news_calls = []
+
+    def news(self, symbols, start, end):
+        self.news_calls.append((list(symbols), start.isoformat()))
+        if self.fail_news is not None:
+            raise self.fail_news
+        return list(self.news_items)
 
     def snapshot(self):
         return copy.deepcopy(self.state)
@@ -197,6 +212,11 @@ def fill_bracket(broker, client_order_id, *, stop_status="held"):
         "unrealized_plpc": "0", "current_price": parent["limit_price"],
         "lastday_price": "100.00", "change_today": "0.04", "qty_available": qty,
     }]
+
+
+@pytest.fixture(autouse=True)
+def _shared_learning_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("ATHENA_STATE_DIR", str(tmp_path / "athena-state"))
 
 
 def _book(tmp_path, monkeypatch, *, close=104.0, choice="TAKE_TRADE", policy=None, names=("DECK", "CROX"),
@@ -592,4 +612,263 @@ def test_intraday_symbol_and_total_risk_block_a_second_entry(tmp_path, monkeypat
     assert book.tick() == "NO_CANDIDATE"
     assert journal.last("candidate_skipped")["reason"] == "INTRADAY_SYMBOL"
     assert _posts(broker) == []
+    journal.close()
+
+
+def realistic_news():
+    """Alpaca GET /v1beta1/news shape. The article body must not reach Jev."""
+    return {
+        "news": [{
+            "id": 24819384,
+            "headline": "Deckers Outdoor Posts Surprise Q2 Profit, Issues Strong Outlook",
+            "author": "Benzinga Newsdesk",
+            "created_at": "2026-10-13T11:02:14Z",
+            "updated_at": "2026-10-13T11:05:01Z",
+            "summary": (
+                "Deckers Outdoor reported fiscal second-quarter results before the open "
+                "and raised its outlook."
+            ),
+            "content": "FULL ARTICLE TEXT THAT MUST NOT BE FED TO THE MODEL",
+            "url": "https://www.benzinga.com/news/earnings/26/10/deckers-outdoor",
+            "images": [{"size": "large", "url": "https://cdn.benzinga.com/files/image.jpg"}],
+            "symbols": ["DECK"],
+            "source": "benzinga",
+        }],
+        "next_page_token": None,
+    }
+
+
+def test_news_confirmation_uses_a_preopen_report_and_ignores_a_later_headline():
+    start = datetime(2026, 10, 12, 20, tzinfo=UTC)
+    session_open = datetime(2026, 10, 13, 13, 30, tzinfo=UTC)
+    late = {
+        "id": 9, "headline": "Deckers Outdoor reports record earnings", "summary": "After the bell.",
+        "created_at": "2026-10-13T13:35:00Z", "source": "benzinga", "symbols": ["DECK"],
+    }
+    status, fed = news_for_decision([late], "DECK", start, session_open)
+    assert status == "unconfirmed"
+    assert fed[0]["headline"].startswith("Deckers")
+    assert news_for_decision(None, "DECK", start, session_open) == ("unavailable", [])
+    partner = {
+        "id": 8, "headline": "Deckers Outdoor names a retail partner", "summary": "A store opening.",
+        "created_at": "2026-10-13T12:00:00Z", "source": "benzinga", "symbols": ["DECK"],
+    }
+    status, fed = news_for_decision([partner], "DECK", start, session_open)
+    assert status == "unconfirmed"
+
+
+def test_alpaca_news_is_fed_to_jev_and_a_failed_pull_still_enters(tmp_path, monkeypatch):
+    book, broker, journal, _calls = _book(tmp_path, monkeypatch)
+    broker.news_items = normalize_news_page(realistic_news())
+    assert book.tick() == "ENTRY_SUBMITTED"
+    fed = journal.last("news_fed")
+    assert fed["news"] == "confirmed"
+    assert fed["items"][0]["headline"].startswith("Deckers Outdoor Posts")
+    assert "FULL ARTICLE" not in json.dumps(journal.events)
+    packet = journal.last("decision_started")["packet"]
+    assert packet["observations"]["news"] == "confirmed"
+    assert packet["observations"]["news_items"][0]["summary"].startswith("Deckers Outdoor reported")
+    assert any("DECK" in symbols for symbols, _at in broker.news_calls)
+    journal.close()
+
+    book, broker, journal, _calls = _book(tmp_path, monkeypatch, folder=tmp_path / "down")
+    broker.fail_news = ModelError("HTTP 503", status=503)
+    assert book.tick() == "ENTRY_SUBMITTED"
+    assert journal.last("news_unavailable")["session"] == "2026-10-13"
+    assert journal.last("news_fed")["news"] == "unavailable"
+    assert journal.last("decision_started")["packet"]["observations"]["news_items"] == []
+    journal.close()
+
+
+def test_news_rate_limit_uses_the_get_retry(monkeypatch):
+    monkeypatch.setattr("athena_trading.paper.live.time.sleep", lambda *_args: None)
+    calls = {"n": 0}
+
+    def transport(method, url, headers, payload=None, timeout=5):
+        assert method == "GET"
+        assert url.startswith("https://data.alpaca.markets/v1beta1/news?")
+        assert "symbols=DECK" in url
+        assert "2026-10-12" in url
+        assert headers["APCA-API-KEY-ID"] == "paper-key"
+        assert headers["APCA-API-SECRET-KEY"] == "paper-secret"
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ModelError("HTTP 429", status=429)
+        return realistic_news()
+
+    api = LivePaperAPI("paper-key", "paper-secret", transport=transport)
+    items = api.news(
+        ["DECK"], datetime(2026, 10, 12, 20, tzinfo=UTC), datetime(2026, 10, 13, 13, 40, tzinfo=UTC),
+    )
+    assert calls["n"] == 2
+    assert items[0]["id"] == 24819384
+    assert "content" not in items[0]
+    assert "FULL ARTICLE" not in json.dumps(items)
+    with pytest.raises(ValueError, match="unusable"):
+        normalize_news_page({"news": "nope"})
+
+
+def test_restart_manages_an_open_position_when_the_models_probe_fails(tmp_path, monkeypatch):
+    universe = tmp_path / "universe_75.txt"
+    universe.write_text("DECK\nCROX\n")
+    journal = PaperJournal(tmp_path / "book.sqlite")
+    broker = BookBroker()
+
+    def calendar(method, url, headers, payload=None, timeout=5):
+        body = nasdaq()(method, url, headers, payload, timeout)
+        if "date=2026-10-13" in url:
+            body["data"]["rows"].append(
+                {"symbol": "CROX", "time": "time-pre-market", "name": "Crocs", "epsForecast": "$2"},
+            )
+        return body
+
+    policy = EarningsPolicy(str(universe), max_new_entries_per_day=2)
+    first = EarningsBook(
+        broker, JevDecisionEngine("fixture-key", transport=lambda *a, **k: jev_response()),
+        journal, policy, calendar_transport=calendar,
+    )
+    assert first.tick() == "ENTRY_SUBMITTED"
+    client_order_id = _posts(broker)[0]["client_order_id"]
+    fill_bracket(broker, client_order_id)
+    journal.close()
+
+    probes = {"n": 0}
+
+    def probe():
+        probes["n"] += 1
+        raise ModelError("HTTP 503", status=503)
+
+    restarted = PaperJournal(tmp_path / "book.sqlite")
+    book = EarningsBook(
+        broker, None, restarted, policy, calendar_transport=calendar, model_probe=probe,
+    )
+    assert book.tick() == "JEV_UNAVAILABLE"
+    assert probes["n"] == 1
+    assert restarted.last("jev_unavailable")["reason"].startswith("HTTP 503")
+    assert broker.state["positions"][0]["symbol"] == "DECK"
+    assert not any(method == "DELETE" for method, _path, _payload in broker.calls)
+    assert len(_posts(broker)) == 1
+    assert book.tick() == "JEV_UNAVAILABLE"
+    assert probes["n"] == 2
+    assert sum(event["kind"] == "jev_unavailable" for event in restarted.events) == 1
+    restarted.close()
+
+
+def _earnings_script():
+    path = Path(__file__).resolve().parents[1] / "scripts" / "run_athena_earnings.py"
+    spec = importlib.util.spec_from_file_location("run_athena_earnings_probe", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_run_reconciles_a_missing_stop_before_any_models_probe(tmp_path, monkeypatch):
+    book, broker, journal, _calls = _book(tmp_path, monkeypatch)
+    book.tick()
+    client_order_id = _posts(broker)[0]["client_order_id"]
+    fill_bracket(broker, client_order_id, stop_status="canceled")
+    for leg in broker.parents[client_order_id]["legs"]:
+        leg["status"] = "canceled"
+    broker.state["orders"] = []
+    journal.close()
+    script = _earnings_script()
+    urls = []
+
+    def transport(method, url, headers, payload=None, timeout=5):
+        urls.append(url)
+        raise ModelError("HTTP 503", status=503)
+
+    monkeypatch.setenv("ALPACA_API_KEY", "paper-key")
+    monkeypatch.setenv("ALPACA_API_SECRET", "paper-secret")
+    monkeypatch.setenv("TYPESAFE_API_KEY", "model-key")
+    monkeypatch.setenv("ATHENA_EARNINGS_UNIVERSE", str(tmp_path / "universe_75.txt"))
+    monkeypatch.setattr(script.LivePaperAPI, "from_env", lambda: broker)
+    monkeypatch.setattr(script, "request_json", transport)
+    monkeypatch.setattr(script.time, "sleep", lambda *_args: signal.raise_signal(signal.SIGTERM))
+    previous = signal.getsignal(signal.SIGTERM)
+    try:
+        code = script.main([
+            "--authority", "PAPER", "--journal", str(tmp_path / "book.sqlite"), "--run",
+        ])
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    assert code == 0
+    assert urls == []
+    assert any(path == "/v2/positions/DECK" for method, path, _ in broker.calls if method == "DELETE")
+    reopened = PaperJournal(tmp_path / "book.sqlite")
+    try:
+        assert reopened.last("trade_exit")["reason"] == "PROTECTION_MISSING"
+    finally:
+        reopened.close()
+
+
+def test_preflight_still_reports_jev(tmp_path, monkeypatch, capsys):
+    universe = tmp_path / "universe_75.txt"
+    universe.write_text("DECK\n")
+    script = _earnings_script()
+    urls = []
+
+    def transport(method, url, headers, payload=None, timeout=5):
+        urls.append(url)
+        return {"models": [{"id": JEV_MODEL}]}
+
+    monkeypatch.setenv("ALPACA_API_KEY", "paper-key")
+    monkeypatch.setenv("ALPACA_API_SECRET", "paper-secret")
+    monkeypatch.setenv("TYPESAFE_API_KEY", "model-key")
+    monkeypatch.setenv("ATHENA_EARNINGS_UNIVERSE", str(universe))
+    monkeypatch.setattr(script.LivePaperAPI, "from_env", lambda: BookBroker())
+    monkeypatch.setattr(script, "request_json", transport)
+    code = script.main([
+        "--authority", "PAPER", "--journal", str(tmp_path / "preflight.sqlite"), "--preflight",
+    ])
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["decision_model"] == JEV_MODEL
+    assert payload["orders_submitted"] == 0
+    assert any(url.startswith("https://api.typesafe.ai/v1/models") for url in urls)
+
+
+def test_stop_fill_is_stored_as_an_earnings_episode_and_not_an_intraday_rule(tmp_path, monkeypatch):
+    book, broker, journal, _calls = _book(tmp_path, monkeypatch)
+    assert book.tick() == "ENTRY_SUBMITTED"
+    client_order_id = _posts(broker)[0]["client_order_id"]
+    fill_bracket(broker, client_order_id)
+    parent = broker.parents[client_order_id]
+    for leg in parent["legs"]:
+        if leg["type"] == "stop":
+            leg.update(status="filled", filled_qty=parent["qty"], filled_avg_price="102.00",
+                       filled_at="2026-10-13T14:10:00Z")
+        else:
+            leg.update(status="canceled", filled_qty="0")
+    broker.state["positions"] = []
+    broker.state["orders"] = []
+    assert book.tick() == "FLATTENING"
+    assert book.tick() in {"NO_CANDIDATE", "DAILY_ENTRY_DONE"}
+    episode_id = journal.last("learning_recorded")["client_order_ids"]
+    assert episode_id == [client_order_id]
+    store = LearningStore(tmp_path / "athena-state")
+    try:
+        episodes = [item for item in store.experiences() if item["arm"] == "earnings"]
+        assert len(episodes) == 1
+        episode = episodes[0]
+        assert episode["eligible"] is False
+        assert episode["symbol"] == "DECK"
+        assert episode["quantity"] == parent["qty"]
+        assert episode["result"] == "LOSS"
+        assert episode["gross_r"] == -1.0
+        assert episode["question_hash"] == canonical_hash(earnings_questions())
+        assert episode["question_hash"] != canonical_hash(questions())
+        assert episode["decision"]["receipt"]["accepted"] is True
+        context = store.context(
+            episode["account"], "DECK", "LONG", datetime(2026, 10, 13, 18, tzinfo=UTC),
+        )
+        assert context["recent_experiences"] == []
+    finally:
+        store.close()
+    assert book.tick() in {"NO_CANDIDATE", "DAILY_ENTRY_DONE"}
+    store = LearningStore(tmp_path / "athena-state")
+    try:
+        assert len([item for item in store.experiences() if item["arm"] == "earnings"]) == 1
+    finally:
+        store.close()
     journal.close()

@@ -69,9 +69,11 @@ The book file is `/var/lib/athena-earnings/book.sqlite`. It is not a dated intra
 
 Intraday orders start with `athp-`. The intraday runner's flat check and `flatten_step` ignore `athe-` orders and symbols listed in the earnings ledger. They still flatten `athp-` exposure, and they still refuse a symbol that belongs to neither arm. The earnings book will not cancel an `athp-` order.
 
-`athena-paper.service` reads `ATHENA_EARNINGS_STATE_DIR=/var/lib/athena-earnings`. `athena-earnings.service` uses `/etc/athena/earnings.env` and does not write `/var/lib/athena`. Enabling the earnings unit does not restart the intraday unit. This repository does not enable either unit.
+`athena-paper.service` reads `ATHENA_EARNINGS_STATE_DIR=/var/lib/athena-earnings`. `athena-earnings.service` uses `/etc/athena/earnings.env`. It writes its book under `/var/lib/athena-earnings` and appends closed trades under `/var/lib/athena/learning`. It does not write the intraday session journals. Enabling the earnings unit does not restart the intraday unit. This repository does not enable either unit.
 
-Closed earnings trades are stored on the earnings journal as `earnings_experience`. They are not imported into `paper/learning.py`. That study is versioned for the one-share intraday question set, and mixing these fills would be protocol drift.
+Closed earnings trades are copied into the shared learning store at `ATHENA_STATE_DIR/learning` (default `/var/lib/athena/learning`) with `arm=earnings`. They keep fill quantity, gross P&L when the entry and exit cashflows balance, the decision receipt, and source hashes. `eligible` is false. The intraday discovery, validation, promotion, and context retrieval ignore `arm=earnings`, so these fills do not train or skew that study. A locked store is retried; it does not block a protective exit.
+
+Before the open, and again until the entry window ends, the book calls Alpaca `GET /v1beta1/news` with the paper keys for that day's candidates, starting at the prior regular close. Headlines and summaries are journaled as `news_context` and, when a name is adjudicated, as `news_fed` inside the Jev packet. A headline after the prior close and no later than the regular open that reads like a report marks `news=confirmed`. That flag does not authorize the trade. The Nasdaq calendar remains the schedule. Rate limits use the same GET retry as other broker reads. If news is down or unusable, the book journals `news_unavailable` and continues with `news=unavailable`.
 
 ## Run
 

@@ -54,6 +54,36 @@ class DataDeferral(Exception):
         super().__init__(reason)
 
 
+def normalize_news_page(payload: Any) -> list[dict[str, Any]]:
+    """Keep headline, summary, time, source, and symbols. Drop article bodies."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("news"), list):
+        raise ValueError("news payload is unusable")
+    items: list[dict[str, Any]] = []
+    for row in payload["news"]:
+        if not isinstance(row, dict):
+            continue
+        headline = row.get("headline")
+        if not isinstance(headline, str) or not headline.strip():
+            continue
+        summary = row.get("summary") if isinstance(row.get("summary"), str) else ""
+        created = row.get("created_at") if isinstance(row.get("created_at"), str) else ""
+        source = row.get("source") if isinstance(row.get("source"), str) else ""
+        raw_symbols = row.get("symbols") if isinstance(row.get("symbols"), list) else []
+        item: dict[str, Any] = {
+            "headline": headline.strip()[:300],
+            "summary": summary.strip()[:500],
+            "created_at": created,
+            "source": source[:80],
+            "symbols": [symbol for symbol in raw_symbols if isinstance(symbol, str)][:12],
+        }
+        if type(row.get("id")) in {int, str}:
+            item["id"] = row["id"]
+        items.append(item)
+        if len(items) >= 50:
+            break
+    return items
+
+
 def timestamp(value: str) -> datetime:
     result = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if result.tzinfo is None or result.utcoffset() is None:
@@ -334,6 +364,38 @@ class LivePaperAPI(AlpacaPaperBroker):
             tokens.add(token)
             params["page_token"] = token
         raise ValueError("incomplete market-data pagination")
+
+    def news(self, symbols: list[str], start: datetime, end: datetime) -> list[dict[str, Any]]:
+        """Headlines since ``start``. Rate limits use the same GET retry as bars."""
+        cleaned: list[str] = []
+        for symbol in symbols:
+            if isinstance(symbol, str) and symbol and symbol not in cleaned:
+                cleaned.append(symbol)
+        if not cleaned:
+            return []
+        params = {
+            "symbols": ",".join(cleaned[:50]),
+            "start": start.astimezone(UTC).isoformat(),
+            "end": end.astimezone(UTC).isoformat(),
+            "limit": "50", "sort": "desc",
+        }
+        collected: list[dict[str, Any]] = []
+        tokens: set[str] = set()
+        for _ in range(3):
+            raw = self._broker_http(
+                "GET", "https://data.alpaca.markets/v1beta1/news?" + urlencode(params),
+            )
+            collected.extend(normalize_news_page(raw))
+            token = raw.get("next_page_token") if isinstance(raw, dict) else None
+            if not isinstance(token, str) or not token:
+                return collected[:50]
+            if token in tokens:
+                break
+            tokens.add(token)
+            params["page_token"] = token
+        if collected:
+            return collected[:50]
+        raise ValueError("incomplete news pagination")
 
     def snapshot(self) -> dict[str, Any]:
         return {

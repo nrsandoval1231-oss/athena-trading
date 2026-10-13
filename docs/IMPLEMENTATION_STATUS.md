@@ -4,18 +4,20 @@
 
 The earnings arm is a second PAPER book. It reads a free Nasdaq earnings calendar and an operator copy of the screener's `universe_75.txt`. It submits a GTC bracket only when the live gap is inside the screener's 4–12% band, Jev accepts it on the same floors as the intraday arm, and the dollar caps allow the share count. `parse_authority("LIVE")` still raises. Client order ids start with `athe-`. The book file is separate from the dated intraday journals. A restart reconciles those ids and does not resubmit them. SIGTERM does not flatten. The intraday runner ignores `athe-` orders and symbols in the earnings ledger, and it still refuses any other foreign symbol.
 
-The calendar has no SLA, no surprise or guidance fields, and skips `time-not-supplied`. Options, multi-leg orders, Kelly sizing, and PROTECT/HARVEST/DEFEND ratchets are not in this slice. Closed earnings trades stay on the earnings journal. They are not imported into the intraday learning study. Nothing here was deployed, and nothing here is a broker fill or a performance result. **LIVE remains rejected.**
+The calendar has no SLA, no surprise or guidance fields, and skips `time-not-supplied`. Options, multi-leg orders, Kelly sizing, and PROTECT/HARVEST/DEFEND ratchets are not in this slice. On `--run`, the TypeSafe model list is probed only when the book is about to seek a new entry. A restart still reconciles open brackets, replaces a missing stop, and exits at max hold while that probe is failing; the failure is journaled `JEV_UNAVAILABLE` and blocks new entries. `--preflight` still probes Jev and reports `decision_model`.
 
-Observed local checks, Python 3.12. The baseline on `main` `5708946616afb675d1c78138990d8fa46057b6d5` (after PR #28) was 730 passed and 0 failed. No pre-existing failures were present. This change adds 22 tests.
+Closed earnings trades are copied into the shared learning store with `arm=earnings`, including fill quantity, gross P&L when entry and exit cashflows balance, the decision receipt, and source hashes. They are not eligible for the intraday negative-experience study, and that study's context, discovery, and validation ignore the earnings arm. Alpaca news headlines since the prior close are journaled and passed into the earnings Jev packet. A failed or rate-limited news read does not stop the book. Nothing here was deployed, and nothing here is a broker fill or a performance result. **LIVE remains rejected.**
+
+Observed local checks, Python 3.12. The baseline on this branch at `8807937b9479dd8fc57a5853f891bb1d97cedd6f` was 752 passed and 0 failed. No pre-existing failures were present. This change adds 8 tests.
 
 ```bash
-python -m pytest -q                 # 752 passed in 5.33s
+python -m pytest -q                 # 760 passed in 6.09s
 python -m ruff check .              # clean, ruff 0.15.8
 bash -n deploy/install.sh           # clean
 git diff --check                    # clean
 ```
 
-Root pytest does not include Astra Desk; that suite lives in its own repository. Tested revision: `741cb46db3c7a22187c60c6eda53f6f64ee7f392`. This sentence is a docs-only follow-up; the earnings book, the intraday ownership change, and the checks above are that commit.
+Root pytest does not include Astra Desk; that suite lives in its own repository. The tested revision is the commit that introduces the lazy Jev probe, the earnings learning arm, and the Alpaca news context.
 
 ## Transient paper reads — 13 October 2026
 
@@ -156,7 +158,7 @@ Status date: 24 September 2026. Product authority: [Athena Trading Canon v3.0](A
 |---|---|---|
 | Jev decision model | athena_adapter/jev.py: one typed TAKE_TRADE / NO_TRADE / INSUFFICIENT_EVIDENCE decision; active threshold gate | Semantic trading quality unmeasured; no generated thesis |
 | Predictive Intraday | Existing ORB trigger/risk frame feeds paper/live.py | Bounded opening-range component, not full multi-source forecasting |
-| Earnings Adaptive | paper/earnings.py: Nasdaq calendar, screener universe file, 4–12% post-earnings GTC bracket, Jev gate, separate paper service | Options, guidance/sentiment, Kelly, and full APDE ratchet remain incomplete. Not deployed |
+| Earnings Adaptive | paper/earnings.py: Nasdaq calendar, screener universe file, 4–12% post-earnings GTC bracket, Jev gate, Alpaca headlines as context, shared learning store tagged arm=earnings, separate paper service | Options, guidance/sentiment models, Kelly, and full APDE ratchet remain incomplete. Not deployed |
 | Risk and execution | Dedicated paper account; one share/entry/day; rechecked limits; bracket, partial fills, cancellation and broker reconciliation | Full portfolio weekly/monthly/correlation policy remains incomplete |
 | APDE | Shared vocabulary and historical strategy management; broker protection/cleanup in active pilot | Full EXPLORE/PROTECT/HARVEST/DEFEND ratcheting not integrated |
 | Persistence | Single-writer SQLite events, verified chain and separate durable checkpoint | Privileged rewrites of both DB/anchor or lost disk require independent recovery evidence |

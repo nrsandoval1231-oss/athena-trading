@@ -11,6 +11,7 @@ import math
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 from statistics import fmean
 from zoneinfo import ZoneInfo
 
@@ -124,6 +125,167 @@ def outcome(journal: PaperJournal, observed_at: datetime) -> dict | None:
     }
 
 
+def episode_arm(episode: dict) -> str:
+    """Missing arm is the original intraday study. Earnings rows are explicit."""
+    arm = episode.get("arm")
+    if arm is None:
+        return "intraday"
+    if not isinstance(arm, str) or not arm:
+        return "unknown"
+    return arm
+
+
+def _filled_rows(parent: dict | None, close_orders: list) -> list[tuple[str, Decimal, Decimal]] | None:
+    """Balanced entry and exit fills. None means the cashflow is not measured."""
+    rows: list[tuple[str, Decimal, Decimal]] = []
+    seen: set[str] = set()
+
+    def add(item: Any) -> bool:
+        if not isinstance(item, dict):
+            return True
+        identity = item.get("id")
+        if isinstance(identity, str):
+            if identity in seen:
+                return True
+            seen.add(identity)
+        try:
+            qty = decimal(item.get("filled_qty") or 0)
+        except (TypeError, ValueError):
+            return False
+        if qty == 0:
+            return True
+        side = item.get("side")
+        try:
+            price = decimal(item.get("filled_avg_price"))
+        except (TypeError, ValueError):
+            return False
+        if side not in {"buy", "sell"} or price <= 0 or qty < 0:
+            return False
+        rows.append((side, qty, price))
+        return True
+
+    if not add(parent):
+        return None
+    legs = parent.get("legs") if isinstance(parent, dict) else None
+    for leg in legs or []:
+        if not add(leg):
+            return None
+    for order in close_orders:
+        if not add(order):
+            return None
+    return rows
+
+
+def earnings_episode(journal: PaperJournal, client_order_id: str, observed_at: datetime) -> dict | None:
+    """One closed earnings trade. It is stored and never eligible for the intraday study."""
+    binding_event = journal.last("binding")
+    if not binding_event:
+        raise ValueError("earnings outcome has no account binding")
+    binding = binding_event["binding"]
+    entry = next((
+        event for event in reversed(journal.events)
+        if event["kind"] == "entry_intent"
+        and event.get("order", {}).get("client_order_id") == client_order_id
+    ), None)
+    experience = next((
+        event for event in reversed(journal.events)
+        if event["kind"] == "earnings_experience" and event.get("client_order_id") == client_order_id
+    ), None)
+    closed = next((
+        event for event in reversed(journal.events)
+        if event["kind"] == "position_closed" and event.get("client_order_id") == client_order_id
+    ), None)
+    if entry is None or closed is None:
+        raise ValueError("earnings close is missing its reservation")
+    if experience is None:
+        return None
+    order = entry["order"]
+    wanted = entry.get("verdict_hash")
+    adjudications = [event for event in journal.events if event["kind"] == "adjudication"]
+    if wanted:
+        adjudication = next((event for event in adjudications
+                             if canonical_hash(event["receipt"]) == wanted), None)
+        if adjudication is None:
+            raise ValueError("earnings outcome decision receipt does not match reserved entry")
+    else:
+        adjudication = None
+    receipt = adjudication["receipt"] if adjudication else {}
+    question_hash = receipt.get("question_hash")
+    parent = experience.get("parent") if isinstance(experience.get("parent"), dict) else None
+    close_orders = experience.get("close_orders") if isinstance(experience.get("close_orders"), list) else []
+    try:
+        filled = decimal(parent.get("filled_qty") or 0) if parent else Decimal(0)
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise ValueError("earnings fill quantity is unusable") from exc
+    if filled < 0:
+        raise ValueError("earnings fill quantity is unusable")
+    entry_at = instant(entry["at"])
+    if entry_at > observed_at:
+        raise ValueError("outcome is not available at observation time")
+    direction = "LONG" if order["side"] == "buy" else "SHORT"
+    policy = binding["policy"]
+    no_fill = filled == 0 or closed.get("reason") == "ENTRY_TERMINATED"
+    gross: Decimal | None
+    if no_fill:
+        gross = Decimal(0)
+        status = "NO_FILL"
+    else:
+        status = "CLOSED"
+        measured = _filled_rows(parent, close_orders)
+        buys = sells = Decimal(0)
+        if measured is not None:
+            buys = sum((qty for side, qty, _ in measured if side == "buy"), Decimal(0))
+            sells = sum((qty for side, qty, _ in measured if side == "sell"), Decimal(0))
+        if measured is None or buys != sells or buys != filled:
+            gross = None
+        else:
+            gross = sum((qty * price * (1 if side == "sell" else -1)
+                         for side, qty, price in measured), Decimal(0))
+    try:
+        risk = abs(decimal(order["limit_price"]) - decimal(order["stop_loss"]["stop_price"])) * filled
+    except (KeyError, TypeError, ValueError):
+        risk = Decimal(0)
+    if gross is None:
+        result = "UNMEASURED"
+        gross_r = None
+        gross_text = None
+    else:
+        result = "LOSS" if gross < 0 else "GAIN" if gross > 0 else "FLAT"
+        gross_r = float(gross / risk) if risk > 0 and status == "CLOSED" else None
+        gross_text = str(gross)
+    sampled = []
+    for event in journal.events:
+        if event["kind"] != "broker_observation":
+            continue
+        for position in event.get("snapshot", {}).get("positions", []):
+            if position.get("symbol") == order["symbol"] and "unrealized_pl" in position:
+                sampled.append(decimal(position["unrealized_pl"]))
+    return {
+        "id": canonical_hash({
+            "arm": "earnings", "account": binding["account_id"], "entry": client_order_id,
+        }),
+        "arm": "earnings",
+        "account": binding["account_id"], "symbol": order["symbol"], "direction": direction,
+        "cohort": canonical_hash({
+            "arm": "earnings", "account": binding["account_id"], "symbol": order["symbol"],
+            "direction": direction, "policy": policy, "questions": question_hash,
+        }),
+        "policy_hash": canonical_hash(policy), "session": entry["session"],
+        "question_hash": question_hash,
+        "entry_at": entry_at.isoformat(), "closed_at": observed_at.isoformat(),
+        "observed_at": observed_at.isoformat(), "source_hash": canonical_hash(experience),
+        "entry_hash": canonical_hash(entry), "quantity": str(filled),
+        "status": status, "gross_pnl": gross_text, "gross_r": gross_r, "result": result,
+        "costs": "UNMEASURED", "net_pnl": None,
+        "eligible": False, "eligible_for_intraday_study": False,
+        "sampled_mfe_dollars": str(max(sampled)) if sampled else None,
+        "sampled_mae_dollars": str(min(sampled)) if sampled else None,
+        "excursion_basis": "broker position samples, not complete market path",
+        "exit_reason": experience.get("reason"),
+        "decision": adjudication,
+    }
+
+
 def evidence(values: list[dict]) -> dict:
     returns = [item["gross_r"] for item in values]
     n = len(returns)
@@ -167,8 +329,25 @@ class LearningStore:
             return
         self.journal.append("experience", episode=episode)
 
+    def ingest_earnings(self, source: PaperJournal, client_order_id: str, now: datetime) -> bool:
+        """Store one earnings close beside intraday episodes. It stays out of that study."""
+        episode = earnings_episode(source, client_order_id, now)
+        if episode is None:
+            return False
+        if episode_arm(episode) != "earnings" or episode["eligible"]:
+            raise ValueError("earnings outcome must stay ineligible for the intraday study")
+        existing = next((e for e in self.experiences() if e["id"] == episode["id"]), None)
+        if existing:
+            compared = ("source_hash", "entry_hash", "policy_hash", "question_hash", "arm")
+            if any(existing[key] != episode[key] for key in compared):
+                raise ValueError("observed outcome changed; reconcile before learning")
+            return True
+        self.journal.append("experience", episode=episode)
+        return True
+
     def context(self, account: str, symbol: str, direction: str, now: datetime, policy=None):
-        available = [e for e in self.experiences() if e["account"] == account
+        available = [e for e in self.experiences() if episode_arm(e) == "intraday"
+                     and e["account"] == account
                      and e["symbol"] == symbol and e["direction"] == direction
                      and instant(e["observed_at"]) < now and e["status"] == "CLOSED"
                      and e["question_hash"] == canonical_hash(questions())
@@ -194,7 +373,7 @@ class LearningStore:
         available = [e for e in self.experiences() if instant(e["observed_at"]) <= now]
         groups = {}
         for episode in available:
-            if episode["eligible"]:
+            if episode.get("eligible") and episode_arm(episode) == "intraday":
                 groups.setdefault(episode["cohort"], []).append(episode)
         for cohort, items in groups.items():
             items.sort(key=lambda e: (e["observed_at"], e["id"]))
@@ -229,9 +408,11 @@ class LearningStore:
                                     direction=first["direction"], policy_hash=first["policy_hash"],
                                     question_hash=first["question_hash"],
                                     action="NO_TRADE", reason="prospectively confirmed negative gross returns")
+        day_episodes = [e for e in available if e["session"] == day]
         report = {"session": day, "at": now.isoformat(), "protocol": PROTOCOL,
                   "session_summary": session_summary or [],
-                  "episodes": [e for e in available if e["session"] == day],
+                  "episodes": [e for e in day_episodes if episode_arm(e) == "intraday"],
+                  "earnings_episodes": [e for e in day_episodes if episode_arm(e) == "earnings"],
                   "evaluations": [e for e in self.journal.events
                                   if e["kind"] in {"candidate", "validation", "promoted"}],
                   "limits": "Gross paper outcomes; fees unmeasured; no guarantee of future improvement."}

@@ -12,6 +12,7 @@ WorkingDirectory=/opt/athena-trading
 EnvironmentFile=/etc/athena/earnings.env
 Environment=PYTHONUNBUFFERED=1
 Environment=ATHENA_EARNINGS_STATE_DIR=/var/lib/athena-earnings
+Environment=ATHENA_STATE_DIR=/var/lib/athena
 ExecStart=/opt/athena-trading/.venv/bin/python -m athena_trading.paper.earnings_cloud
 Restart=always
 RestartSec=30
@@ -24,7 +25,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/athena-earnings
+ReadWritePaths=/var/lib/athena-earnings /var/lib/athena/learning
 StandardOutput=journal
 StandardError=journal
 

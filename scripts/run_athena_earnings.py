@@ -34,6 +34,14 @@ def _continue_after_transient(exc: BaseException, state: dict[str, float | int |
     return count < TRANSIENT_TICK_LIMIT and (now - float(started)) < TRANSIENT_TICK_BUDGET_SECONDS
 
 
+def probe_models(api_key: str) -> None:
+    models = request_json("GET", "https://api.typesafe.ai/v1/models", {
+        "Authorization": "Bearer " + api_key,
+    }, timeout=5)
+    if not isinstance(models, dict) or not isinstance(models.get("models"), list):
+        raise ValueError("TypeSafe model-list response is invalid")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--authority", required=True, choices=["PAPER"])
@@ -49,9 +57,8 @@ def main(argv: list[str] | None = None) -> int:
     require_paper(parse_authority(args.authority))
     missing = [name for name in ("ALPACA_API_KEY", "ALPACA_API_SECRET", "ATHENA_EARNINGS_UNIVERSE")
                if not os.environ.get(name, "").strip()]
-    if args.run or args.preflight:
-        if not os.environ.get("TYPESAFE_API_KEY", "").strip():
-            missing.append("TYPESAFE_API_KEY")
+    if args.preflight and not os.environ.get("TYPESAFE_API_KEY", "").strip():
+        missing.append("TYPESAFE_API_KEY")
     if missing:
         print(json.dumps({"ok": False, "arm": "earnings", "missing_environment": missing, "orders_submitted": 0}))
         return 2
@@ -74,17 +81,23 @@ def main(argv: list[str] | None = None) -> int:
         if stored:
             policy = EarningsPolicy(**stored["binding"]["policy"])
         jev = None
-        if args.run or args.preflight:
+        model_probe = None
+        if args.preflight:
+            api_key = os.environ["TYPESAFE_API_KEY"]
             jev = JevDecisionEngine(
-                os.environ.get("TYPESAFE_API_KEY", ""),
-                support_min=policy.support_min, confidence_min=policy.confidence_min,
+                api_key, support_min=policy.support_min, confidence_min=policy.confidence_min,
             )
-            models = request_json("GET", "https://api.typesafe.ai/v1/models", {
-                "Authorization": "Bearer " + os.environ["TYPESAFE_API_KEY"],
-            }, timeout=5)
-            if not isinstance(models, dict) or not isinstance(models.get("models"), list):
-                raise ValueError("TypeSafe model-list response is invalid")
-        book = EarningsBook(broker, jev, journal, policy)
+            probe_models(api_key)
+        elif args.run:
+            def model_probe() -> JevDecisionEngine:
+                # Called only when the book is about to seek a new entry.
+                api_key = os.environ.get("TYPESAFE_API_KEY", "").strip()
+                engine = JevDecisionEngine(
+                    api_key, support_min=policy.support_min, confidence_min=policy.confidence_min,
+                )
+                probe_models(api_key)
+                return engine
+        book = EarningsBook(broker, jev, journal, policy, model_probe=model_probe)
         snapshot = broker.snapshot()
         if args.preflight:
             print(json.dumps({

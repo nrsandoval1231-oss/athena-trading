@@ -283,3 +283,31 @@ def test_promoted_rule_changes_actual_pilot_behavior(tmp_path):
     assert not any(m == "POST" for m, _, _ in broker.calls)
     journal.close()
     store.close()
+
+
+def test_earnings_arm_cannot_train_or_fill_intraday_context(tmp_path):
+    """Twenty losing earnings rows, even if marked eligible, stay out of the study."""
+    store = LearningStore(tmp_path)
+    policy = asdict(POLICY)
+    question_hash = canonical_hash(questions())
+    observed = datetime(2026, 10, 15, 20, tzinfo=UTC)
+    for index in range(20):
+        store.journal.append("experience", episode={
+            "id": f"earn-{index}", "arm": "earnings", "eligible": True, "cohort": "shared-looking",
+            "account": "paper-account", "symbol": "AAPL", "direction": "LONG",
+            "question_hash": question_hash, "policy_hash": canonical_hash(policy),
+            "session": "2026-10-15", "observed_at": observed.isoformat(),
+            "entry_at": datetime(2026, 10, 15, 14, tzinfo=UTC).isoformat(),
+            "status": "CLOSED", "result": "LOSS", "gross_r": -1.0, "gross_pnl": "-2",
+            "quantity": "1", "costs": "UNMEASURED",
+        })
+    report = store.review(date(2026, 10, 15), datetime(2026, 10, 16, 2, tzinfo=UTC))
+    assert report["episodes"] == []
+    assert len(report["earnings_episodes"]) == 20
+    assert not any(event["kind"] == "candidate" for event in store.journal.events)
+    context = store.context(
+        "paper-account", "AAPL", "LONG", datetime(2026, 10, 16, 2, tzinfo=UTC), policy=policy,
+    )
+    assert context["recent_experiences"] == []
+    assert context["validated_rules"] == []
+    store.close()
