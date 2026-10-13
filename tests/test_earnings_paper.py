@@ -16,6 +16,7 @@ from athena_trading.execution.authority import AuthorityError, ExecutionAuthorit
 from athena_trading.paper.earnings import (
     EarningsBook, EarningsPolicy, bracket_order, earnings_client_order_id, earnings_questions,
     entry_session, hold_action, load_universe, news_for_decision, plan_entry, policy_from_environment,
+    resolve_restart_policy,
 )
 from athena_trading.paper.learning import LearningStore
 from athena_trading.paper.earnings_calendar import EarningsReport, parse_nasdaq_calendar
@@ -871,4 +872,246 @@ def test_stop_fill_is_stored_as_an_earnings_episode_and_not_an_intraday_rule(tmp
         assert len([item for item in store.experiences() if item["arm"] == "earnings"]) == 1
     finally:
         store.close()
+    journal.close()
+
+
+def _partial_fill(broker, client_order_id):
+    parent = broker.parents[client_order_id]
+    take = next(leg for leg in parent["legs"] if leg["type"] == "limit")
+    stop = next(leg for leg in parent["legs"] if leg["type"] == "stop")
+    take.update(status="partially_filled", filled_qty="5", filled_avg_price="108.00")
+    stop.update(qty="14", filled_qty="0", status="held", stop_price="102.00")
+    broker.state["positions"][0]["qty"] = "14"
+    broker.state["orders"] = [copy.deepcopy(stop)]
+    return parent
+
+
+def test_partial_take_profit_remains_manageable_after_restart(tmp_path, monkeypatch):
+    book, broker, journal, _calls = _book(tmp_path, monkeypatch)
+    book.tick()
+    client_order_id = _posts(broker)[0]["client_order_id"]
+    fill_bracket(broker, client_order_id)
+    _partial_fill(broker, client_order_id)
+    assert book.tick() == "POSITION_OPEN"
+    assert journal.last("trade_halt") is None
+    journal.close()
+
+    restarted = PaperJournal(tmp_path / "book.sqlite")
+    book = EarningsBook(
+        broker, None, restarted, EarningsPolicy(str(tmp_path / "universe_75.txt")),
+        calendar_transport=nasdaq(),
+    )
+    assert book.tick() == "POSITION_OPEN"
+    for leg in broker.parents[client_order_id]["legs"]:
+        if leg["type"] == "stop":
+            leg["status"] = "canceled"
+        else:
+            leg["status"] = "filled"
+    broker.state["orders"] = []
+    assert book.tick() == "FLATTENING"
+    assert restarted.last("trade_exit")["reason"] == "PROTECTION_MISSING"
+    assert any(path == "/v2/positions/DECK" for method, path, _ in broker.calls if method == "DELETE")
+    restarted.close()
+
+    root = tmp_path / "hold"
+    book, broker, journal, _calls = _book(tmp_path, monkeypatch, folder=root)
+    book.tick()
+    client_order_id = _posts(broker)[0]["client_order_id"]
+    fill_bracket(broker, client_order_id)
+    _partial_fill(broker, client_order_id)
+    journal.close()
+    restarted = PaperJournal(root / "book.sqlite")
+    book = EarningsBook(
+        broker, None, restarted, EarningsPolicy(str(root / "universe_75.txt")),
+        calendar_transport=nasdaq(),
+    )
+    broker.state["clock"]["timestamp"] = "2026-10-15T19:50:00Z"
+    broker.state["clock"]["next_close"] = "2026-10-15T20:00:00Z"
+    assert book.tick() == "FLATTENING"
+    assert restarted.last("trade_exit")["reason"] == "MAX_HOLD"
+    for leg in broker.parents[client_order_id]["legs"]:
+        leg["status"] = "canceled"
+    broker.state["orders"] = []
+    assert book.tick() == "FLATTENING"
+    assert any(path == "/v2/positions/DECK" for method, path, _ in broker.calls if method == "DELETE")
+    restarted.close()
+
+
+def test_acknowledged_close_order_is_not_treated_as_unowned(tmp_path, monkeypatch):
+    book, broker, journal, _calls = _book(tmp_path, monkeypatch)
+    book.tick()
+    client_order_id = _posts(broker)[0]["client_order_id"]
+    fill_bracket(broker, client_order_id, stop_status="canceled")
+    for leg in broker.parents[client_order_id]["legs"]:
+        leg["status"] = "canceled"
+    broker.state["orders"] = []
+    assert book.tick() == "FLATTENING"
+    close_order = copy.deepcopy(journal.last("close_ack")["order"])
+    close_order["status"] = "accepted"
+    broker.state["orders"] = [close_order]
+    assert book.tick() == "FLATTENING"
+    position_deletes = [
+        path for method, path, _ in broker.calls
+        if method == "DELETE" and path == "/v2/positions/DECK"
+    ]
+    assert position_deletes == ["/v2/positions/DECK"]
+    assert not any(close_order["id"] in path for method, path, _ in broker.calls if method == "DELETE")
+    journal.close()
+
+    restarted = PaperJournal(tmp_path / "book.sqlite")
+    book = EarningsBook(
+        broker, None, restarted, EarningsPolicy(str(tmp_path / "universe_75.txt")),
+        calendar_transport=nasdaq(),
+    )
+    assert book.tick() == "FLATTENING"
+    assert [
+        path for method, path, _ in broker.calls
+        if method == "DELETE" and path == "/v2/positions/DECK"
+    ] == ["/v2/positions/DECK"]
+    restarted.close()
+
+
+def test_restart_honors_a_tighter_cap_and_refuses_other_changes(tmp_path, monkeypatch, capsys):
+    book, broker, journal, _calls = _book(tmp_path, monkeypatch)
+    broker.state["clock"]["is_open"] = False
+    assert book.tick() == "WAITING"
+    journal.close()
+    script = _earnings_script()
+
+    def models(method, url, headers, payload=None, timeout=5):
+        return {"models": [{"id": JEV_MODEL}]}
+
+    monkeypatch.setenv("ALPACA_API_KEY", "paper-key")
+    monkeypatch.setenv("ALPACA_API_SECRET", "paper-secret")
+    monkeypatch.setenv("TYPESAFE_API_KEY", "model-key")
+    monkeypatch.setenv("ATHENA_EARNINGS_UNIVERSE", str(tmp_path / "universe_75.txt"))
+    monkeypatch.setenv("ATHENA_EARNINGS_PER_TRADE_RISK", "10")
+    monkeypatch.setenv("ATHENA_EARNINGS_TOTAL_RISK", "10")
+    monkeypatch.setattr(script.LivePaperAPI, "from_env", lambda: broker)
+    monkeypatch.setattr(script, "request_json", models)
+    code = script.main([
+        "--authority", "PAPER", "--journal", str(tmp_path / "book.sqlite"), "--preflight",
+    ])
+    assert code == 0
+    reported = json.loads(capsys.readouterr().out)
+    assert reported["per_trade_risk"] == 10
+    assert reported["total_risk"] == 10
+
+    universe = str(tmp_path / "universe_75.txt")
+    tightened = resolve_restart_policy(
+        EarningsPolicy(universe), EarningsPolicy(universe, per_trade_risk=10, total_risk=10),
+    )
+    journal = PaperJournal(tmp_path / "book.sqlite")
+    broker.state["clock"]["is_open"] = True
+    broker.state["clock"]["timestamp"] = NOW.isoformat()
+    book = EarningsBook(broker, JevDecisionEngine("fixture-key", transport=lambda *a, **k: jev_response()),
+                        journal, tightened, calendar_transport=nasdaq())
+    assert book.tick() == "ENTRY_SUBMITTED"
+    assert _posts(broker)[-1]["qty"] == "5"
+    assert journal.last("policy_tightened")["policy"]["per_trade_risk"] == 10
+    journal.close()
+
+    with pytest.raises(ValueError, match="loosen"):
+        resolve_restart_policy(
+            EarningsPolicy(universe, per_trade_risk=10, total_risk=10), EarningsPolicy(universe),
+        )
+    with pytest.raises(ValueError, match="feed"):
+        resolve_restart_policy(EarningsPolicy(universe), EarningsPolicy(universe, feed="sip"))
+    monkeypatch.setenv("ATHENA_FEED", "sip")
+    monkeypatch.delenv("ATHENA_EARNINGS_PER_TRADE_RISK", raising=False)
+    monkeypatch.delenv("ATHENA_EARNINGS_TOTAL_RISK", raising=False)
+    code = script.main([
+        "--authority", "PAPER", "--journal", str(tmp_path / "book.sqlite"), "--preflight",
+    ])
+    assert code == 2
+    assert "feed" in capsys.readouterr().err
+
+
+def test_order_is_not_submitted_after_the_entry_deadline(tmp_path, monkeypatch):
+    book, broker, journal, _calls = _book(tmp_path, monkeypatch)
+    broker.state["clock"]["timestamp"] = "2026-10-13T13:59:59+00:00"
+
+    def bars(symbol, start, end, timeframe, feed):
+        if timeframe == "1Day":
+            return [{"t": "2026-10-12T20:00:00Z", "o": 100, "h": 103, "l": 99, "c": 100, "v": 2_500_000}]
+        return [{
+            "t": "2026-10-13T13:58:00+00:00", "o": 103.6, "h": 104.2, "l": 103.4, "c": 104.0, "v": 12000,
+        }]
+
+    def late(*args, **kwargs):
+        broker.state["clock"]["timestamp"] = "2026-10-13T14:00:01+00:00"
+        return jev_response()
+
+    broker.bars = bars
+    book.jev = JevDecisionEngine("fixture-key", transport=late)
+    assert book.tick() == "SESSION_BLOCKED"
+    assert _posts(broker) == []
+    assert journal.last("entry_intent") is None
+    assert journal.last("adjudication")["receipt"]["accepted"] is True
+    journal.close()
+
+
+def test_daily_loss_halt_expires_and_an_operator_halt_does_not(tmp_path, monkeypatch):
+    book, broker, journal, _calls = _book(tmp_path, monkeypatch)
+    broker.state["account"]["equity"] = "99500"
+    assert book.tick() == "ENTRIES_BLOCKED"
+    assert journal.last("entries_halt")["reason"] == "DAILY_LOSS_LIMIT"
+    assert journal.last("entries_halt")["session"] == "2026-10-13"
+    assert _posts(broker) == []
+    broker.state["account"]["equity"] = "100000"
+    broker.state["clock"]["timestamp"] = "2026-10-14T13:40:05+00:00"
+    broker.state["clock"]["next_close"] = "2026-10-14T20:00:00Z"
+    assert book.tick() == "NO_CANDIDATE"
+    journal.close()
+    restarted = PaperJournal(tmp_path / "book.sqlite")
+    book = EarningsBook(
+        broker, JevDecisionEngine("fixture-key", transport=lambda *a, **k: jev_response()),
+        restarted, EarningsPolicy(str(tmp_path / "universe_75.txt")), calendar_transport=nasdaq(),
+    )
+    assert book.tick() == "NO_CANDIDATE"
+    restarted.close()
+
+    root = tmp_path / "operator"
+    book, broker, journal, _calls = _book(tmp_path, monkeypatch, folder=root)
+    book.request_flatten_owned()
+    broker.state["clock"]["timestamp"] = "2026-10-14T13:40:05+00:00"
+    broker.state["clock"]["next_close"] = "2026-10-14T20:00:00Z"
+    assert book.tick() == "ENTRIES_BLOCKED"
+    journal.close()
+    restarted = PaperJournal(root / "book.sqlite")
+    book = EarningsBook(
+        broker, None, restarted, EarningsPolicy(str(root / "universe_75.txt")),
+        calendar_transport=nasdaq(),
+    )
+    assert book.tick() == "ENTRIES_BLOCKED"
+    restarted.close()
+
+
+def test_news_refreshes_after_an_empty_premarket_pull(tmp_path, monkeypatch):
+    book, broker, journal, _calls = _book(tmp_path, monkeypatch)
+    pulls = {"n": 0}
+    headline = normalize_news_page(realistic_news())
+    headline[0]["created_at"] = "2026-10-13T13:10:00Z"
+
+    def news(symbols, start, end):
+        pulls["n"] += 1
+        broker.news_calls.append((list(symbols), start.isoformat()))
+        if pulls["n"] == 1:
+            return []
+        return headline
+
+    broker.news = news
+    broker.state["clock"]["is_open"] = False
+    broker.state["clock"]["timestamp"] = "2026-10-13T12:50:00+00:00"
+    assert book.tick() == "WAITING"
+    broker.state["clock"]["timestamp"] = "2026-10-13T13:15:00+00:00"
+    assert book.tick() == "WAITING"
+    assert pulls["n"] == 2
+    broker.state["clock"]["is_open"] = True
+    broker.state["clock"]["timestamp"] = NOW.isoformat()
+    assert book.tick() == "ENTRY_SUBMITTED"
+    assert pulls["n"] == 3
+    assert journal.last("news_fed")["news"] == "confirmed"
+    assert journal.last("news_fed")["items"][0]["headline"].startswith("Deckers Outdoor")
+    assert sum(event["kind"] == "news_context" for event in journal.events) == 3
     journal.close()

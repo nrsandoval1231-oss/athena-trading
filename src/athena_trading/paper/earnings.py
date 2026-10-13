@@ -340,6 +340,70 @@ def _configured_int(name: str) -> int | None:
         raise ValueError(f"{name} must be a whole number") from exc
 
 
+_TIGHTER_WHEN_LOWER = (
+    "per_trade_risk", "total_risk", "max_notional_per_trade", "max_notional_total",
+    "max_positions", "max_new_entries_per_day", "max_hold_sessions",
+)
+_TIGHTER_WHEN_HIGHER = ("support_min", "confidence_min")
+_NEWS_REFRESH = timedelta(minutes=15)
+
+
+def resolve_restart_policy(applied: EarningsPolicy, requested: EarningsPolicy) -> EarningsPolicy:
+    """Accept the applied policy, or a tighter one. Refuse a looser cap or any other change."""
+    saved = asdict(applied)
+    wanted = asdict(requested)
+    loosened: list[str] = []
+    identity: list[str] = []
+    tighter = False
+    for key, previous in saved.items():
+        current = wanted[key]
+        if current == previous:
+            continue
+        if key in _TIGHTER_WHEN_LOWER and current < previous:
+            tighter = True
+            continue
+        if key in _TIGHTER_WHEN_HIGHER and current > previous:
+            tighter = True
+            continue
+        if key in _TIGHTER_WHEN_LOWER or key in _TIGHTER_WHEN_HIGHER:
+            loosened.append(key)
+        else:
+            identity.append(key)
+    if identity:
+        raise ValueError(
+            "earnings configuration changed (" + ", ".join(identity) + "); refusing startup"
+        )
+    if loosened:
+        raise ValueError(
+            "earnings risk caps would loosen (" + ", ".join(loosened) + "); refusing startup"
+        )
+    return requested if tighter else applied
+
+
+def residual_shares(parent: dict[str, Any], entry_side: str) -> float | None:
+    """Entry fills minus opposite-side bracket fills. None means the legs do not explain a quantity."""
+    try:
+        entered = number(parent["filled_qty"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    exited = 0.0
+    legs = parent.get("legs") or []
+    if not isinstance(legs, list):
+        return None
+    for leg in legs:
+        if not isinstance(leg, dict) or leg.get("side") == entry_side:
+            continue
+        if leg.get("side") not in {"buy", "sell"}:
+            return None
+        try:
+            exited += number(leg.get("filled_qty") or 0)
+        except (TypeError, ValueError):
+            return None
+    if exited > entered:
+        return None
+    return entered - exited
+
+
 def policy_from_environment(universe_path: str, feed: str = "iex") -> EarningsPolicy:
     """Paper defaults, with optional tighter caps. The 4–12% band stays fixed."""
     kwargs: dict[str, Any] = {}
@@ -423,21 +487,31 @@ class EarningsBook:
             if event["kind"] == kind and event.get("client_order_id") == client_order_id
         ), None)
 
+    def _applied_policy(self) -> EarningsPolicy:
+        tightened = self.journal.last("policy_tightened")
+        if isinstance(tightened, dict) and isinstance(tightened.get("policy"), dict):
+            return EarningsPolicy(**tightened["policy"])
+        stored = self.journal.last("binding")
+        if stored and isinstance(stored.get("binding", {}).get("policy"), dict):
+            return EarningsPolicy(**stored["binding"]["policy"])
+        return self.policy
+
     def _bind(self, snapshot: dict[str, Any]) -> None:
         binding = {"account_id": snapshot["account"]["id"], "policy": asdict(self.policy)}
         previous = self.journal.last("binding")
-        if previous:
-            stored = previous["binding"]
-            same_account = stored.get("account_id") == binding["account_id"]
-            stored_policy = stored.get("policy")
-            current = binding["policy"]
-            same_policy = isinstance(stored_policy, dict) and all(
-                current.get(key) == value for key, value in stored_policy.items()
-            )
-            if not same_account or not same_policy:
-                raise ValueError("journal belongs to a different account or policy")
+        if previous is None:
+            self.journal.append("binding", binding=binding)
             return
-        self.journal.append("binding", binding=binding)
+        stored = previous["binding"]
+        if stored.get("account_id") != binding["account_id"]:
+            raise ValueError("journal belongs to a different account or policy")
+        applied = self._applied_policy()
+        # A tighter cap is versioned. A looser cap or a different identity refuses the book.
+        resolve_restart_policy(applied, self.policy)
+        if asdict(self.policy) != asdict(applied):
+            self.journal.append(
+                "policy_tightened", policy=asdict(self.policy), at=datetime.now(UTC),
+            )
 
     def _open_risk(self) -> tuple[float, float]:
         risk = notional = 0.0
@@ -497,9 +571,21 @@ class EarningsBook:
         )
         return "ENTRY_NOT_CREATED"
 
+    def _acknowledged_close_ids(self, client_order_id: str) -> set[str]:
+        found: set[str] = set()
+        for event in self.journal.events:
+            if event["kind"] != "close_ack" or event.get("client_order_id") != client_order_id:
+                continue
+            order = event.get("order")
+            if isinstance(order, dict) and isinstance(order.get("id"), str):
+                found.add(order["id"])
+        return found
+
     def _owned_working(
         self, snapshot: dict[str, Any], symbol: str, parent: dict[str, Any] | None,
+        close_ids: set[str] | None = None,
     ) -> list[dict[str, Any]]:
+        acknowledged = close_ids or set()
         known: set[str] = set()
 
         def collect(order: Any) -> None:
@@ -527,7 +613,11 @@ class EarningsBook:
             client_order_id = str(order.get("client_order_id") or "")
             if client_order_id.startswith(INTRADAY_ORDER_PREFIX):
                 raise ValueError("intraday order shares an earnings symbol; refusing to cancel it")
-            if client_order_id.startswith(EARNINGS_ORDER_PREFIX) or order.get("id") in known:
+            if (
+                client_order_id.startswith(EARNINGS_ORDER_PREFIX)
+                or order.get("id") in known
+                or order.get("id") in acknowledged
+            ):
                 owned.append(order)
                 continue
             raise ValueError("unowned order on an earnings symbol; refusing to cancel it")
@@ -561,12 +651,8 @@ class EarningsBook:
         symbol = trade["order"]["symbol"]
         if self._last("trade_halt", client_order_id):
             return "POSITION_MISMATCH"
-        owned = self._owned_working(snapshot, symbol, parent)
-        close_events = [
-            event for event in self.journal.events
-            if event["kind"] == "close_ack" and event.get("client_order_id") == client_order_id
-        ]
-        close_ids = {event["order"]["id"] for event in close_events if isinstance(event.get("order"), dict)}
+        close_ids = self._acknowledged_close_ids(client_order_id)
+        owned = self._owned_working(snapshot, symbol, parent, close_ids)
         cancelable = cancel_targets(owned, close_ids)
         for order in cancelable:
             self._delete_order(str(order["id"]))
@@ -693,14 +779,20 @@ class EarningsBook:
         positions = [item for item in snapshot["positions"] if item.get("symbol") == symbol]
         if not positions:
             reason = bracket_exit_reason(parent, trade["order"]["side"]) or "POSITION_EXITED"
-            if self._owned_working(snapshot, symbol, parent):
+            if self._owned_working(
+                snapshot, symbol, parent, self._acknowledged_close_ids(client_order_id),
+            ):
                 self._begin_close(trade, reason)
                 return self._close_step(trade, snapshot, parent)
             self._begin_close(trade, reason)
             return self._close_step(trade, snapshot, parent)
         position_qty = number(positions[0]["qty"])
         expected = 1 if trade["order"]["side"] == "buy" else -1
-        if position_qty * expected <= 0 or abs(position_qty) != filled:
+        residual = residual_shares(parent, trade["order"]["side"])
+        if (
+            residual is None or residual <= 0 or position_qty * expected <= 0
+            or abs(position_qty) != residual
+        ):
             self.journal.append(
                 "trade_halt", client_order_id=client_order_id, reason="POSITION_MISMATCH",
             )
@@ -718,8 +810,25 @@ class EarningsBook:
             return self._close_step(trade, snapshot, parent)
         return "POSITION_OPEN"
 
-    def _entries_blocked(self, account: dict[str, Any]) -> str | None:
-        if self.journal.last("entries_halt"):
+    def _halt_blocks(self, today: str) -> bool:
+        """Operator halts stick. A daily-loss halt blocks only the session that recorded it."""
+        for event in reversed(self.journal.events):
+            if event["kind"] != "entries_halt":
+                continue
+            if event.get("reason") != "DAILY_LOSS_LIMIT":
+                return True
+            session = event.get("session")
+            if not isinstance(session, str):
+                try:
+                    session = timestamp(event["at"]).astimezone(NY).date().isoformat()
+                except (KeyError, TypeError, ValueError):
+                    continue
+            if session == today:
+                return True
+        return False
+
+    def _entries_blocked(self, account: dict[str, Any], today: str) -> str | None:
+        if self._halt_blocks(today):
             return "ENTRIES_BLOCKED"
         if account.get("status") != "ACTIVE" or any(
             account.get(key) for key in ("trading_blocked", "account_blocked", "trade_suspended_by_user")
@@ -731,8 +840,10 @@ class EarningsBook:
         except (KeyError, TypeError, ValueError):
             return "ENTRIES_BLOCKED"
         if equity <= last_equity * (1 - self.policy.max_daily_loss_fraction):
-            if self.journal.last("entries_halt") is None:
-                self.journal.append("entries_halt", reason="DAILY_LOSS_LIMIT", at=datetime.now(UTC))
+            if not self._halt_blocks(today):
+                self.journal.append(
+                    "entries_halt", reason="DAILY_LOSS_LIMIT", session=today, at=datetime.now(UTC),
+                )
             return "ENTRIES_BLOCKED"
         return None
 
@@ -1044,9 +1155,24 @@ class EarningsBook:
         close_at = timestamp(current["clock"]["next_close"])
         if current_now >= close_at - timedelta(minutes=self.policy.close_buffer_minutes):
             return "SESSION_BLOCKED"
+        broker_day = current_now.astimezone(NY).date().isoformat()
+        if broker_day != session_day:
+            return "SESSION_BLOCKED"
+        refreshed_open, _refreshed_close, _sessions, _prior = self._broker_sessions(broker_day)
+        window_start = refreshed_open + timedelta(minutes=self.policy.entry_start_minutes)
+        window_end = refreshed_open + timedelta(minutes=self.policy.entry_end_minutes)
+        if current_now < window_start or current_now >= window_end:
+            return "SESSION_BLOCKED"
+        try:
+            signal_at = timestamp(packet["signal_at"])
+        except (KeyError, TypeError, ValueError):
+            return "SESSION_BLOCKED"
+        evidence_age = (current_now - signal_at - timedelta(minutes=1)).total_seconds()
+        if evidence_age > self.policy.max_bar_age_seconds:
+            return "SESSION_BLOCKED"
         if any(item.get("symbol") == order["symbol"] for item in current["positions"] + current["orders"]):
             return "SYMBOL_BUSY"
-        blocked = self._entries_blocked(current["account"])
+        blocked = self._entries_blocked(current["account"], broker_day)
         if blocked:
             return blocked
         equity = number(current["account"]["equity"], positive=True)
@@ -1130,14 +1256,27 @@ class EarningsBook:
         self, today: str, sessions: list[str], session_open: datetime,
         prior_close: datetime | None, now: datetime,
     ) -> None:
-        """Pull headlines for today's candidates. A failed pull does not stop the book."""
-        if any(
-            event["kind"] == "news_context" and event.get("session") == today
-            for event in self.journal.events
-        ):
-            return
+        """Pull headlines for today's candidates. A failed pull does not stop the book.
+
+        A successful snapshot is reused for fifteen minutes, then refreshed through
+        the entry window. Each snapshot keeps its availability time.
+        """
         if prior_close is None or now < prior_close:
             return
+        window_end = session_open + timedelta(minutes=self.policy.entry_end_minutes)
+        latest = next((
+            event for event in reversed(self.journal.events)
+            if event["kind"] == "news_context" and event.get("session") == today
+        ), None)
+        if latest is not None:
+            try:
+                available = timestamp(latest["end"])
+            except (KeyError, TypeError, ValueError):
+                available = None
+            if available is not None and now < available + _NEWS_REFRESH:
+                return
+            if available is not None and now >= window_end:
+                return
         recent = [
             event for event in self.journal.events
             if event["kind"] == "news_unavailable" and event.get("session") == today
@@ -1258,7 +1397,7 @@ class EarningsBook:
         if any(status in {"FLATTENING", "POSITION_MISMATCH"} for status in statuses):
             status = min(statuses, key=_status_rank)
         else:
-            blocked = self._entries_blocked(snapshot["account"])
+            blocked = self._entries_blocked(snapshot["account"], today)
             if blocked:
                 status = "MANAGING" if self.open_trades() else blocked
             elif not snapshot["clock"]["is_open"]:

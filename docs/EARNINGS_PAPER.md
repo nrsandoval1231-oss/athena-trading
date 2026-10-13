@@ -65,7 +65,7 @@ Session dates come from Alpaca's paper calendar, not from Nasdaq.
 
 Client order ids start with `athe-` and are a hash of account, symbol, and report date. The id is journaled before the POST. A lost response looks the id up. It is not sent again. Two flat HTTP 404s, with no acknowledgement and no exposure in that symbol, record `entry_not_created`.
 
-The book file is `/var/lib/athena-earnings/book.sqlite`. It is not a dated intraday journal. A restart loads the same file, republishes `ownership.json`, and reconciles open ids before it looks for a new entry. SIGTERM stops the process and leaves GTC brackets at the broker. It does not flatten. `--flatten-owned` closes earnings symbols only.
+The book file is `/var/lib/athena-earnings/book.sqlite`. It is not a dated intraday journal. A restart loads the same file, republishes `ownership.json`, and reconciles open ids before it looks for a new entry. A partial take-profit leaves the unsold shares under management: the position must match entry fills minus opposite-side fills. A quantity those legs cannot explain still halts. A close Alpaca created under its own client order id is waited on when that id is already in `close_ack`. It is not canceled and it is not sent again. SIGTERM stops the process and leaves GTC brackets at the broker. It does not flatten. `--flatten-owned` closes earnings symbols only.
 
 Intraday orders start with `athp-`. The intraday runner's flat check and `flatten_step` ignore `athe-` orders and symbols listed in the earnings ledger. They still flatten `athp-` exposure, and they still refuse a symbol that belongs to neither arm. The earnings book will not cancel an `athp-` order.
 
@@ -73,7 +73,13 @@ Intraday orders start with `athp-`. The intraday runner's flat check and `flatte
 
 Closed earnings trades are copied into the shared learning store at `ATHENA_STATE_DIR/learning` (default `/var/lib/athena/learning`) with `arm=earnings`. They keep fill quantity, gross P&L when the entry and exit cashflows balance, the decision receipt, and source hashes. `eligible` is false. The intraday discovery, validation, promotion, and context retrieval ignore `arm=earnings`, so these fills do not train or skew that study. A locked store is retried; it does not block a protective exit.
 
-Before the open, and again until the entry window ends, the book calls Alpaca `GET /v1beta1/news` with the paper keys for that day's candidates, starting at the prior regular close. Headlines and summaries are journaled as `news_context` and, when a name is adjudicated, as `news_fed` inside the Jev packet. A headline after the prior close and no later than the regular open that reads like a report marks `news=confirmed`. That flag does not authorize the trade. The Nasdaq calendar remains the schedule. Rate limits use the same GET retry as other broker reads. If news is down or unusable, the book journals `news_unavailable` and continues with `news=unavailable`.
+Before the open, and again until the entry window ends, the book calls Alpaca `GET /v1beta1/news` with the paper keys for that day's candidates, starting at the prior regular close. A successful snapshot is kept for fifteen minutes and then refreshed; each snapshot records the time it was available. Headlines and summaries are journaled as `news_context` and, when a name is adjudicated, as `news_fed` inside the Jev packet. A headline after the prior close and no later than the regular open that reads like a report marks `news=confirmed`. That flag does not authorize the trade. The Nasdaq calendar remains the schedule. Rate limits use the same GET retry as other broker reads. If news is down or unusable, the book journals `news_unavailable` and continues with `news=unavailable`.
+
+The entry window and the age of the minute bar are checked again after Jev returns, immediately before the order is reserved. A decision that finishes after minute 30, or on a stale bar, does not submit.
+
+A 0.5% daily loss blocks new entries for that broker session only. The event stays in the journal. The next session evaluates equity again. An operator flatten halt stays in force until the book is replaced.
+
+On restart, risk and notional caps may be tightened. A looser cap, or a change to the feed, universe, or any other setting, refuses startup. Existing reservations keep the order that was already journaled. The tightened caps are stored as `policy_tightened` and apply to later entries.
 
 ## Run
 

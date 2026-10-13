@@ -285,6 +285,61 @@ def test_promoted_rule_changes_actual_pilot_behavior(tmp_path):
     store.close()
 
 
+def test_nested_bracket_exit_reconciles_and_the_next_session_can_start(tmp_path):
+    """A filled parent whose exit lives only under legs must not block the next session."""
+    from athena_trading.paper.cloud import SessionTask, next_session
+
+    at = START
+    source = PaperJournal(tmp_path / (at.date().isoformat() + ".sqlite"))
+    source.append("binding", binding={"account_id": "paper-account", "policy": asdict(POLICY)})
+    order = {"client_order_id": "fixture-nested", "symbol": "AAPL", "side": "buy",
+             "limit_price": "100", "stop_loss": {"stop_price": "98"}}
+    receipt = {"accepted": True, "question_hash": canonical_hash(questions())}
+    source.append("adjudication", receipt=receipt)
+    source.append("entry_intent", session=at.date().isoformat(), at=at, order=order,
+                  verdict_hash=canonical_hash(receipt))
+    exit_order = {"id": "exit", "symbol": "AAPL", "side": "sell", "qty": "1", "filled_qty": "1",
+                  "filled_avg_price": "98", "status": "filled"}
+    canceled = {"id": "stop", "symbol": "AAPL", "side": "sell", "qty": "1", "filled_qty": "0",
+                "filled_avg_price": None, "status": "canceled"}
+    parent = {**order, "id": "parent", "qty": "1", "filled_qty": "1", "filled_avg_price": "100",
+              "status": "filled", "legs": [canceled, exit_order]}
+    source.append(
+        "flat_confirmed", parent=parent, order_history=[parent],
+        snapshot={"clock": {"timestamp": (at + timedelta(hours=1)).isoformat()},
+                  "positions": [], "orders": []},
+    )
+    now = at + timedelta(hours=2)
+    episode = outcome(source, now)
+    assert episode["eligible"] is True
+    assert episode["status"] == "CLOSED"
+    assert episode["gross_pnl"] == "-2"
+    assert episode["gross_r"] == -1.0
+    source.close()
+    maintain(tmp_path, now)
+    assert next_session(tmp_path, date(2026, 7, 2)) == SessionTask(tmp_path / "2026-07-02.sqlite")
+
+
+def test_fallback_entry_is_stored_and_excluded_from_the_study(tmp_path):
+    """An accepted receipt reused after the cutoff is kept and cannot open a study."""
+    store = LearningStore(tmp_path)
+    now = START
+    for index in range(20):
+        source, now = completed(tmp_path, index)
+        source.last("entry_intent")["fallback"] = True
+        episode = outcome(source, now)
+        assert episode["status"] == "CLOSED" and episode["eligible"] is False
+        assert source.last("adjudication")["receipt"]["accepted"] is True
+        store.ingest(source, now)
+        source.close()
+    stored = store.experiences()
+    assert len(stored) == 20 and all(item["eligible"] is False for item in stored)
+    report = store.review(night(now).date(), night(now))
+    assert report["episodes"]
+    assert not any(event["kind"] == "candidate" for event in store.journal.events)
+    store.close()
+
+
 def test_earnings_arm_cannot_train_or_fill_intraday_context(tmp_path):
     """Twenty losing earnings rows, even if marked eligible, stay out of the study."""
     store = LearningStore(tmp_path)

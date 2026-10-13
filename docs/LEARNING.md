@@ -6,7 +6,7 @@ Owner direction: Jev is the sole active model. Evaluate every trade, retain expe
 
 1. Strategy code builds a bounded candidate and computes its features. The runner retrieves prior experience and active validated rules for the same account, symbol, direction, policy and Jev question identity.
 2. Code enforces any applicable learned abstention rule. Otherwise Jev chooses TAKE_TRADE, NO_TRADE or INSUFFICIENT_EVIDENCE. Deterministic risk still authorizes the exact entry.
-3. Broker-confirmed flatness makes the episode eligible for outcome evaluation. Entry and exit quantities must balance, the reserved entry must be present, prices must be finite, and the decision receipt must match the reservation. Missing/unbalanced history blocks learning rather than fabricating a result.
+3. Broker-confirmed flatness makes the episode eligible for outcome evaluation. Entry and exit quantities must balance, the reserved entry must be present, prices must be finite, and the decision receipt must match the reservation. Nested bracket legs are part of that history. A repeated order id still blocks the outcome. Missing/unbalanced history blocks learning rather than fabricating a result.
 4. The experience store records gross realized paper P&L, return relative to planned stop risk, fill quantity, exit reason, decision receipt and source hashes. Sampled broker unrealized P&L supplies sampled MFE/MAE when available; it is not the complete market path. Fees/net P&L remain unmeasured. No-fill and partial-fill episodes are retained but excluded from rule training.
 5. Verified experiences become available to subsequent eligible decisions immediately, using their actual observation time. Retrieval includes up to five matching experiences. Intraday availability does not increase the pilot's one-entry-per-account/day limit.
 6. After **20:15 America/New_York** the supervisor reviews the day. This is after the usual 20:00 after-hours close and also conservatively later on early-close days. It uses timezone-aware conversion, catches up after downtime and defers promotions while exposure is unresolved. Overnight trading is not enabled.
@@ -18,7 +18,7 @@ This first study can learn only: **temporarily skip this account/symbol/directio
 
 | Stage | Fixed requirement |
 |---|---|
-| Eligible episode | One-share reconciled closed trade, matching current Jev question identity and policy, accepted decision bound to the entry. A journaled fallback entry is stored with the session and is not eligible, because its Jev receipt was not accepted |
+| Eligible episode | One-share reconciled closed trade, matching current Jev question identity and policy, accepted decision bound to the entry. A journaled fallback entry is stored and is not eligible, even when it reuses an earlier accepted receipt |
 | Discovery | First 20 eligible episodes in the cohort; one fixed look |
 | Candidate support | Mean gross return ≤ −0.1R and the 95% Wilson lower bound on the fraction of losing trades > 0.5 |
 | Prospective validation | First 20 additional eligible trades whose entries occur strictly after candidate registration |

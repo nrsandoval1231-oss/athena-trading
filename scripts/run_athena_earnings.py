@@ -11,7 +11,9 @@ from pathlib import Path
 
 from athena_trading.athena_adapter.jev import JEV_MODEL, JevDecisionEngine, request_json
 from athena_trading.execution.authority import parse_authority, require_paper
-from athena_trading.paper.earnings import EarningsBook, EarningsPolicy, load_universe, policy_from_environment
+from athena_trading.paper.earnings import (
+    EarningsBook, EarningsPolicy, load_universe, policy_from_environment, resolve_restart_policy,
+)
 from athena_trading.paper.journal import PaperJournal
 from athena_trading.paper.live import LivePaperAPI, transient_broker_failure
 
@@ -79,7 +81,11 @@ def main(argv: list[str] | None = None) -> int:
         journal = PaperJournal(args.journal)
         stored = journal.last("binding")
         if stored:
-            policy = EarningsPolicy(**stored["binding"]["policy"])
+            applied = EarningsPolicy(**stored["binding"]["policy"])
+            tightened = journal.last("policy_tightened")
+            if isinstance(tightened, dict) and isinstance(tightened.get("policy"), dict):
+                applied = EarningsPolicy(**tightened["policy"])
+            policy = resolve_restart_policy(applied, policy)
         jev = None
         model_probe = None
         if args.preflight:
@@ -105,6 +111,9 @@ def main(argv: list[str] | None = None) -> int:
                 "market_open": snapshot["clock"]["is_open"],
                 "positions": len(snapshot["positions"]), "open_orders": len(snapshot["orders"]),
                 "decision_model": JEV_MODEL, "universe": len(names), "feed": policy.feed,
+                "per_trade_risk": policy.per_trade_risk, "total_risk": policy.total_risk,
+                "max_notional_per_trade": policy.max_notional_per_trade,
+                "max_notional_total": policy.max_notional_total,
                 "orders_submitted": 0,
             }))
             return 0

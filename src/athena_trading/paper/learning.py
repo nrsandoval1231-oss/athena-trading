@@ -42,15 +42,43 @@ def decimal(value) -> Decimal:
     return result
 
 
+def _outcome_orders(history: Any) -> list[dict]:
+    """Top-level orders plus nested bracket legs. A repeated id is a conflict."""
+    if not isinstance(history, list) or len(history) >= 500:
+        raise ValueError("incomplete broker history")
+    ordered: list[dict] = []
+    seen: set[str] = set()
+
+    def visit(item: Any) -> None:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            raise ValueError("incomplete broker history")
+        identity = item["id"]
+        if identity in seen:
+            raise ValueError("duplicate broker order in outcome")
+        seen.add(identity)
+        ordered.append(item)
+        legs = item.get("legs")
+        if legs is None:
+            return
+        if not isinstance(legs, list):
+            raise ValueError("incomplete broker history")
+        for leg in legs:
+            visit(leg)
+
+    for item in history:
+        visit(item)
+    if len(ordered) >= 500:
+        raise ValueError("incomplete broker history")
+    return ordered
+
+
 def outcome(journal: PaperJournal, observed_at: datetime) -> dict | None:
     entry, flat = journal.last("entry_intent"), journal.last("flat_confirmed")
     if not entry or not flat:
         return None
     binding = journal.last("binding")["binding"]
     order = entry["order"]
-    history = flat["order_history"]
-    if not isinstance(history, list) or len(history) >= 500:
-        raise ValueError("incomplete broker history")
+    history = _outcome_orders(flat["order_history"])
     seen, fills = set(), []
     for item in history:
         if item["id"] in seen:
@@ -99,8 +127,11 @@ def outcome(journal: PaperJournal, observed_at: datetime) -> dict | None:
     direction = "LONG" if order["side"] == "buy" else "SHORT"
     cohort = canonical_hash({"account": binding["account_id"], "symbol": order["symbol"],
                              "direction": direction, "policy": policy, "questions": question_hash})
+    # A fallback reuses an earlier acceptance after the cutoff. It is stored and
+    # kept out of this study, including when that earlier receipt was accepted.
     eligible = (entered == 1 and risk > 0 and policy.get("actor_model") == JEV_MODEL
-                and receipt.get("accepted") is True and question_hash == canonical_hash(questions()))
+                and receipt.get("accepted") is True and not entry.get("fallback")
+                and question_hash == canonical_hash(questions()))
     sampled = [decimal(p["unrealized_pl"]) for event in journal.events
                if event["kind"] == "broker_observation"
                for p in event["snapshot"]["positions"]
