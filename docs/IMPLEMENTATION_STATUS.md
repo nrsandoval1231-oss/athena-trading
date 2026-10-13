@@ -15,7 +15,7 @@ bash -n deploy/install.sh           # clean
 git diff --check                    # clean
 ```
 
-Root pytest does not include Astra Desk; that suite lives in its own repository. Tested revision: `PENDING_COMMIT`.
+Root pytest does not include Astra Desk; that suite lives in its own repository. Tested revision: `741cb46db3c7a22187c60c6eda53f6f64ee7f392`. This sentence is a docs-only follow-up; the earnings book, the intraday ownership change, and the checks above are that commit.
 
 ## Transient paper reads — 13 October 2026
 
