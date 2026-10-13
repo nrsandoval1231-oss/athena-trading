@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import math
 import os
+import random
 import re
+import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -36,6 +38,9 @@ NY = ZoneInfo("America/New_York")
 TERMINAL = {"filled", "canceled", "expired", "rejected", "replaced"}
 # Alpaca keeps a bracket stop leg in status "held". status=open omits that leg.
 PROTECTIVE_STOP_STATUSES = frozenset({"held", "new", "accepted", "pending_new"})
+# One attempt plus two retries. Order POSTs are not retried.
+BROKER_GET_ATTEMPTS = 3
+BROKER_GET_BACKOFF_SECONDS = (0.25, 0.75)
 
 
 class DataDeferral(Exception):
@@ -51,6 +56,38 @@ def timestamp(value: str) -> datetime:
     if result.tzinfo is None or result.utcoffset() is None:
         raise ValueError("timestamp must include a timezone")
     return result.astimezone(UTC)
+
+
+def transient_broker_failure(exc: BaseException) -> bool:
+    """Timeouts, HTTP 429, and 5xx are worth another read. Other errors are not."""
+    if not isinstance(exc, ModelError):
+        return False
+    status = getattr(exc, "status", None)
+    if status == 429 or (isinstance(status, int) and 500 <= status <= 599):
+        return True
+    return str(exc) == "request failed: TimeoutError"
+
+
+def _get_backoff(failed_attempt: int) -> float:
+    base = BROKER_GET_BACKOFF_SECONDS[min(failed_attempt, len(BROKER_GET_BACKOFF_SECONDS) - 1)]
+    return base + random.uniform(0, 0.25)
+
+
+def bracket_exit_reason(parent: dict[str, Any], entry_side: str) -> str | None:
+    """Name a filled take-profit or stop. Anything else is not a planned bracket exit."""
+    legs = parent.get("legs") or []
+    if not isinstance(legs, list):
+        return None
+    for leg in legs:
+        if not isinstance(leg, dict) or leg.get("status") != "filled":
+            continue
+        if leg.get("side") not in {"buy", "sell"} or leg.get("side") == entry_side:
+            continue
+        if leg.get("type") in {"stop", "stop_limit"}:
+            return "STOP_FILLED"
+        if leg.get("type") == "limit":
+            return "TAKE_PROFIT_FILLED"
+    return None
 
 
 def number(value: Any, *, positive: bool = False) -> float:
@@ -258,8 +295,21 @@ class LivePaperAPI(AlpacaPaperBroker):
         super().__init__(api_key, api_secret)
         self.http = transport
 
+    def _broker_http(self, method: str, url: str, payload: Any = None) -> Any:
+        """Retry broker reads. Order submits and cancels are a single attempt."""
+        if method != "GET":
+            return self.http(method, url, self._headers(), payload, timeout=5)
+        for attempt in range(BROKER_GET_ATTEMPTS):
+            try:
+                return self.http("GET", url, self._headers(), None, timeout=5)
+            except ModelError as exc:
+                if attempt + 1 >= BROKER_GET_ATTEMPTS or not transient_broker_failure(exc):
+                    raise
+                time.sleep(_get_backoff(attempt))
+        raise RuntimeError("broker GET retry loop ended without a result")
+
     def call(self, method: str, path: str, payload: Any = None) -> Any:
-        return self.http(method, PAPER_API_BASE + path, self._headers(), payload, timeout=5)
+        return self._broker_http(method, PAPER_API_BASE + path, payload)
 
     def bars(self, symbol: str, start: datetime, end: datetime, timeframe: str, feed: str):
         params = {
@@ -269,9 +319,8 @@ class LivePaperAPI(AlpacaPaperBroker):
         }
         result, tokens = [], set()
         for _ in range(20):
-            raw = self.http(
+            raw = self._broker_http(
                 "GET", "https://data.alpaca.markets/v2/stocks/bars?" + urlencode(params),
-                self._headers(), timeout=5,
             )
             result.extend(raw["bars"].get(symbol, []))
             token = raw.get("next_page_token")
@@ -474,6 +523,17 @@ class ActivePaperPilot:
         combined = [*orders, *extras] if isinstance(orders, list) else orders
         return working_orders(combined)
 
+    def _delete_order(self, order_id: str) -> None:
+        """Cancel one order. A finished or already-canceled leg is not a flatten failure."""
+        try:
+            self.broker.call("DELETE", "/v2/orders/" + order_id)
+        except ModelError as exc:
+            if getattr(exc, "status", None) not in {404, 422}:
+                raise
+            self.journal.append("cancel_already_finished", order_id=order_id, status=exc.status)
+            return
+        self.journal.append("cancel_requested", order_id=order_id)
+
     def flatten_step(self, snapshot: dict[str, Any]) -> bool:
         """Halt first; cancel entry/exit reservations, then close confirmed exposure."""
         self._bind(snapshot)
@@ -502,8 +562,7 @@ class ActivePaperPilot:
                 close_ids.add(candidates[0]["id"])
         cancelable = cancel_targets(working, close_ids)
         for order in cancelable:
-            self.broker.call("DELETE", "/v2/orders/" + order["id"])
-            self.journal.append("cancel_requested", order_id=order["id"])
+            self._delete_order(order["id"])
         if cancelable or any(o["id"] in close_ids for o in working):
             self._flat_observations = 0
             return False  # cancellation/close acknowledgement is not a fill
@@ -524,14 +583,14 @@ class ActivePaperPilot:
         if parent is None:
             return self._missing_reserved_order(snapshot) == "ENTRY_NOT_CREATED"
         if parent["status"] not in TERMINAL:
-            self.broker.call("DELETE", "/v2/orders/" + parent["id"])
+            self._delete_order(parent["id"])
             return False
         self._flat_observations += 1
         if self._flat_observations < 2:
             return False
         history = self.broker.call("GET", "/v2/orders?" + urlencode({
             "status": "all", "after": (timestamp(self._entry()["at"]) - timedelta(seconds=5)).isoformat(),
-            "limit": 500, "direction": "asc", "nested": "false",
+            "limit": 500, "direction": "asc", "nested": "true",
         }))
         if not isinstance(history, list) or len(history) >= 500:
             raise ValueError("terminal broker order history is incomplete")
@@ -767,6 +826,9 @@ class ActivePaperPilot:
                 if any(p["symbol"] != self.policy.symbol for p in positions):
                     raise ValueError("unowned position encountered")
                 if not positions:
+                    exit_reason = bracket_exit_reason(parent, entry["order"]["side"])
+                    if exit_reason is not None and not self.journal.last("bracket_exit"):
+                        self.journal.append("bracket_exit", reason=exit_reason, at=datetime.now(UTC))
                     self.halt("POSITION_EXITED")
                 else:
                     position = positions[0]
