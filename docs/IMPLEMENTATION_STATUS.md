@@ -1,5 +1,20 @@
 # Implementation status
 
+## Transient paper reads — 13 October 2026
+
+Broker GET calls, including minute bars, retry twice with backoff and jitter after a timeout, HTTP 429, or a 5xx response. Order POSTs are not retried. A single transient tick failure no longer flattens an open paper trade. The runner halts `RUNNER_ERROR` only after 3 consecutive transient failures or 60 seconds. A DELETE that returns 404 or 422 for an already finished or canceled leg is a successful cancel. A take-profit or stop fill still halts `POSITION_EXITED` and is also journaled as `TAKE_PROFIT_FILLED` or `STOP_FILLED`. Flat confirmation reads order history with `nested=true`. `parse_authority("LIVE")` still raises. **LIVE remains rejected.** This is not a broker fill and not evidence of trading performance.
+
+Observed local checks, Python 3.12. The baseline on `main` `46c0754016c62ab8f381b52b9862298fc119316e` was 716 passed and 0 failed. No pre-existing failures were present. This change adds 14 tests.
+
+```bash
+python -m pytest -q                 # 730 passed in 4.73s
+python -m ruff check .              # clean, ruff 0.15.8
+bash -n deploy/install.sh           # clean
+git diff --check                    # clean
+```
+
+Root pytest does not include Astra Desk; that suite lives in its own repository. Tested revision: `59e8fff6333858f7f7940c3d54f512445cb8b4ae`. This sentence is a docs-only follow-up; the runner, tests, and the checks above are that commit.
+
 ## Held bracket stop — 13 October 2026
 
 On 13 October 2026 the first filled bracket was flattened about five seconds after the fill with halt `PROTECTION_MISSING`. Alpaca keeps the bracket stop leg in status `held`, and `GET /v2/orders?status=open&nested=false` does not return that leg. The post-fill check treated the missing row as no protection and `flatten_step` canceled and market-closed the position.

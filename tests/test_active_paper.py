@@ -7,7 +7,7 @@ import sqlite3
 from dataclasses import asdict
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 import pytest
 
@@ -517,6 +517,83 @@ def test_no_duplicate_on_next_tick_after_complete(setup):
     assert sum(m == "POST" for m, _, _ in broker.calls) == 1
 
 
+@pytest.mark.parametrize("status_code", [404, 422])
+def test_finished_leg_delete_is_success_during_flatten(setup, status_code):
+    pilot, broker, _, journal = setup
+    pilot.tick()
+    broker.state["orders"] = [{
+        "id": "stop-leg", "symbol": "AAPL", "type": "stop", "side": "sell",
+        "qty": "1", "filled_qty": "0", "status": "held", "stop_price": "99",
+    }]
+    broker.state["clock"]["timestamp"] = NOW.replace(hour=19, minute=46).isoformat()
+    original = broker.call
+
+    def call(method, path, payload=None):
+        if method == "DELETE" and path.endswith("/stop-leg"):
+            raise ModelError(f"HTTP {status_code}", status=status_code)
+        return original(method, path, payload)
+
+    broker.call = call
+    assert pilot.tick() == "FLATTENING"
+    assert journal.last("halt")["reason"] == "SESSION_CLOSE"
+    finished = journal.last("cancel_already_finished")
+    assert finished["order_id"] == "stop-leg" and finished["status"] == status_code
+    assert not journal.last("flat_confirmed")
+
+
+def test_delete_server_error_still_fails_flatten(setup):
+    pilot, broker, _, journal = setup
+    pilot.tick()
+    broker.state["orders"] = [{
+        "id": "stop-leg", "symbol": "AAPL", "type": "stop", "side": "sell",
+        "qty": "1", "filled_qty": "0", "status": "new", "stop_price": "99",
+    }]
+    broker.state["clock"]["timestamp"] = NOW.replace(hour=19, minute=46).isoformat()
+    original = broker.call
+
+    def call(method, path, payload=None):
+        if method == "DELETE":
+            raise ModelError("HTTP 500", status=500)
+        return original(method, path, payload)
+
+    broker.call = call
+    with pytest.raises(ModelError):
+        pilot.tick()
+    assert journal.last("cancel_already_finished") is None
+    assert journal.last("halt")["reason"] == "SESSION_CLOSE"
+
+
+@pytest.mark.parametrize("leg_type,expected", [
+    ("limit", "TAKE_PROFIT_FILLED"),
+    ("stop", "STOP_FILLED"),
+])
+def test_bracket_fill_keeps_position_exited_and_journals_the_leg(setup, leg_type, expected):
+    pilot, broker, _, journal = setup
+    pilot.tick()
+    _fill_bracket(broker)
+    broker.state["positions"] = []
+    for leg in broker.parent["legs"]:
+        if leg["type"] == leg_type:
+            leg.update(status="filled", filled_qty="1")
+        else:
+            leg.update(status="canceled")
+    assert pilot.tick() == "FLATTENING"
+    assert journal.last("halt")["reason"] == "POSITION_EXITED"
+    assert journal.last("bracket_exit")["reason"] == expected
+
+
+def test_flat_confirmation_reads_nested_order_history(setup):
+    pilot, broker, _, journal = setup
+    pilot.tick()
+    broker.parent.update(status="canceled")
+    broker.state["orders"] = []
+    assert pilot.tick() == "FLATTENING"
+    assert pilot.tick() == "COMPLETE"
+    history = [path for _method, path, _payload in broker.calls if "nested=" in path]
+    assert history and "nested=true" in history[-1]
+    assert isinstance(journal.last("flat_confirmed")["order_history"], list)
+
+
 @pytest.mark.parametrize("choice,confidence,accepted", [
     ("TAKE_TRADE", .9, True), ("TAKE_TRADE", .1, False),
     ("INSUFFICIENT_EVIDENCE", .9, False), ("NO_TRADE", .9, False),
@@ -703,6 +780,76 @@ def test_broker_requests_pinned_endpoints_and_paginates_data():
     assert len(broker.bars("AAPL", OPEN, NOW, "1Min", "iex")) == 2
     assert calls[0] == "https://paper-api.alpaca.markets/v2/orders"
     assert "feed=iex" in calls[1] and "page_token=page2" in calls[2]
+
+
+def test_broker_reads_retry_transient_failures_and_posts_do_not(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr("athena_trading.paper.live.time.sleep", lambda delay: sleeps.append(delay))
+    calls = []
+
+    def transport(method, url, headers, payload=None, **kwargs):
+        calls.append((method, url))
+        if method == "POST":
+            raise ModelError("HTTP 503", status=503)
+        if sum(item[0] == "GET" for item in calls) < 3:
+            raise ModelError("HTTP 429", status=429)
+        return {"ok": True}
+
+    broker = LivePaperAPI("key", "secret", transport=transport)
+    with pytest.raises(ModelError) as post_error:
+        broker.call("POST", "/v2/orders", {"symbol": "AAPL", "qty": "1"})
+    assert post_error.value.status == 503
+    assert [method for method, _ in calls] == ["POST"]
+    assert broker.call("GET", "/v2/clock") == {"ok": True}
+    assert [method for method, _ in calls] == ["POST", "GET", "GET", "GET"]
+    assert len(sleeps) == 2
+    assert all(0.25 <= delay <= 1.0 for delay in sleeps)
+
+
+@pytest.mark.parametrize("failure", [
+    ModelError("request failed: TimeoutError"),
+    ModelError("HTTP 500", status=500),
+])
+def test_broker_get_retries_timeouts_and_server_errors(monkeypatch, failure):
+    monkeypatch.setattr("athena_trading.paper.live.time.sleep", lambda *_args: None)
+    calls = {"n": 0}
+
+    def transport(method, url, headers, payload=None, **kwargs):
+        assert method == "GET" and kwargs.get("timeout") == 5
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise failure
+        return {"bars": {"AAPL": [{"t": "one"}]}}
+
+    broker = LivePaperAPI("key", "secret", transport=transport)
+    assert broker.bars("AAPL", OPEN, NOW, "1Min", "iex") == [{"t": "one"}]
+    assert calls["n"] == 2
+
+
+def test_broker_get_does_not_retry_a_client_error(monkeypatch):
+    monkeypatch.setattr("athena_trading.paper.live.time.sleep", lambda *_args: None)
+    calls = []
+
+    def transport(method, url, headers, payload=None, **kwargs):
+        calls.append(method)
+        raise ModelError("HTTP 400", status=400)
+
+    broker = LivePaperAPI("key", "secret", transport=transport)
+    with pytest.raises(ModelError):
+        broker.call("GET", "/v2/account")
+    assert calls == ["GET"]
+
+
+def test_request_json_names_a_timeout(monkeypatch):
+    class Opener:
+        def open(self, request, timeout):
+            raise URLError(TimeoutError("timed out"))
+
+    monkeypatch.setattr("athena_trading.athena_adapter.jev.build_opener", lambda *_args: Opener())
+    with pytest.raises(ModelError) as error:
+        request_json("GET", "https://paper-api.alpaca.markets/v2/clock", {})
+    assert str(error.value) == "request failed: TimeoutError"
+    assert error.value.status is None
 
 
 def test_http_errors_never_echo_provider_body_or_secret(monkeypatch):
@@ -937,6 +1084,115 @@ def test_failure_after_reservation_halts_and_does_not_resubmit(tmp_path, monkeyp
     assert "POST" not in calls
     task = cloud.next_session(tmp_path, day)
     assert task.recovery and task.path == journal_path
+
+
+def test_one_transient_tick_does_not_halt_or_flatten_an_open_trade(tmp_path, monkeypatch, capsys):
+    script = _runner()
+    day = date(2026, 9, 24)
+    journal_path = tmp_path / f"{day.isoformat()}.sqlite"
+    journal = PaperJournal(journal_path)
+    journal.append("binding", binding={"account_id": "paper-account", "policy": asdict(POLICY)})
+    journal.append("entry_intent", session=day.isoformat(), order={
+        "client_order_id": "athp-open", "symbol": "AAPL", "side": "buy", "qty": "1",
+    })
+    journal.close()
+    flatten_halts = []
+
+    class Broker:
+        def snapshot(self):
+            return {"positions": [{"symbol": "AAPL", "qty": "1"}], "orders": [],
+                    "account": {"id": "paper-account"},
+                    "clock": {"timestamp": NOW.isoformat(), "is_open": True,
+                              "next_close": NOW.replace(hour=20).isoformat()}}
+
+        def call(self, method, path, payload=None):
+            raise ModelError("HTTP 404", status=404)
+
+    ticks = {"n": 0}
+
+    def tick(self):
+        ticks["n"] += 1
+        if ticks["n"] == 1:
+            raise ModelError("request failed: TimeoutError")
+        raise SystemExit
+
+    def flatten_step(self, snapshot):
+        flatten_halts.append(None if self.journal.last("halt") is None else self.journal.last("halt")["reason"])
+        return True
+
+    monkeypatch.setenv("ALPACA_API_KEY", "paper-key")
+    monkeypatch.setenv("ALPACA_API_SECRET", "paper-secret")
+    monkeypatch.setenv("TYPESAFE_API_KEY", "model-key")
+    monkeypatch.setattr(script.LivePaperAPI, "from_env", lambda: Broker())
+    monkeypatch.setattr(script.ActivePaperPilot, "tick", tick)
+    monkeypatch.setattr(script.ActivePaperPilot, "flatten_step", flatten_step)
+    monkeypatch.setattr(script.time, "sleep", lambda *_args: None)
+    with pytest.raises(SystemExit):
+        script.main([
+            "--symbol", "AAPL", "--authority", "PAPER", "--journal", str(journal_path), "--run",
+        ])
+    assert ticks["n"] == 2
+    assert "TRANSIENT_TICK" in capsys.readouterr().err
+    # Shutdown cleanup may run after the process is already leaving. The blip did not halt.
+    assert flatten_halts == [None]
+    journal = PaperJournal(journal_path)
+    try:
+        assert journal.last("halt") is None
+    finally:
+        journal.close()
+
+
+@pytest.mark.parametrize("step", [1.0, 61.0])
+def test_open_trade_halts_after_three_transient_ticks_or_the_time_budget(
+    tmp_path, monkeypatch, step,
+):
+    script = _runner()
+    day = date(2026, 9, 24)
+    journal_path = tmp_path / f"{day.isoformat()}.sqlite"
+    journal = PaperJournal(journal_path)
+    journal.append("binding", binding={"account_id": "paper-account", "policy": asdict(POLICY)})
+    journal.append("entry_intent", session=day.isoformat(), order={
+        "client_order_id": "athp-open", "symbol": "AAPL", "side": "buy", "qty": "1",
+    })
+    journal.close()
+    ticks = {"n": 0}
+
+    class Broker:
+        def snapshot(self):
+            return {"positions": [{"symbol": "AAPL", "qty": "1"}], "orders": [],
+                    "account": {"id": "paper-account"},
+                    "clock": {"timestamp": NOW.isoformat(), "is_open": True,
+                              "next_close": NOW.replace(hour=20).isoformat()}}
+
+        def call(self, method, path, payload=None):
+            raise ModelError("HTTP 404", status=404)
+
+    def tick(self):
+        ticks["n"] += 1
+        raise ModelError("HTTP 503", status=503)
+
+    clock = {"now": 0.0}
+
+    def monotonic():
+        clock["now"] += step
+        return clock["now"]
+
+    monkeypatch.setenv("ALPACA_API_KEY", "paper-key")
+    monkeypatch.setenv("ALPACA_API_SECRET", "paper-secret")
+    monkeypatch.setenv("TYPESAFE_API_KEY", "model-key")
+    monkeypatch.setattr(script.LivePaperAPI, "from_env", lambda: Broker())
+    monkeypatch.setattr(script.ActivePaperPilot, "tick", tick)
+    monkeypatch.setattr(script.time, "sleep", lambda *_args: None)
+    monkeypatch.setattr(script.time, "monotonic", monotonic)
+    assert script.main([
+        "--symbol", "AAPL", "--authority", "PAPER", "--journal", str(journal_path), "--run",
+    ]) == 2
+    journal = PaperJournal(journal_path)
+    try:
+        assert journal.last("halt")["reason"] == "RUNNER_ERROR"
+    finally:
+        journal.close()
+    assert ticks["n"] == (2 if step >= script.TRANSIENT_TICK_BUDGET_SECONDS else script.TRANSIENT_TICK_LIMIT)
 
 
 def test_jev_thresholds_default_and_read_environment(monkeypatch, tmp_path):

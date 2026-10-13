@@ -16,7 +16,12 @@ from athena_trading.paper.journal import PaperJournal
 from athena_trading.paper.learning import LearningStore
 from athena_trading.paper.live import (
     ActivePaperPilot, LivePaperAPI, PilotPolicy, policy_from_environment,
+    transient_broker_failure,
 )
+
+
+TRANSIENT_TICK_LIMIT = 3
+TRANSIENT_TICK_BUDGET_SECONDS = 60.0
 
 
 def _halt_for_failure(pilot: ActivePaperPilot, broker: LivePaperAPI) -> bool:
@@ -31,6 +36,29 @@ def _halt_for_failure(pilot: ActivePaperPilot, broker: LivePaperAPI) -> bool:
     except Exception:
         return False
     return bool(snapshot.get("positions") or snapshot.get("orders"))
+
+
+def _continue_after_transient(
+    pilot: ActivePaperPilot | None, broker: LivePaperAPI, exc: BaseException,
+    state: dict[str, float | int | None],
+) -> bool:
+    """Keep an open paper trade through a short run of read failures.
+
+    One timeout is not a reason to flatten. Halt only after three consecutive
+    transient ticks or 60 seconds, whichever comes first.
+    """
+    if pilot is None or not transient_broker_failure(exc):
+        return False
+    if not _halt_for_failure(pilot, broker):
+        return False
+    count = int(state.get("count") or 0) + 1
+    now = time.monotonic()
+    started = state.get("started")
+    if started is None:
+        started = now
+    state["count"] = count
+    state["started"] = started
+    return count < TRANSIENT_TICK_LIMIT and (now - float(started)) < TRANSIENT_TICK_BUDGET_SECONDS
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -95,13 +123,30 @@ def main(argv: list[str] | None = None) -> int:
         signal.signal(signal.SIGTERM, stop_requested)
         signal.signal(signal.SIGINT, stop_requested)
         previous_status = None
+        transient_ticks: dict[str, float | int | None] = {"count": 0, "started": None}
         while not stopped:
-            status = pilot.tick()
+            try:
+                status = pilot.tick()
+            except Exception as exc:
+                if _continue_after_transient(pilot, broker, exc, transient_ticks):
+                    print(json.dumps({
+                        "mode": "PAPER", "status": "TRANSIENT_TICK",
+                        "error_type": type(exc).__name__, "error": str(exc)[:250],
+                        "attempt": transient_ticks["count"],
+                    }), file=sys.stderr, flush=True)
+                    time.sleep(5)
+                    continue
+                raise
+            transient_ticks["count"] = 0
+            transient_ticks["started"] = None
             if status != previous_status:
                 report = {"mode": "PAPER", "status": status}
                 halt = journal.last("halt")
                 if halt is not None:
                     report["halt_reason"] = halt["reason"]
+                exit_event = journal.last("bracket_exit")
+                if exit_event is not None:
+                    report["exit_reason"] = exit_event["reason"]
                 print(json.dumps(report), flush=True)
                 previous_status = status
             if status in {"COMPLETE", "ENTRY_NOT_CREATED"}:

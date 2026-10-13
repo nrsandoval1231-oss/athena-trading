@@ -66,6 +66,9 @@ def request_json(
     except HTTPError as exc:
         raise ModelError(f"HTTP {exc.code}", status=exc.code) from None
     except (URLError, OSError, UnicodeError, ValueError) as exc:
+        reason = getattr(exc, "reason", None)
+        if isinstance(exc, TimeoutError) or isinstance(reason, TimeoutError):
+            raise ModelError("request failed: TimeoutError") from None
         raise ModelError(f"request failed: {type(exc).__name__}") from None
 
 
