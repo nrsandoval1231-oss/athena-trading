@@ -10,7 +10,8 @@ Read, in order:
 ## Architecture rules
 
 - Build Earnings Adaptive and Athena Predictive Intraday on one shared decision/context/risk/execution/APDE/outcome workflow.
-- Strategy code forms bounded candidates; TypeSafe Jev is the sole active decision model; deterministic risk authorizes execution; broker events establish observed state. Model failures may block new exposure but must not block protective exits.
+- The owner-approved target is Astra 6 as the generative LLM, TypeSafe Jev as the bounded judge, and deterministic code as final authority. Astra 6 interprets source-linked evidence and proposes structured theses/plans; Jev receives the underlying evidence plus proposal, and can abstain. Code owns calculations, validated forecasts, freshness, sizing, shared portfolio risk, execution and APDE transition enforcement. Critical protection and exits must not wait for either model. See docs/HYBRID_MODEL_CONTRACT.md.
+- Astra 6 is the owner-selected model name; its provider deployment/API model ID, access and SDK support are unverified. Resolve those explicitly before implementation. Never guess an identifier or silently substitute another model. The main runtime is still Jev-only; the hybrid is not implemented by a documentation change.
 - ORB-M is an intraday component and baseline. AAT-V1/V2 and Astra Desk are research references, not competing product architectures.
 - Athena Core remains domain-neutral. Reuse its contracts through athena_adapter; do not create a second Core or generic orchestration framework here.
 - Preserve the canonical APDE states: EXPLORE, PROTECT, HARVEST, DEFEND, EXIT.
@@ -27,7 +28,9 @@ Read, in order:
 - Current execution authority remains PAPER/ABSENT. Existing spend and external-action boundaries still apply.
 - Nick explicitly requested active live-data paper trading, with no mandatory shadow stage. Follow the bounded pilot policy and LIVE_PAPER.md. This is permission for paper operation, not real-money LIVE authority or a frozen research rerun.
 
-- Nick selected cloud operation independent of his PC. Extend the existing paper runner through CLOUD_DEPLOYMENT.md; Jev is the only active model; do not restore Terra/Ollama to the paper path. Keep the persistent session journals and recover unfinished exposure before daily rollover.
+- Nick selected cloud operation independent of his PC. Extend the existing paper runner through CLOUD_DEPLOYMENT.md toward the Astra 6 + Jev target; keep the current Jev-only operational instructions distinct from future integration. Do not restore historical Terra/Ollama paths or create a second runtime. Keep persistent journals and recover unfinished exposure before daily rollover.
+- Aggressive operation means capturing valid opportunities and adapting winner management inside existing risk limits. It does not authorize larger caps, looser stops, more leverage, overnight exposure, or LIVE. Resolve the diagram's pre-close-flat policy versus PR #29's proposed multiday earnings holds with Nick before adopting that hold policy.
+- Source facts, deterministic values, validated forecast outputs and model hypotheses must remain distinct. Stale, malformed or unavailable model results cannot authorize new exposure. Model agreement is not independent proof; neither model's confidence is a probability of profit.
 
 - Every reconciled paper trade enters the trading experience store. Nightly review runs after 20:15 America/New_York. Follow docs/LEARNING.md: facts become available intraday; risk-reducing rules require prospective validation. Never promise improvement from every trade or reuse frozen research outcomes as fresh paper evidence.
 
@@ -35,7 +38,7 @@ Read, in order:
 
 - Keep fixtures/simulation separate from actual provider or broker evidence.
 - Test changed behavior with meaningful cases and run the relevant existing suite.
-- Root pytest excludes research/astra-desk/tests. Report that boundary; follow IMPLEMENTATION_STATUS.md for the separate suite.
+- Root pytest covers this repository's tests only. Astra Desk was extracted to its own repository; do not imply this gate runs its independent suite. Follow IMPLEMENTATION_STATUS.md for dated evidence.
 - Report existing gate failures separately from regressions. Do not relabel a partial test pass as a clean repository.
 - Update IMPLEMENTATION_STATUS.md with the tested commit, commands, observed results, and remaining limitations.
 - Use one clear PR explaining the problem, resulting behavior, verification, and material limits.

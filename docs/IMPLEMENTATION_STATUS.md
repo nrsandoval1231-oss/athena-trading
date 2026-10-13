@@ -1,25 +1,45 @@
 # Implementation status
 
+## Current architecture and implementation — 13 October 2026
+
+**Target approved by Nick:** Astra 6 is the generative LLM for source-linked interpretation and structured theses/scenarios/plans; Jev is the bounded judge of underlying evidence plus proposal; deterministic code owns numbers, validated forecasts, freshness, sizing, shared portfolio risk, execution and APDE transitions. Critical protection and exits must not wait for either model. This supersedes Jev-only product direction, not the evidence of what earlier revisions implemented. See [canon v4.0](ATHENA_TRADING_CANON.md), [hybrid contract and diagram acceptance map](HYBRID_MODEL_CONTRACT.md) and [build plan](BUILD_PLAN.md).
+
+**What this branch implements:** the intraday path is still the Jev-only ORB paper runner from main `5708946616afb675d1c78138990d8fa46057b6d5`. The earnings book below is a second Jev-only PAPER book. Astra 6 is not integrated. Its provider deployment, API model ID, account access and interface are unverified, and no substitute or deployment identifier is selected. This branch does not deploy, change credentials, or grant LIVE authority.
+
+| Capability | Verified repository scope / remaining work |
+|---|---|
+| Main entry path | Narrow ORB candidate → Jev-only judgment → deterministic pilot risk → Alpaca paper bracket/recovery; Astra 6 and hybrid entry are not implemented |
+| Operational evidence | The 13 October held-bracket incident below records a first filled bracket and protective flatten. Earlier no-traded-session statements are historical. Current deployed host SHA, health and exposure were not checked by this repair |
+| Earnings | This open PR implements a narrow Jev-only paper book, not source intelligence or thesis/scenario generation. Lifecycle repair `5baae398e05c5a31b956280a002641694a4a4052` is described in the next section. It is not merged and not deployed |
+| Holding policy | Current product guardrail is pre-close flat and no overnight exposure. The earnings book still uses a three-session default hold (five-session ceiling). That conflict is unresolved. This repair does not authorize the hold |
+| Forecasting / APDE / portfolio risk | Comprehensive validated forecasts, full shared EXPLORE/PROTECT/HARVEST/DEFEND/EXIT management, hybrid management and complete cross-arm portfolio controls remain incomplete |
+| Learning / Core | Current trading-specific outcome store, retrieval and prospective temporary veto study exist; general Core context/replay/validation/knowledge integration and measured performance improvement are not established |
+| Authority | PAPER/ABSENT only; LIVE remains rejected. Aggressive valid opportunity capture and adaptive winners do not raise risk caps or grant overnight permission |
+
 ## Earnings Adaptive paper book — 13 October 2026
 
 The earnings arm is a second PAPER book. It reads a free Nasdaq earnings calendar and an operator copy of the screener's `universe_75.txt`. It submits a GTC bracket only when the live gap is inside the screener's 4–12% band, Jev accepts it on the same floors as the intraday arm, and the dollar caps allow the share count. `parse_authority("LIVE")` still raises. Client order ids start with `athe-`. The book file is separate from the dated intraday journals. A restart reconciles those ids and does not resubmit them. SIGTERM does not flatten. The intraday runner ignores `athe-` orders and symbols in the earnings ledger, and it still refuses any other foreign symbol.
 
 The calendar has no SLA, no surprise or guidance fields, and skips `time-not-supplied`. Options, multi-leg orders, Kelly sizing, and PROTECT/HARVEST/DEFEND ratchets are not in this slice. On `--run`, the TypeSafe model list is probed only when the book is about to seek a new entry. A restart still reconciles open brackets, replaces a missing stop, and exits at max hold while that probe is failing; the failure is journaled `JEV_UNAVAILABLE` and blocks new entries. `--preflight` still probes Jev and reports `decision_model`.
 
-Closed earnings trades are copied into the shared learning store with `arm=earnings`, including fill quantity, gross P&L when entry and exit cashflows balance, the decision receipt, and source hashes. They are not eligible for the intraday negative-experience study, and that study's context, discovery, and validation ignore the earnings arm. Alpaca news headlines since the prior close are journaled and passed into the earnings Jev packet. A successful snapshot is reused for fifteen minutes and then refreshed through the entry window. A failed or rate-limited news read does not stop the book.
+Closed earnings trades are copied into the shared learning store with `arm=earnings`, including fill quantity, gross P&L when entry and exit cashflows balance, the decision receipt, and source hashes. They are not eligible for the intraday negative-experience study, and that study's context, discovery, and validation ignore the earnings arm. Alpaca news headlines since the prior close are journaled and passed into the earnings Jev packet. A successful snapshot is reused for fifteen minutes and then refreshed through the entry window. A failed or rate-limited news read does not stop the book. An outcome whose close fill is still the zero-quantity acknowledgement is not stored; the book retries when the terminal fill reconciles. A 19-share entry at $104 closed at $106 is $38 gross.
 
-A partial take-profit stays under management: the open quantity must match entry fills minus opposite-side fills, and a quantity the legs cannot explain still halts. A broker close id already stored in `close_ack` is waited on. It is not treated as an unowned order and it is not sent again. A tighter risk or notional cap is stored as `policy_tightened` and used for later entries; a looser cap or any other configuration change refuses startup. The entry window, market state, bar age, and risk are checked again after Jev returns, so a late answer does not submit. A daily-loss halt blocks only the session that recorded it. An operator halt and a position-mismatch halt stay in force. News snapshots refresh every fifteen minutes through the entry window and keep source and availability time. A gap outside the band is reconsidered on a later completed bar; asset, short, and intraday-symbol exclusions stay for the session, and a name is adjudicated once. A preview, a future report, or a negation is not `news=confirmed`. Earnings MFE/MAE uses samples from that trade's entry through the observation time. Nested bracket legs are part of an intraday outcome, and a repeated order id still blocks it. A fallback entry is stored and is not eligible for the intraday study. Nothing here was deployed, and nothing here is a broker fill or a performance result. **LIVE remains rejected.**
+A partial take-profit stays under management: the open quantity must match entry fills minus opposite-side fills, and a quantity the legs cannot explain still halts. A broker close id already stored in `close_ack` is waited on. A lost close response is reconciled only when one market close on that symbol matches the durable intent. It is not duplicated, canceled, or replaced by an unrelated order, and that uncertainty does not stop protection of another symbol. A tighter risk or notional cap is stored as `policy_tightened` and used for later entries; a looser cap or any other configuration change refuses startup. The entry window, market state, bar age, and risk are checked again after Jev returns, so a late answer does not submit. A daily-loss halt blocks only the session that recorded it. `--flatten-owned` records an operator halt even when an older daily-loss halt is already in the journal, and that halt still blocks a new entry after restart and session rollover. News snapshots refresh every fifteen minutes through the entry window and keep source and availability time. A gap outside the band is reconsidered on a later completed bar; asset, short, and intraday-symbol exclusions stay for the session, and a name is adjudicated once. A preview, a future report, or a negation is not `news=confirmed`. Earnings MFE/MAE uses samples from that trade's entry through the observation time. Intraday learning reads nested bracket legs and owned closes, and it does not treat a concurrent earnings fill as an intraday outcome. Unexplained account history still fails closed. A fallback entry is stored and is not eligible for the intraday study. Nothing here was deployed, and nothing here is a broker fill or a performance result. **LIVE remains rejected.**
 
-Observed local checks, Python 3.12. The baseline on this branch at `71364f0cf7b994335c83debc5e9b86aef7ec4b66` was 768 passed and 0 failed. No pre-existing failures were present. This change adds 3 tests.
+Observed local checks on the lifecycle repair, Python 3.12. The prior count on this branch at `cd3034c63bd4303da51ae96f24f0f60299779251` was 771 passed. This change adds 7 tests. No pre-existing failures were present.
 
 ```bash
-python -m pytest -q                 # 771 passed in 5.18s
-python -m ruff check .              # clean, ruff 0.15.8
+python3 -m pytest -q                # 778 passed in 6.12s
+python3 -m ruff check .             # clean, ruff 0.15.8
 bash -n deploy/install.sh           # clean
 git diff --check                    # clean
 ```
 
-Root pytest does not include Astra Desk; that suite lives in its own repository. Tested revision: `cd3034c63bd4303da51ae96f24f0f60299779251`. This sentence is a docs-only follow-up; the temporary-gap, news-release, and excursion-lifecycle fixes, and the checks above, are that commit.
+Root pytest does not include `research/astra-desk/tests`; that suite is separate. Tested revision of the lifecycle repair: `5baae398e05c5a31b956280a002641694a4a4052`. The Astra 6 documentation from main `8e9062a182c25c3745e8fd03326a66235fde04ed` is reconciled in the merge that follows this repair and does not change that runtime result.
+
+## Dated implementation evidence
+
+The remainder retains dated runtime history. Older statements about Jev-only architecture, waiting for market open, or no filled paper session apply to their recorded dates. The current summary above governs current capability. Fixture and local tests never establish a broker fill or improved trading performance. The documentation-only verification recorded on main for PR #30 (730 passed, runtime blobs identical to `5708946616afb675d1c78138990d8fa46057b6d5`) remains evidence for that docs revision, not for this earnings branch.
 
 ## Transient paper reads — 13 October 2026
 
@@ -154,7 +174,7 @@ Status date: 24 September 2026. Product authority: [Athena Trading Canon v3.0](A
 
 **Status as of 24 September 2026:** implemented and locally verified, and not deployed on that date. Cloud access and server-side Alpaca/TypeSafe credentials were unavailable then. Deployment status after 10 October 2026 is the Hostinger section above. No broker session has traded, and improved trading performance has not been observed.
 
-## Canon-to-code map
+## Canon-to-code map — September baseline (historical)
 
 | Capability | Current implementation | Remaining boundary |
 |---|---|---|
@@ -169,9 +189,9 @@ Status date: 24 September 2026. Product authority: [Athena Trading Canon v3.0](A
 | Cloud scheduling | paper/cloud.py starts sessions, prioritizes recovery and reviews after 20:15 Eastern; Hostinger VPS service enabled 10 October 2026, last observed `WAITING_FOR_MARKET` | External alerting and backup restore not verified; LIVE remains rejected; no traded session observed |
 | Athena Core | Shared adapter identity contracts reused; trading-specific experience policy implemented | General Core service/context/replay/promotion integration remains incomplete |
 
-## Active sources
+## Active documentation sources
 
-- [LIVE_PAPER.md](LIVE_PAPER.md): the one active broker runner and operating bounds.
+- [LIVE_PAPER.md](LIVE_PAPER.md): the current main broker runner and operating bounds, with separate hybrid integration gates.
 - [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md): host setup, persistent service, preflight and activation.
 - [LEARNING.md](LEARNING.md): exact learning schedule, evidence, validation and adaptive limits.
 - [BUILD_PLAN.md](BUILD_PLAN.md): the single product build sequence.

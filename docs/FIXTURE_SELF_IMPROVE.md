@@ -1,5 +1,7 @@
 # Fixture self-improve lab
 
+> The role labels below belong to this offline toy. Its “Astra gate” is deterministic code, not the owner-selected **Astra 6** LLM; it does not implement the [Astra 6 + Jev target](HYBRID_MODEL_CONTRACT.md). No toy receipt promotes policy into the active runner.
+
 Offline toy inside Athena Trading. It mutates management knobs on synthetic bars and writes receipts. Execution authority stays **ABSENT**. Nothing is sent to a broker. A PASS on these bars is not a promotion and not evidence of trading performance.
 
 Aura is a separate harness. This repository does not import it, and this lab does not put trading into Aura. Astra Desk stays in its own repository. The AAT-V1 holdout is not read.

@@ -1,8 +1,10 @@
 # Continuous cloud paper operation
 
-Deploy the existing active paper runner on one persistent Linux VPS. The active host is a Hostinger VPS, installed on 10 October 2026. A DigitalOcean Droplet remains an optional path. Either host uses the same `deploy/install.sh`, `athena-paper.service`, and root-owned `/etc/athena/paper.env`. The service stays online across market sessions and reboots; entries remain restricted to the broker's market session and the bounded policy in [LIVE_PAPER.md](LIVE_PAPER.md). The bounded learning review is implemented. A separate earnings paper service is defined in [EARNINGS_PAPER.md](EARNINGS_PAPER.md). It is not enabled by the intraday installer until an operator preflights it. Full APDE and general Core integration remain incomplete.
+> **Current-runner runbook; hybrid target is not deployed by this document.** The active intraday runner remains Jev-only. The 13 October owner direction selects Astra 6 + Jev; follow the [hybrid contract](HYBRID_MODEL_CONTRACT.md) and [build plan](BUILD_PLAN.md) before changing that runtime. Astra 6's provider deployment and API model ID are unverified. This document performs no installation, paid calls, or broker operations.
 
-## Selected setup
+Deploy the existing active paper runner on one persistent Linux VPS. The active host is a Hostinger VPS, installed on 10 October 2026. A DigitalOcean Droplet remains an optional path. Either host uses the same `deploy/install.sh`, `athena-paper.service`, and root-owned `/etc/athena/paper.env`. The service stays online across market sessions and reboots; entries remain restricted to the broker's market session and the bounded policy in [LIVE_PAPER.md](LIVE_PAPER.md). The bounded learning review is implemented. A separate Jev-only earnings paper service is defined in [EARNINGS_PAPER.md](EARNINGS_PAPER.md). It is not enabled by the intraday installer until an operator preflights it, and it is not deployed by this branch. The hybrid Earnings arm, full APDE, and general Core integration remain incomplete. The earnings book's multi-day hold is not an approved overnight policy.
+
+## Existing Jev-only setup
 
 | Component | Choice |
 |---|---|
@@ -19,6 +21,14 @@ Deploy the existing active paper runner on one persistent Linux VPS. The active 
 The $12 is the server charge, not an all-in trading budget. API usage, optional backups, taxes, and any paid market-data entitlement are separate. Each session permits at most 20 candidate reviews, each with at most one Jev call. Jev state is capped at 24 KB; failed inference is not retried automatically. Nightly learning uses deterministic code and makes no paid model calls. These are usage bounds, not a guaranteed dollar ceiling. Set provider spending controls for the intended account budget.
 
 A Hostinger VPS with a persistent disk fits the existing SQLite runtime. A DigitalOcean Droplet is the same kind of host. DigitalOcean App Platform has ephemeral local filesystems and does not support persistent volumes; using it would require moving state to another service. Begin with one host and measure memory/disk growth before increasing resources. The Droplet row is an initial sizing choice for that optional path, not a load-test result, a Hostinger invoice, or an uptime guarantee.
+
+## Future hybrid deployment gate
+
+Resolve and pin the owner-selected **Astra 6** provider deployment/API model ID, access and interface before creating an integration. No Astra 6 endpoint, SDK or credential name is prescribed here because none has been verified. No silent model substitution is allowed. Existing `paper.env` and the service/installer are unchanged; they do not configure Astra 6.
+
+Extend this runtime with bounded event-driven Astra 6 proposals and Jev judgments, separate call/cost/latency budgets, evidence and plan expiry, identity/version health and operator alerts. Neither model may stall broker protection, mandatory exits or restart recovery. Add shared portfolio accounting before treating two books' individual limits as a portfolio guarantee. Keep one reconciled source of account exposure; do not launch parallel services from a future architecture description.
+
+PR #29's Jev-only earnings book is on this branch and is still unmerged. Its multiday hold must be resolved against the owner's pre-close-flat guardrail before that policy is adopted. Record that decision separately from deployment authorization. Hybrid configuration, preflight, rollout, rollback, alerts and restore tests remain implementation deliverables. This runbook does not install either service.
 
 ## Install a reviewed revision
 
@@ -88,7 +98,7 @@ As of 24 September 2026 the Jev/learning revision had **657 root tests and 158 A
 
 **Hostinger paper pilot, 10 October 2026.** Nick installed this runner on a Hostinger VPS with `deploy/install.sh`, `athena-paper.service`, and root-owned `/etc/athena/paper.env`. The service is enabled. That environment file holds the Alpaca paper and TypeSafe keys. The values stay on the host and are not in this repository. The service was last observed in `WAITING_FOR_MARKET`, waiting for Monday open. Pre-Monday fixture, preflight, and health checks passed that day. Those checks show the install and connectivity. They are not a broker fill, a traded session, or a performance result. **LIVE remains rejected.** This document does not record which commit SHA that host is running.
 
-DigitalOcean remains an optional host with the same installer, service, and environment file. A Droplet has not been provisioned from this repository. On 24 September 2026 the DigitalOcean console returned “Site Unavailable” in this workspace browser on the initial visit and one reload, and no DigitalOcean credential was in the connected catalog. That note is not the Hostinger install. No paper order has been observed, and no broker session has traded.
+DigitalOcean remains an optional host with the same installer, service, and environment file. A Droplet has not been provisioned from this repository. On 24 September 2026 the DigitalOcean console returned “Site Unavailable” in this workspace browser on the initial visit and one reload, and no DigitalOcean credential was in the connected catalog. That note is not the Hostinger install. Earlier no-order/no-session statements described the September snapshot. The dated 13 October [held-bracket incident](IMPLEMENTATION_STATUS.md#held-bracket-stop--13-october-2026) records a filled paper bracket and flatten, superseding it. This review does not establish the current deployed SHA, host health, open exposure or performance improvement.
 
 Primary documentation checked on the status date:
 

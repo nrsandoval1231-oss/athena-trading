@@ -2,9 +2,9 @@
 
 **Two Arms. One Mind. Continuous Wisdom.**
 
-Athena Trading combines **Earnings Adaptive** and **Athena Predictive Intraday** through a shared TypeSafe Jev decision model, Athena Core context and learning, Adaptive Position Defense (APDE), deterministic risk controls, and broker-confirmed execution.
+Athena Trading combines **Earnings Adaptive** and **Athena Predictive Intraday** through a shared **Astra 6 generative LLM + TypeSafe Jev judge** architecture, Athena Core context and learning, Adaptive Position Defense (APDE), deterministic risk controls, and broker-confirmed execution. This is the owner-approved target, not a claim that the complete system is implemented.
 
-[Read the canonical architecture](docs/ATHENA_TRADING_CANON.md) · [Current implementation](docs/IMPLEMENTATION_STATUS.md) · [Build sequence](docs/BUILD_PLAN.md)
+[Read the canonical architecture](docs/ATHENA_TRADING_CANON.md) · [Current implementation](docs/IMPLEMENTATION_STATUS.md) · [Build sequence](docs/BUILD_PLAN.md) · [Documentation index](docs/README.md)
 
 ![Athena Trading — owner-supplied dual-strategy architecture](docs/assets/athena-trading-canon.jpg)
 
@@ -13,6 +13,7 @@ Athena Trading combines **Earnings Adaptive** and **Athena Predictive Intraday**
 | Question | Source |
 |---|---|
 | What are we building? | [ATHENA_TRADING_CANON.md](docs/ATHENA_TRADING_CANON.md) |
+| How do Astra 6, Jev and code divide responsibility? | [HYBRID_MODEL_CONTRACT.md](docs/HYBRID_MODEL_CONTRACT.md) |
 | How does it stay online in the cloud? | [CLOUD_DEPLOYMENT.md](docs/CLOUD_DEPLOYMENT.md) |
 | How does it learn from trades? | [LEARNING.md](docs/LEARNING.md) |
 | How do I start active paper trading? | [LIVE_PAPER.md](docs/LIVE_PAPER.md) |
@@ -22,13 +23,21 @@ Athena Trading combines **Earnings Adaptive** and **Athena Predictive Intraday**
 | What are the old experiments? | [Research index](research/README.md) |
 | What did the latest audit find? | [Paper-readiness audit, 10 October 2026](docs/audits/2026-10-10-paper-readiness.md). Prior: [Jev and learning, 24 September 2026](docs/audits/2026-09-24-jev-learning.md) and [inventory](docs/audits/2026-09-24.md). |
 
-## Current reality
+## Owner-approved direction — 13 October 2026
+
+Astra 6 interprets timestamped, source-linked events, news and guidance, and proposes structured theses, scenarios and plans with expiry and invalidation. Jev judges bounded choices using the underlying evidence as well as the proposal, including INSUFFICIENT_EVIDENCE. Code owns numbers, validated forecast outputs, freshness, sizing, shared portfolio risk, execution and APDE transitions. Critical protection and exits never wait for either model.
+
+The owner specifically selected **Astra 6**. Its provider deployment/API model ID, account access and SDK support have not been verified; no other model may silently replace it. Model agreement is not independent evidence, and neither model's confidence is a measured probability of profit. Aggressive opportunity capture and adaptive winner management stay within existing risk limits.
+
+## Current reality — main `5708946`
 
 The bounded intraday paper path connects current Alpaca data → strategy candidate → **Jev decision** → deterministic risk → protected paper order and broker-confirmed exit. Jev is the only active model; Terra and Ollama are removed from this path.
 
 Completed trades become verified experience available to later decisions. The cloud supervisor reviews each day after 20:15 Eastern; only prospectively validated, temporary abstention rules can be promoted. See [learning](docs/LEARNING.md) and [cloud deployment](docs/CLOUD_DEPLOYMENT.md).
 
-The first Hostinger paper pilot was installed on 10 October 2026. `athena-paper.service` is enabled and was last observed in `WAITING_FOR_MARKET` for Monday open. Alpaca and TypeSafe keys are on that host in `paper.env` and are not in this repository. **LIVE is still rejected.** The fixture lab is not paper evidence. The complete Earnings arm, full APDE, comprehensive forecasting and general Athena Core integration are incomplete. Learning from observations is implemented; improved trading performance is not established. No broker session has traded.
+The first Hostinger paper pilot was installed on 10 October 2026. The dated 13 October incident record documents a filled bracket and protective flatten; earlier “no traded session” summaries are superseded by that record. This documentation review did not inspect the host or establish its current running revision, health or exposure. **LIVE is still rejected.** The fixture lab is not paper evidence. Astra 6 integration, hybrid entry/management, full APDE, comprehensive forecasting and general Athena Core integration are incomplete. Learning from observations is implemented; improved trading performance is not established.
+
+[Earnings PR #29](https://github.com/nrsandoval1231-oss/athena-trading/pull/29) is this open, unmerged branch. Its lifecycle repair is `5baae398e05c5a31b956280a002641694a4a4052`. It is a narrower Jev-only paper book, not the full earnings thesis/scenario engine and not an Astra 6 integration. Its three-session default hold (five-session ceiling) still conflicts with the diagram's pre-close-flat policy and is not approved. This branch does not deploy or authorize overnight holding.
 
 ORB-M is a reusable intraday component and baseline. AAT experiments are research history. The existing Ollama B/C/D runner uses identical empty-memory requests; it does not yet demonstrate Athena learning.
 
