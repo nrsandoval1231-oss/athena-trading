@@ -26,6 +26,20 @@ The earnings review fixes stay on `cursor/earnings-adaptive-paper-a4c7`. This ch
 
 `LIVE` still raises. Approved dollar caps are unchanged.
 
+Observed local checks, Python 3.12. The parent revision `cd3034c63bd4303da51ae96f24f0f60299779251` was 771 passed and 0 failed. No pre-existing failures were present. This change adds 14 tests.
+
+```bash
+python3 -m pytest -q                # 785 passed in 5.15s
+python3 -m ruff check .             # clean, ruff 0.15.8
+bash -n deploy/install.sh           # clean
+git diff --check                    # clean
+python3 -m pip install .            # imports shared_risk, evaluation, and funnel
+```
+
+No type checker is configured in `pyproject.toml` or `.github/workflows/ci.yml`. Root pytest does not include Astra Desk. Tested revision: `ba032129b7900cafec2535fde0db902eae715b36`. This sentence is a docs-only follow-up; the runner, tests, and the checks above are that commit.
+
+GitHub Actions on that SHA did not run the test job. Push run `38448610766` and pull-request run `38448676036` both failed in a few seconds with empty steps. The annotation says the job was not started because recent account payments have failed or the spending limit needs to be increased. That is a billing block, not a pytest or ruff failure. The Ubuntu 26 runner notice is not a failure.
+
 ## Earnings Adaptive paper book — 13 October 2026
 
 The earnings arm is a second PAPER book. It reads a free Nasdaq earnings calendar and an operator copy of the screener's `universe_75.txt`. It submits a GTC bracket only when the live gap is inside the screener's 4–12% band, Jev accepts it on the same floors as the intraday arm, and the dollar caps allow the share count. `parse_authority("LIVE")` still raises. Client order ids start with `athe-`. The book file is separate from the dated intraday journals. A restart reconciles those ids and does not resubmit them. SIGTERM does not flatten. The intraday runner ignores `athe-` orders and symbols in the earnings ledger, and it still refuses any other foreign symbol.
