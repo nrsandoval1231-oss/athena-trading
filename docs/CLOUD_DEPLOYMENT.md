@@ -60,7 +60,7 @@ journalctl -u athena-paper.service -f
 cat /var/lib/athena/health.json
 ```
 
-Record the installed commit, successful provider preflight, startup status and actual broker results separately from tests. A running process or heartbeat alone does not prove a trade, confirmed flatness, or adjudication quality. A session that receives at least one TAKE_TRADE label can reserve one paper order through the normal gate or, after the cutoff, through the journaled daily fallback. A session with no TAKE_TRADE label can still finish with no order. A model error is not an approval.
+Record the installed commit, successful provider preflight, startup status and actual broker results separately from tests. A running process or heartbeat alone does not prove a trade, confirmed flatness, or adjudication quality. A session that receives at least one TAKE_TRADE label can reserve one paper order through the normal gate or, after the cutoff, through the journaled daily fallback. A session with no TAKE_TRADE label can still finish with no order. A model error is not an approval. A malformed Jev answer is journaled and vetoes that setup; it does not stop the daily fallback from using other TAKE_TRADE labels.
 
 ## Daily operation and recovery
 

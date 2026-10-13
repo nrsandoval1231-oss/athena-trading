@@ -1,5 +1,22 @@
 # Implementation status
 
+## Jev probability mass — 12 October 2026
+
+On 12 October 2026 at 08:58 America/Chicago the paper runner raised `ModelError: Jev probabilities do not sum to one` from `JevDecisionEngine.decide`. The sum had to match 1 within `1e-6`. The process exited after `decision_started`, and the restart then returned `ALREADY_REVIEWED` for that setup.
+
+A distribution that is finite, in [0, 1], labeled with the three choices, and within 0.02 of 1 is scaled to sum to exactly 1 before the gate and the fallback score. The receipt keeps the raw values and `probability_checks.entry_decision.renormalized`. The raw response is journaled as `jev_response` before validation. A sum outside that tolerance, a negative, a non-finite value, or a missing label is `jev_veto` with `accepted` false and a reason. That veto does not submit an order, does not halt a flat account, and does not remove other TAKE_TRADE labels from the daily fallback. A transport failure before a response still propagates. `parse_authority("LIVE")` still raises. **LIVE remains rejected.** This is not a broker fill and not evidence of trading performance.
+
+Observed local checks, Python 3.12. The baseline on `main` `1c47639df662b26d48d25d949327a7e4f7a26471` was 689 passed and 0 failed. No pre-existing failures were present. This change adds 15 tests.
+
+```bash
+python -m pytest -q                 # 704 passed in 4.67s
+python -m ruff check .              # clean, ruff 0.15.8
+bash -n deploy/install.sh           # clean
+git diff --check                    # clean
+```
+
+Root pytest does not include Astra Desk; that suite lives in its own repository. Tested revision: `fa37740f50d7a8572beef3cfd9e6d7307d1fc62d`. This sentence is a docs-only follow-up; the runner, tests, and the checks above are that commit.
+
 ## Paper daily entry — 12 October 2026
 
 New sessions admit a TAKE_TRADE label when p(TAKE_TRADE) is at least 0.6 and confidence is at least 0.5. `ATHENA_JEV_MIN_PTAKE` and `ATHENA_JEV_MIN_CONFIDENCE` override those floors. If no order is reserved by `ATHENA_FALLBACK_AFTER_OPEN_MINUTES` after the open (default 120), the runner submits the highest-scoring TAKE_TRADE label seen that day, once, and journals `fallback_entry` / `NO_ORDER_BY_CUTOFF`. The score is confidence times p(TAKE_TRADE). The same one-share bracket, notional, stop, buying-power, learned-veto, and one-position limits apply. `LIVE` still raises. A model error is not an approval. A bound journal keeps its saved floors; a missing fallback field resumes at 120 minutes. The 20-review cap waits for that fallback instead of ending the day.

@@ -4,10 +4,11 @@ One share, one entry per session, one dedicated paper account. This is the first
 intraday execution slice, not the complete dual-strategy or learning system.
 
 A TAKE_TRADE label clears the gate at p(TAKE_TRADE) >= 0.6 and confidence >= 0.5
-unless the operator overrides those floors. If the session still has no order
-at the fallback cutoff, the highest-scoring TAKE_TRADE label seen that day is
-submitted once. Model errors stay non-approvals. Risk, the bracket, and PAPER
-authority still apply.
+unless the operator overrides those floors. Probability mass within 0.02 of 1 is
+renormalized before that comparison. If the session still has no order at the
+fallback cutoff, the highest-scoring TAKE_TRADE label seen that day is submitted
+once. A malformed Jev answer vetoes that setup only and is not an approval.
+Risk, the bracket, and PAPER authority still apply.
 """
 from __future__ import annotations
 
@@ -21,7 +22,9 @@ from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 from ..athena_adapter.contracts import canonical_hash
-from ..athena_adapter.jev import JEV_MODEL, JevDecisionEngine, ModelError, request_json
+from ..athena_adapter.jev import (
+    JEV_MODEL, JevDecisionEngine, ModelError, journalable_response, request_json,
+)
 from ..execution.authority import ExecutionAuthority, require_paper
 from ..orb_m.constitution import Constitution
 from ..orb_m.entry import build_risk_frame, detect_breakout, freeze_opening_range
@@ -137,6 +140,11 @@ def take_trade_rank(receipt: dict[str, Any]) -> tuple[float, float, float] | Non
     if not isinstance(answer, dict) or answer.get("choice") != "TAKE_TRADE":
         return None
     probabilities = answer.get("probabilities")
+    checks = receipt.get("probability_checks")
+    if isinstance(checks, dict):
+        checked = checks.get("entry_decision")
+        if isinstance(checked, dict) and isinstance(checked.get("used"), dict):
+            probabilities = checked["used"]
     if not isinstance(probabilities, dict):
         return None
     confidence, take = answer.get("confidence"), probabilities.get("TAKE_TRADE")
@@ -461,6 +469,9 @@ class ActivePaperPilot:
         for event in self.journal.events:
             if event["kind"] == "decision_started" and event.get("session") == day:
                 pending = event
+            elif event["kind"] == "jev_veto":
+                # A bad answer closes that setup. It must not pair with a later receipt.
+                pending = None
             elif event["kind"] == "adjudication" and pending is not None:
                 rank = take_trade_rank(event["receipt"])
                 signal_at = pending.get("packet", {}).get("signal_at")
@@ -483,6 +494,16 @@ class ActivePaperPilot:
         if not takes:
             return None
         return min(takes, key=lambda event: (-event["score"], event["signal_at"]))
+
+    def _finish_veto(
+        self, day: str, now: datetime, session_open: datetime, account: dict[str, Any],
+    ) -> str:
+        """This setup is declined. Other journaled TAKE_TRADE labels stay eligible."""
+        if self._fallback_due(now, session_open):
+            fallback_status = self._submit_fallback(day, now, account)
+            if fallback_status is not None:
+                return fallback_status
+        return "JEV_VETO"
 
     def _submit_fallback(self, day: str, now: datetime, account: dict[str, Any]) -> str | None:
         """Submit the best TAKE_TRADE label once. No order means try again next tick."""
@@ -721,7 +742,26 @@ class ActivePaperPilot:
                 return "LEARNED_VETO"
         self.journal.append("decision_started", session=day, signal_at=packet["signal_at"],
                             packet=packet, market_inputs={"bars": raw, "daily": self.daily})
-        verdict = self.jev.decide(packet)
+        answered = False
+
+        def before_validation(response: Any) -> None:
+            nonlocal answered
+            answered = True
+            self.journal.append(
+                "jev_response", session=day, signal_at=packet["signal_at"],
+                response=journalable_response(response),
+            )
+
+        try:
+            verdict = self.jev.decide(packet, before_validation=before_validation)
+        except ModelError as exc:
+            if not answered:
+                raise
+            self.journal.append(
+                "jev_veto", session=day, signal_at=packet["signal_at"],
+                reason=str(exc)[:250], accepted=False,
+            )
+            return self._finish_veto(day, now, session_open, account)
         self.journal.append("adjudication", receipt=verdict.receipt)
         rank = take_trade_rank(verdict.receipt)
         verdict_hash = canonical_hash(verdict.receipt)
@@ -735,8 +775,4 @@ class ActivePaperPilot:
             return status
         if rank is not None:
             self._remember_take(day, packet, order, rank[1], rank[2], verdict_hash)
-        if self._fallback_due(now, session_open):
-            fallback_status = self._submit_fallback(day, now, account)
-            if fallback_status is not None:
-                return fallback_status
-        return "JEV_VETO"
+        return self._finish_veto(day, now, session_open, account)
