@@ -17,7 +17,7 @@ bash -n deploy/install.sh           # clean
 git diff --check                    # clean
 ```
 
-Root pytest does not include Astra Desk; that suite lives in its own repository. The tested revision is the commit that introduces the lazy Jev probe, the earnings learning arm, and the Alpaca news context.
+Root pytest does not include Astra Desk; that suite lives in its own repository. Tested revision: `15a614196ea82f63e4c0183c9801a1c6fea3e636`. This sentence is a docs-only follow-up; the lazy Jev probe, the earnings learning arm, the Alpaca news context, and the checks above are that commit.
 
 ## Transient paper reads — 13 October 2026
 
