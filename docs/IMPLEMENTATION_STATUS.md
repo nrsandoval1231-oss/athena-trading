@@ -29,13 +29,13 @@ A partial take-profit stays under management: the open quantity must match entry
 Observed local checks on the lifecycle repair, Python 3.12. The prior count on this branch at `cd3034c63bd4303da51ae96f24f0f60299779251` was 771 passed. This change adds 7 tests. No pre-existing failures were present.
 
 ```bash
-python3 -m pytest -q                # 778 passed in 6.12s
+python3 -m pytest -q                # 778 passed in 6.12s on 5baae39; 778 passed in 5.74s after the docs merge
 python3 -m ruff check .             # clean, ruff 0.15.8
 bash -n deploy/install.sh           # clean
 git diff --check                    # clean
 ```
 
-Root pytest does not include `research/astra-desk/tests`; that suite is separate. Tested revision of the lifecycle repair: `5baae398e05c5a31b956280a002641694a4a4052`. The Astra 6 documentation from main `8e9062a182c25c3745e8fd03326a66235fde04ed` is reconciled in the merge that follows this repair and does not change that runtime result.
+Root pytest does not include `research/astra-desk/tests`; that suite is separate. Tested revision of the lifecycle repair: `5baae398e05c5a31b956280a002641694a4a4052`. The same 778 tests passed again after reconciling Astra 6 documentation from main `8e9062a182c25c3745e8fd03326a66235fde04ed`. That reconciliation does not change the runtime.
 
 ## Dated implementation evidence
 
