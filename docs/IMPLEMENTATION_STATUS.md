@@ -8,18 +8,18 @@ The calendar has no SLA, no surprise or guidance fields, and skips `time-not-sup
 
 Closed earnings trades are copied into the shared learning store with `arm=earnings`, including fill quantity, gross P&L when entry and exit cashflows balance, the decision receipt, and source hashes. They are not eligible for the intraday negative-experience study, and that study's context, discovery, and validation ignore the earnings arm. Alpaca news headlines since the prior close are journaled and passed into the earnings Jev packet. A successful snapshot is reused for fifteen minutes and then refreshed through the entry window. A failed or rate-limited news read does not stop the book.
 
-A partial take-profit stays under management: the open quantity must match entry fills minus opposite-side fills, and a quantity the legs cannot explain still halts. A broker close id already stored in `close_ack` is waited on. It is not treated as an unowned order and it is not sent again. A tighter risk or notional cap is stored as `policy_tightened` and used for later entries; a looser cap or any other configuration change refuses startup. The entry window and bar age are checked again after Jev returns, so a late answer does not submit. A daily-loss halt blocks only the session that recorded it. An operator halt stays in force. Nested bracket legs are part of an intraday outcome, and a repeated order id still blocks it. A fallback entry is stored and is not eligible for the intraday study. Nothing here was deployed, and nothing here is a broker fill or a performance result. **LIVE remains rejected.**
+A partial take-profit stays under management: the open quantity must match entry fills minus opposite-side fills, and a quantity the legs cannot explain still halts. A broker close id already stored in `close_ack` is waited on. It is not treated as an unowned order and it is not sent again. A tighter risk or notional cap is stored as `policy_tightened` and used for later entries; a looser cap or any other configuration change refuses startup. The entry window, market state, bar age, and risk are checked again after Jev returns, so a late answer does not submit. A daily-loss halt blocks only the session that recorded it. An operator halt and a position-mismatch halt stay in force. News snapshots refresh every fifteen minutes through the entry window and keep source and availability time. A gap outside the band is reconsidered on a later completed bar; asset, short, and intraday-symbol exclusions stay for the session, and a name is adjudicated once. A preview, a future report, or a negation is not `news=confirmed`. Earnings MFE/MAE uses samples from that trade's entry through the observation time. Nested bracket legs are part of an intraday outcome, and a repeated order id still blocks it. A fallback entry is stored and is not eligible for the intraday study. Nothing here was deployed, and nothing here is a broker fill or a performance result. **LIVE remains rejected.**
 
-Observed local checks, Python 3.12. The baseline on this branch at `15a614196ea82f63e4c0183c9801a1c6fea3e636` was 760 passed and 0 failed. No pre-existing failures were present. This change adds 8 tests.
+Observed local checks, Python 3.12. The baseline on this branch at `71364f0cf7b994335c83debc5e9b86aef7ec4b66` was 768 passed and 0 failed. No pre-existing failures were present. This change adds 3 tests.
 
 ```bash
-python -m pytest -q                 # 768 passed in 5.45s
+python -m pytest -q                 # 771 passed in 5.18s
 python -m ruff check .              # clean, ruff 0.15.8
 bash -n deploy/install.sh           # clean
 git diff --check                    # clean
 ```
 
-Root pytest does not include Astra Desk; that suite lives in its own repository. Tested revision: `71364f0cf7b994335c83debc5e9b86aef7ec4b66`. This sentence is a docs-only follow-up; the residual-position, close-id, restart-cap, entry-deadline, daily-loss, news-refresh, nested-outcome, and fallback-study fixes, and the checks above, are that commit.
+Root pytest does not include Astra Desk; that suite lives in its own repository. Tested revision: `cd3034c63bd4303da51ae96f24f0f60299779251`. This sentence is a docs-only follow-up; the temporary-gap, news-release, and excursion-lifecycle fixes, and the checks above, are that commit.
 
 ## Transient paper reads — 13 October 2026
 
