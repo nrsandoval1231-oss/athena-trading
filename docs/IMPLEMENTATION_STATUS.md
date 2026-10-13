@@ -15,7 +15,7 @@ bash -n deploy/install.sh           # clean
 git diff --check                    # clean
 ```
 
-Root pytest does not include Astra Desk; that suite lives in its own repository.
+Root pytest does not include Astra Desk; that suite lives in its own repository. Tested revision: `74a1017f7bde5f43715eaca93108566b2279c981`. This sentence is a docs-only follow-up; the runner, tests, and the checks above are that commit.
 
 ## Jev probability mass — 12 October 2026
 
