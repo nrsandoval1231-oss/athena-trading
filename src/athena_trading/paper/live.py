@@ -41,10 +41,11 @@ from .alpaca import PAPER_API_BASE, AlpacaPaperBroker
 from .funnel import record_opportunity
 from .journal import PaperJournal
 from .ownership import (
-    earnings_state_dir, intraday_book, load_ownership_symbols, terminal_learning_history,
+    earnings_state_dir, intraday_book, load_ownership_orders, load_ownership_symbols,
+    terminal_learning_history,
 )
 from .shared_risk import (
-    SharedBookBusy, SharedExposureUnreadable, authorize_entry, other_arm_exposure,
+    SharedBookBusy, SharedExposureUnreadable, authorize_entry, entry_coordination, other_arm_exposure,
     reflected_exposure,
 )
 
@@ -411,12 +412,15 @@ class LivePaperAPI(AlpacaPaperBroker):
     def snapshot(self) -> dict[str, Any]:
         return {
             "clock": self.call("GET", "/v2/clock"),
-            "account": self.call("GET", "/v2/account"),
             "positions": self.call("GET", "/v2/positions"),
             # nested=false hides a bracket stop while Alpaca keeps that leg "held".
             "orders": working_orders(self.call(
                 "GET", "/v2/orders?status=open&nested=true&limit=500",
             )),
+            # Buying-power exemptions may use only exposure observed BEFORE this
+            # account sample. An order appearing after an older account read is
+            # not proof that its cost was deducted from that earlier balance.
+            "account": self.call("GET", "/v2/account"),
         }
 
 
@@ -716,8 +720,8 @@ class ActivePaperPilot:
         if isinstance(parent.get("id"), str):
             owned_ids.add(parent["id"])
         learning_history = terminal_learning_history(
-            history, own_symbol=symbol, owned_ids=owned_ids,
-            ledger_symbols=load_ownership_symbols(earnings_state_dir()),
+            history, owned_ids=owned_ids,
+            earnings_orders=load_ownership_orders(earnings_state_dir(), snapshot["account"]["id"]),
         )
         self.journal.append(
             "flat_confirmed", parent=parent, snapshot=snapshot,
@@ -924,6 +928,26 @@ class ActivePaperPilot:
     ) -> str:
         """Recheck risk, reserve one bracket, then send it. PAPER only."""
         require_paper(self.authority)
+        try:
+            with entry_coordination(self.journal, account_id):
+                return self._commit_order_coordinated(
+                    order, packet, session_day=session_day, account_id=account_id,
+                    observed_at=observed_at, verdict_hash=verdict_hash,
+                    allow_stale=allow_stale, fallback=fallback,
+                )
+        except (SharedBookBusy, SharedExposureUnreadable) as exc:
+            record_opportunity(
+                self.journal, stage="rejected", at=observed_at,
+                reason="SHARED_BOOK_BUSY" if isinstance(exc, SharedBookBusy) else "SHARED_EXPOSURE_UNREADABLE",
+                signal_at=packet.get("signal_at"),
+            )
+            return "SHARED_RISK_BLOCKED"
+
+    def _commit_order_coordinated(
+        self, order: dict[str, Any], packet: dict[str, Any], *, session_day: str,
+        account_id: str, observed_at: datetime, verdict_hash: str, allow_stale: bool,
+        fallback: dict[str, Any] | None,
+    ) -> str:
         raw = self.broker.snapshot()
         current = self._without_earnings(raw)
         current_now = timestamp(current["clock"]["timestamp"])
@@ -958,7 +982,9 @@ class ActivePaperPilot:
         if too_large or stop_too_wide:
             return "RISK_CHANGED"
         try:
-            other = other_arm_exposure("intraday", today=current_now.astimezone(NY).date())
+            other = other_arm_exposure(
+                "intraday", today=current_now.astimezone(NY).date(), account_id=account_id,
+            )
         except SharedBookBusy:
             record_opportunity(
                 self.journal, stage="rejected", reason="SHARED_BOOK_BUSY", at=current_now,

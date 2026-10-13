@@ -1847,6 +1847,12 @@ def _prepare_flat_history(tmp_path, monkeypatch, extra_orders):
 
 def test_earnings_fills_do_not_corrupt_the_intraday_outcome(tmp_path, monkeypatch):
     pilot, _broker, journal = _prepare_flat_history(tmp_path, monkeypatch, _earnings_history_rows())
+    # The generated close is attributable by exact journal-published provenance,
+    # not merely because another earnings trade has this symbol in its live book.
+    write_ownership_ledger(
+        tmp_path / "earnings-state", {"DECK"}, [],
+        historical_orders=[_earnings_history_rows()[1]], account_id="paper-account",
+    )
     assert pilot.tick() == "FLATTENING"
     assert pilot.tick() == "COMPLETE"
     flat = journal.last("flat_confirmed")

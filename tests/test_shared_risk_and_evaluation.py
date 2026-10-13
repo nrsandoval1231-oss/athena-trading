@@ -46,8 +46,15 @@ def test_shared_gate_blocks_a_second_reservation_and_lists_inactive_checks():
         arm="earnings", symbol="AAPL", notional=100.0, stop_risk=1.0, overnight=True,
         buying_power=100_000.0, open_exposure=[],
     )
-    assert earnings.allowed is True
-    assert earnings.overnight_authority == "earnings-paper-exception"
+    assert earnings.allowed is False
+    assert earnings.reason == "OVERNIGHT_NOT_AUTHORIZED"
+    assert earnings.overnight_authority == "inactive"
+    daytime = authorize_entry(
+        arm="earnings", symbol="AAPL", notional=100.0, stop_risk=1.0, overnight=False,
+        buying_power=100_000.0, open_exposure=[],
+    )
+    assert daytime.allowed is True
+    assert daytime.overnight_authority == "flat-by-close"
     assert "correlation_limit" in earnings.unresolved
 
 

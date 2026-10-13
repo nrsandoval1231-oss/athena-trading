@@ -23,7 +23,7 @@ TRANSIENT_TICK_BUDGET_SECONDS = 60.0
 
 
 def _continue_after_transient(exc: BaseException, state: dict[str, float | int | None]) -> bool:
-    """A short run of read failures must not flatten a multi-day earnings hold."""
+    """A short read outage retries without bypassing owned-exposure recovery."""
     if not transient_broker_failure(exc):
         return False
     count = int(state.get("count") or 0) + 1
@@ -146,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.flatten_owned and not book.open_trades():
                 return 0
             time.sleep(5)
-        # SIGTERM leaves GTC brackets at the broker. The next start reconciles them.
+        # SIGTERM is not flat confirmation. The next start recovers any unfinished exposure.
         return 0
     except Exception as exc:
         print(json.dumps({

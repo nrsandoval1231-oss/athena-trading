@@ -11,6 +11,7 @@ import sys
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -147,9 +148,10 @@ class BookBroker:
         if method == "DELETE" and path.startswith("/v2/orders/"):
             return None
         if method == "DELETE" and path.startswith("/v2/positions/"):
-            symbol = path.rsplit("/", 1)[-1]
+            symbol = urlsplit(path).path.rsplit("/", 1)[-1]
             held = next((item for item in self.state["positions"] if item.get("symbol") == symbol), None)
-            qty = held.get("qty") if isinstance(held, dict) else "0"
+            position_qty = held.get("qty") if isinstance(held, dict) else "0"
+            qty = parse_qs(urlsplit(path).query).get("qty", [str(abs(float(position_qty)))])[0]
             price = held.get("avg_entry_price") if isinstance(held, dict) else None
             order_id = (
                 "c0ffee00-0000-4000-8000-000000000001" if symbol == "DECK"
@@ -158,14 +160,17 @@ class BookBroker:
             ack = {
                 "id": order_id,
                 "client_order_id": "broker-close-" + symbol,
-                "symbol": symbol, "qty": qty, "filled_qty": "0", "filled_avg_price": None,
-                "side": "sell", "type": "market", "order_class": "simple",
+                "symbol": symbol, "qty": str(abs(float(qty))).removesuffix(".0"),
+                "filled_qty": "0", "filled_avg_price": None,
+                "created_at": self.state["clock"]["timestamp"],
+                "submitted_at": self.state["clock"]["timestamp"],
+                "side": "sell" if float(position_qty) > 0 else "buy", "type": "market", "order_class": "simple",
                 "time_in_force": "day", "status": "new", "extended_hours": False,
             }
             # The acknowledgement is not the fill. A later read returns the terminal order.
             terminal = dict(ack)
             if qty not in (None, "", "0") and price not in (None, ""):
-                terminal.update(status="filled", filled_qty=qty, filled_avg_price=price)
+                terminal.update(status="filled", filled_qty=ack["qty"], filled_avg_price=price)
             self.order_by_id[order_id] = terminal
             return ack
         if method == "GET" and path.startswith("/v2/orders/") and "?" not in path:
@@ -182,7 +187,7 @@ class BookBroker:
 def _accepted_bracket(payload):
     """Shape returned by POST /v2/orders for a new bracket, before either leg is held."""
     return {
-        "id": "61e69015-8549-4bfd-b9c3-a2d9e0f0e0a1",
+        "id": "61e69015-8549-4bfd-b9c3-" + canonical_hash(payload)[-12:],
         "client_order_id": payload["client_order_id"],
         "created_at": "2026-10-13T13:40:01.102282Z",
         "updated_at": "2026-10-13T13:40:01.102282Z",
@@ -302,7 +307,7 @@ def test_gap_band_stop_target_and_risk_caps():
     blocked = plan_entry(price=104, prior_close=100, **{**kwargs, "open_risk": 150})
     assert blocked is None
     order = bracket_order("DECK", long)
-    assert order["time_in_force"] == "gtc" and order["extended_hours"] is False
+    assert order["time_in_force"] == "day" and order["extended_hours"] is False
     assert order["order_class"] == "bracket" and order["qty"] == "19"
 
 
@@ -316,8 +321,8 @@ def test_hold_and_entry_session_follow_the_report_clock():
     early = datetime(2026, 10, 15, 18, 0, tzinfo=UTC)
     late = datetime(2026, 10, 15, 19, 50, tzinfo=UTC)
     assert hold_action("2026-10-13", "2026-10-14", sessions, 3, is_open=True, now=early,
-                       close_at=close_at, close_buffer_minutes=15) == "HOLD"
-    assert hold_action("2026-10-13", "2026-10-15", sessions, 3, is_open=True, now=early,
+                       close_at=close_at, close_buffer_minutes=15) == "FLATTEN"
+    assert hold_action("2026-10-15", "2026-10-15", sessions, 1, is_open=True, now=early,
                        close_at=close_at, close_buffer_minutes=15) == "HOLD"
     assert hold_action("2026-10-13", "2026-10-15", sessions, 3, is_open=True, now=late,
                        close_at=close_at, close_buffer_minutes=15) == "FLATTEN"
@@ -385,14 +390,14 @@ def test_policy_rejects_a_wider_band_and_live_sized_caps(tmp_path, monkeypatch):
     assert policy.excluded_symbol == "SPY" and policy.gap_low == 0.04 and policy.gap_high == 0.12
 
 
-def test_supported_gap_submits_one_gtc_bracket_and_a_restart_does_not(tmp_path, monkeypatch):
+def test_supported_gap_submits_one_day_bracket_and_recovers_next_day(tmp_path, monkeypatch):
     book, broker, journal, calls = _book(tmp_path, monkeypatch)
     assert book.tick() == "ENTRY_SUBMITTED"
     posted = _posts(broker)
     assert len(posted) == 1
     order = posted[0]
     assert order["symbol"] == "DECK" and order["qty"] == "19"
-    assert order["type"] == "limit" and order["time_in_force"] == "gtc"
+    assert order["type"] == "limit" and order["time_in_force"] == "day"
     assert order["extended_hours"] is False and order["order_class"] == "bracket"
     assert order["limit_price"] == "104.00"
     assert order["stop_loss"] == {"stop_price": "102.00"}
@@ -411,7 +416,8 @@ def test_supported_gap_submits_one_gtc_bracket_and_a_restart_does_not(tmp_path, 
     )
     broker.state["clock"]["timestamp"] = "2026-10-14T13:50:00Z"
     broker.state["clock"]["next_close"] = "2026-10-14T20:00:00Z"
-    assert restarted.tick() == "POSITION_OPEN"
+    assert restarted.tick() == "FLATTENING"
+    assert journal.last("trade_exit")["reason"] == "OVERNIGHT_RECOVERY"
     assert len(_posts(broker)) == 1
     assert calls["n"] == 1
     journal.close()
@@ -439,7 +445,7 @@ def test_held_stop_counts_as_protection_and_a_missing_stop_flattens_only_that_sy
     journal.close()
 
 
-def test_max_hold_flattens_on_the_third_session_and_survives_the_book_file(tmp_path, monkeypatch):
+def test_overdue_hold_flattens_and_survives_the_book_file(tmp_path, monkeypatch):
     book, broker, journal, _calls = _book(tmp_path, monkeypatch)
     book.tick()
     client_order_id = _posts(broker)[0]["client_order_id"]
@@ -447,12 +453,12 @@ def test_max_hold_flattens_on_the_third_session_and_survives_the_book_file(tmp_p
     broker.state["clock"]["timestamp"] = "2026-10-15T19:50:00Z"
     broker.state["clock"]["next_close"] = "2026-10-15T20:00:00Z"
     assert book.tick() == "FLATTENING"
-    assert journal.last("trade_exit")["reason"] == "MAX_HOLD"
+    assert journal.last("trade_exit")["reason"] == "OVERNIGHT_RECOVERY"
     for leg in broker.parents[client_order_id]["legs"]:
         leg["status"] = "canceled"
     broker.state["orders"] = []
     assert book.tick() == "FLATTENING"
-    assert any(path == "/v2/positions/DECK" for method, path, _ in broker.calls if method == "DELETE")
+    assert any(urlsplit(path).path == "/v2/positions/DECK" for method, path, _ in broker.calls if method == "DELETE")
     broker.state["positions"] = []
     assert book.tick() == "FLATTENING"
     assert book.tick() == "NO_CANDIDATE"
@@ -882,7 +888,7 @@ def test_run_reconciles_a_missing_stop_before_any_models_probe(tmp_path, monkeyp
         signal.signal(signal.SIGTERM, previous)
     assert code == 0
     assert urls == []
-    assert any(path == "/v2/positions/DECK" for method, path, _ in broker.calls if method == "DELETE")
+    assert any(urlsplit(path).path == "/v2/positions/DECK" for method, path, _ in broker.calls if method == "DELETE")
     reopened = PaperJournal(tmp_path / "book.sqlite")
     try:
         assert reopened.last("trade_exit")["reason"] == "PROTECTION_MISSING"
@@ -997,7 +1003,7 @@ def test_partial_take_profit_remains_manageable_after_restart(tmp_path, monkeypa
     broker.state["orders"] = []
     assert book.tick() == "FLATTENING"
     assert restarted.last("trade_exit")["reason"] == "PROTECTION_MISSING"
-    assert any(path == "/v2/positions/DECK" for method, path, _ in broker.calls if method == "DELETE")
+    assert any(urlsplit(path).path == "/v2/positions/DECK" for method, path, _ in broker.calls if method == "DELETE")
     restarted.close()
 
     root = tmp_path / "hold"
@@ -1015,12 +1021,12 @@ def test_partial_take_profit_remains_manageable_after_restart(tmp_path, monkeypa
     broker.state["clock"]["timestamp"] = "2026-10-15T19:50:00Z"
     broker.state["clock"]["next_close"] = "2026-10-15T20:00:00Z"
     assert book.tick() == "FLATTENING"
-    assert restarted.last("trade_exit")["reason"] == "MAX_HOLD"
+    assert restarted.last("trade_exit")["reason"] == "OVERNIGHT_RECOVERY"
     for leg in broker.parents[client_order_id]["legs"]:
         leg["status"] = "canceled"
     broker.state["orders"] = []
     assert book.tick() == "FLATTENING"
-    assert any(path == "/v2/positions/DECK" for method, path, _ in broker.calls if method == "DELETE")
+    assert any(urlsplit(path).path == "/v2/positions/DECK" for method, path, _ in broker.calls if method == "DELETE")
     restarted.close()
 
 
@@ -1038,8 +1044,8 @@ def test_acknowledged_close_order_is_not_treated_as_unowned(tmp_path, monkeypatc
     broker.state["orders"] = [close_order]
     assert book.tick() == "FLATTENING"
     position_deletes = [
-        path for method, path, _ in broker.calls
-        if method == "DELETE" and path == "/v2/positions/DECK"
+        urlsplit(path).path for method, path, _ in broker.calls
+        if method == "DELETE" and urlsplit(path).path == "/v2/positions/DECK"
     ]
     assert position_deletes == ["/v2/positions/DECK"]
     assert not any(close_order["id"] in path for method, path, _ in broker.calls if method == "DELETE")
@@ -1052,8 +1058,8 @@ def test_acknowledged_close_order_is_not_treated_as_unowned(tmp_path, monkeypatc
     )
     assert book.tick() == "FLATTENING"
     assert [
-        path for method, path, _ in broker.calls
-        if method == "DELETE" and path == "/v2/positions/DECK"
+        urlsplit(path).path for method, path, _ in broker.calls
+        if method == "DELETE" and urlsplit(path).path == "/v2/positions/DECK"
     ] == ["/v2/positions/DECK"]
     restarted.close()
 
@@ -1430,7 +1436,7 @@ def _lose_deck_close(broker):
     lost = {"order": None}
 
     def call(method, path, payload=None):
-        if method == "DELETE" and path == "/v2/positions/DECK" and lost["order"] is None:
+        if method == "DELETE" and urlsplit(path).path == "/v2/positions/DECK" and lost["order"] is None:
             order = original(method, path, payload)
             lost["order"] = copy.deepcopy(order)
             broker.state["orders"].append(copy.deepcopy(order))
@@ -1453,8 +1459,8 @@ def test_lost_close_response_waits_and_still_protects_the_other_symbol(tmp_path,
     )
     assert lost["order"]["id"]
     deck_deletes = [
-        path for method, path, _payload in broker.calls
-        if method == "DELETE" and path == "/v2/positions/DECK"
+        urlsplit(path).path for method, path, _payload in broker.calls
+        if method == "DELETE" and urlsplit(path).path == "/v2/positions/DECK"
     ]
     assert deck_deletes == ["/v2/positions/DECK"]
     journal.close()
@@ -1470,15 +1476,15 @@ def test_lost_close_response_waits_and_still_protects_the_other_symbol(tmp_path,
         for event in restarted_journal.events
     )
     assert [
-        path for method, path, _payload in broker.calls
-        if method == "DELETE" and path == "/v2/positions/DECK"
+        urlsplit(path).path for method, path, _payload in broker.calls
+        if method == "DELETE" and urlsplit(path).path == "/v2/positions/DECK"
     ] == ["/v2/positions/DECK"]
     assert not any(
         method == "DELETE" and lost["order"]["id"] in path
         for method, path, _payload in broker.calls
     )
     assert any(
-        method == "DELETE" and path == "/v2/positions/CROX"
+        method == "DELETE" and urlsplit(path).path == "/v2/positions/CROX"
         for method, path, _payload in broker.calls
     )
     assert restarted_journal.last("trade_exit")["client_order_id"] == crox_id
@@ -1514,7 +1520,7 @@ def test_uncertain_close_does_not_block_or_adopt_unrelated_orders(tmp_path, monk
         event["kind"] == "close_ack" and event.get("client_order_id") == deck_id
         for event in restarted_journal.events
     )
-    deleted = [path for method, path, _payload in broker.calls if method == "DELETE"]
+    deleted = [urlsplit(path).path for method, path, _payload in broker.calls if method == "DELETE"]
     assert "/v2/positions/DECK" in deleted
     assert deleted.count("/v2/positions/DECK") == 1
     assert "/v2/positions/CROX" in deleted
@@ -1532,7 +1538,7 @@ def test_terminal_market_close_fill_is_refreshed_before_the_earnings_outcome(tmp
         leg["status"] = "canceled"
     broker.state["orders"] = []
     assert book.tick() == "FLATTENING"
-    assert any(path == "/v2/positions/DECK" for method, path, _payload in broker.calls if method == "DELETE")
+    assert any(urlsplit(path).path == "/v2/positions/DECK" for method, path, _payload in broker.calls if method == "DELETE")
     close_id = journal.last("close_ack")["order"]["id"]
     broker.state["positions"] = []
     broker.state["orders"] = []

@@ -4,30 +4,60 @@
 
 **Target approved by Nick:** Astra 6 is the generative LLM for source-linked interpretation and structured theses/scenarios/plans; Jev is the bounded judge of underlying evidence plus proposal; deterministic code owns numbers, validated forecasts, freshness, sizing, shared portfolio risk, execution and APDE transitions. Critical protection and exits must not wait for either model. This supersedes Jev-only product direction, not the evidence of what earlier revisions implemented. See [canon v4.0](ATHENA_TRADING_CANON.md), [hybrid contract and diagram acceptance map](HYBRID_MODEL_CONTRACT.md) and [build plan](BUILD_PLAN.md).
 
-**What this branch implements:** the intraday path is still the Jev-only ORB paper runner from main `5708946616afb675d1c78138990d8fa46057b6d5`. It also contains the Jev-only earnings book from PR #29 and, on this dependent branch, a partial shared gate, a fresh-bar fallback, and offline evaluation machinery. Astra 6 is not integrated. Its provider deployment, API model ID, account access and interface are unverified, and no substitute or deployment identifier is selected. This branch does not deploy, change credentials, or grant LIVE authority. The earnings three-session hold remains an unresolved exception to pre-close flat.
+**What this branch implements:** the intraday path is still the Jev-only ORB paper runner from main `5708946616afb675d1c78138990d8fa46057b6d5`. It also contains the Jev-only earnings book from PR #29 and, on this dependent branch, a partial shared gate, a fresh-bar fallback, and offline evaluation machinery. Astra 6 is not integrated. Its provider deployment, API model ID, account access and interface are unverified, and no substitute or deployment identifier is selected. This branch does not deploy, change credentials, or grant LIVE authority. Nick confirmed no overnight positions; both arms pursue same-session exits and preserve unresolved exposure for recovery.
 
 | Capability | Verified repository scope / remaining work |
 |---|---|
 | Main entry path | Narrow ORB candidate → Jev-only judgment → deterministic pilot risk → Alpaca paper bracket/recovery; Astra 6 and hybrid entry are not implemented |
 | Operational evidence | The 13 October held-bracket incident below records a first filled bracket and protective flatten. Earlier no-traded-session statements are historical. Current deployed host SHA, health and exposure were not checked by this repair |
-| Earnings | PR #29's Jev-only paper book, including lifecycle repair `5baae398e05c5a31b956280a002641694a4a4052`. Not source intelligence or thesis generation. Not merged and not deployed |
-| Shared gate and evaluation | Partial symbol and buying-power checks, fresh-bar fallback, and offline comparison machinery. Peer reads do not take the other runner's writer lock. Not the hybrid portfolio gate, and not a performance result |
-| Holding policy | Current product guardrail is pre-close flat and no overnight exposure. The earnings book still uses a three-session default hold (five-session ceiling). That conflict is unresolved |
+| Earnings | The PR #29 dependency implements a narrow Jev-only paper book, not source intelligence or thesis/scenario generation. Lifecycle and no-overnight repair, including final durability follow-up `daedc2f5849d8468f1a002bd5f34b58b6e45c68c`, is described below. It is not merged and not deployed |
+| Holding policy | Nick explicitly confirmed no overnight positions on 13 October 2026. New earnings brackets use DAY and begin closing 15 minutes before the actual session close, including early closes. Old journals remain recoverable; unknown or unexecuted exits stay visible and block new entries |
+| Shared gate and evaluation | Account-coordinated durable symbol/buying-power reservations, read-only verified peer journals, fresh-bar fallback and offline comparison machinery. Not the complete hybrid portfolio gate or a performance result |
 | Forecasting / APDE / portfolio risk | Comprehensive validated forecasts, full shared EXPLORE/PROTECT/HARVEST/DEFEND/EXIT management, hybrid management and complete cross-arm portfolio controls remain incomplete |
 | Learning / Core | Current trading-specific outcome store, retrieval and prospective temporary veto study exist; general Core context/replay/validation/knowledge integration and measured performance improvement are not established |
 | Authority | PAPER/ABSENT only; LIVE remains rejected. Aggressive valid opportunity capture and adaptive winners do not raise risk caps or grant overnight permission |
+
+## Atomic shared-account reservations — 13 October 2026
+
+Tested combined runtime and tests: `07fd623562931b2874d2957d143da9143a837e38`, tree `5382cfb1d5bb9c5f10b96d87957d7b92652c6c2c`. This stack retains PR #29 lifecycle, no-overnight and outcome-durability repair `daedc2f5849d8468f1a002bd5f34b58b6e45c68c` as an ancestor. The following documentation-only merge preserves those tested runtime/test blobs and records the final evidence.
+
+| Review finding / safety invariant | Repair and observed synthetic proof |
+|---|---|
+| Concurrent check/reserve and same-symbol race | Both real entry methods acquire one account-specific nonblocking mutex before fresh reads, risk checks and durable intent. Separate spawned processes exercise both first-arm orderings and same/different symbols; at most one submits. A retry after the first process exits still sees the durable reservation |
+| Crash-safe reservation | Process death after the SQLite intent commit, before or after the checkpoint, releases only the mutex. Restart retains capacity and symbol exclusion; no uncertain order is resent |
+| Mixed-time buying-power evidence | `LivePaperAPI.snapshot` reads positions/orders before account. An acknowledged order cannot exempt its cost from a balance sampled earlier. The original insertion-between-account-and-orders scenario blocks; coherent reflected orders still avoid double charging |
+| Pending/partial GTC and day transition | Working quantity includes unfilled shares plus held residual. `done_for_day` is nonterminal, including legacy GTC state across restart/day change. Genuine terminal cancellation releases only unfilled quantity; prior-session unresolved intraday journals stay in the peer view |
+| Peer recovery integrity | Read-only SQLite snapshots validate both hash chain and durable checkpoint. Clean-prefix truncation, missing/mismatched anchors and a missing DB with surviving anchor fail closed; the one-row commit/checkpoint crash window remains recoverable |
+| Service isolation and configuration | Both units add only `/var/lib/athena-risk` for shared write access, with existing own-directory write boundaries and `ProtectSystem=strict` intact. Required absolute `ATHENA_SHARED_RISK_DIR` is durably bound to account/path. Missing/unusable/mismatched coordination blocks entry. Unprivileged tests read mode-0555 peer directories and mode-0444 files without modifying them |
+| Model-independent protection and no overnight authority | Both actual session-exit paths progress while another entry holds the mutex and no model is available. Both arms reject overnight proposals; accepted authority is `flat-by-close`. New DAY reservations are not described as overnight exposure. Legacy GTC risk remains recovery data |
+
+Observed exact-tree local checks used Python 3.12.14 under `env -i`, temporary state and a socket-denial guard. All broker/provider transports were synthetic:
+
+```bash
+python -m pytest -q                                      # 871 passed in 10.93s
+python -m ruff check .                                   # clean, 0.15.8
+bash -n deploy/install.sh                                 # clean
+python -m compileall -q src tests                         # clean
+git diff --check                                          # clean
+python -m pip wheel --no-index --no-deps --no-build-isolation .
+# isolated wheel install and shared_risk/live/earnings/ownership imports passed
+```
+
+No configured type checker exists. Root pytest excludes the separately extracted Astra Desk suite. Protected `research`, `configs` and `data` paths are unchanged from PR #31 head `5d0c5bb57f54b4ff82575314451a2d947346e30e`. Permission checks did not launch real systemd units. This is single-host file coordination and requires both services to use the reviewed code, the same shared path and the actual peer journals; it is not distributed coordination or proof of deployment, broker executions, account health or trading performance. See [operator setup and recovery constraints](CLOUD_DEPLOYMENT.md#shared-account-entry-coordination).
+
+Comprehensive portfolio correlation/concentration/loss/drawdown thresholds and hybrid model integration remain incomplete. This repair does not claim complete opportunity attribution: POST-rejected/no-entry and fill-racing-timeout funnel coverage remain separate follow-ups. PAPER/ABSENT authority, existing risk caps and frozen evidence are unchanged. No service was activated, broker/provider called, credential changed or real-money order authorized.
 
 ## Shared risk, fresh-bar fallback, and evaluation machinery
 
 The earnings review fixes stay on `cursor/earnings-adaptive-paper-a4c7`. This change does not reset that work. It adds the account gate, the opportunity funnel, and an offline comparison that does not read consumed holdouts.
 
-**Implemented and covered by fixtures.** A remembered intraday TAKE_TRADE is submitted at the cutoff only when the fresh completed bar is still that setup. Setup identity is direction, opening range, price, and stop. A later minute of that same setup is not `SETUP_CHANGED`. A stale bar records `fallback_no_trade` and does not send the old order. A fresh bar in the other direction does not send the old order. Equivalent repeats of one opening-range setup use one reassessment and do not consume the 20-setup budget. `paper/shared_risk.py` refuses a second reservation of the same symbol, an intraday overnight proposal, and combined notional above buying power. Buying power is the broker snapshot: an acknowledged order already visible there is not added again, and a local reservation the snapshot does not show still counts. A working entry reserves its unfilled quantity plus shares still held. A terminal order releases the unfilled remainder. Malformed fill evidence fails closed. Each arm reads the other book without taking its writer lock, including when that directory is readable and not writable. An unreadable snapshot fails closed. `paper/evaluation.py` fills at the next open. A gap through the stop is an observed adverse move. A configured stop is a labeled bound, not an observed touch, when no price path is present. Drawdown follows time. Uncertainty resamples the same opportunity population as expectancy, with abstentions as zero returns and skipped sessions retained, and reports paired session differences. `compare_policies` reports deterministic, Jev without memory, and Jev with memory. Its performance field is `unverified`. An entry that times out and ends canceled with zero fills records one unfilled funnel outcome, including after restart. The research ORB-M re-entry scan continues after an excluded retracement. Earnings headlines that are a split, dividend, or distribution stay `news=unconfirmed`.
+**Implemented and covered by fixtures.** A remembered intraday TAKE_TRADE is submitted at the cutoff only when the fresh completed bar is still that setup. Setup identity is direction, opening range, price, and stop. A later minute of that same setup is not `SETUP_CHANGED`. A stale bar records `fallback_no_trade` and does not send the old order. A fresh bar in the other direction does not send the old order. Equivalent repeats of one opening-range setup use one reassessment and do not consume the 20-setup budget. `paper/shared_risk.py` refuses a second reservation of the same symbol, an overnight proposal from either arm, and combined notional above buying power. The account is sampled after positions and orders under the entry coordinator. Acknowledged exposure seen before that buying-power sample is not charged again; unreflected reservations still count. A working entry reserves its unfilled quantity plus shares still held. A terminal order releases the unfilled remainder. Malformed fill evidence fails closed. Each arm reads the other book without taking its writer lock, including when that directory is readable and not writable. An unreadable snapshot fails closed. `paper/evaluation.py` fills at the next open. A gap through the stop is an observed adverse move. A configured stop is a labeled bound, not an observed touch, when no price path is present. Drawdown follows time. Uncertainty resamples the same opportunity population as expectancy, with abstentions as zero returns and skipped sessions retained, and reports paired session differences. `compare_policies` reports deterministic, Jev without memory, and Jev with memory. Its performance field is `unverified`. An entry that times out and ends canceled with zero fills records one unfilled funnel outcome, including after restart. The research ORB-M re-entry scan continues after an excluded retracement. Earnings headlines that are a split, dividend, or distribution stay `news=unconfirmed`.
 
-**Deployed.** The intraday Hostinger unit from 10 October 2026 is unchanged by this commit. The earnings unit is not installed. Nothing here was deployed.
+**Deployment boundary.** Nothing here was deployed. The current host revision, service state and exposure were not checked by this repair; dated operational observations below are historical.
 
 **Empirically supported.** Not this change. The 13 October paper fill, flattened seconds later with `PROTECTION_MISSING`, is one observed broker event and the reason the held-stop check exists. It is not an edge. The 4–12% earnings screen remains a watchlist heuristic. Jev action probability is not a calibrated probability of profit. Fresh market data for the three-way comparison was not available, so the machinery runs on supplied opportunities and does not claim a result. Consumed holdouts and INVALID_EVIDENCE artifacts were not read or rewritten.
 
-**Inactive until the owner sets a number.** Correlation, concentration, weekly loss, monthly loss, portfolio drawdown, and overnight stress. The earnings multi-day GTC hold stays the existing paper exception for that arm. It does not extend overnight authority to the intraday book, and the canon's flat-by-close rule is unchanged. Live PROTECT, HARVEST, and DEFEND ratchets stay off the one-share pilot. Research `ManagementParameters` still drive only the ORB-M simulator. There is no earnings promotion protocol.
+**Inactive until the owner sets a number.** Correlation, concentration, weekly loss, monthly loss, portfolio drawdown, and overnight stress. Neither arm has overnight entry authority. Legacy GTC reservations remain visible until genuine terminal reconciliation; retaining that risk is not permission to renew the hold. Live PROTECT, HARVEST, and DEFEND ratchets stay off the one-share pilot. Research `ManagementParameters` still drive only the ORB-M simulator. There is no earnings promotion protocol.
 
 ### Strategy contract
 
@@ -36,14 +66,14 @@ The earnings review fixes stay on `cursor/earnings-adaptive-paper-a4c7`. This ch
 | Intraday one-share ORB bracket, 2R, day order | `paper/live.py` | Active paper fixtures submit qty 1 and flatten the pilot's own symbol | Implemented. One broker fill observed and flattened. Not an edge |
 | ORB-M qualification, trail, controlled re-entry | `orb_m/session.py` | An excluded retracement does not stop a later valid reset | Research simulator. Not the live order path |
 | Earnings 4–12% screen | `plan_entry` | An out-of-band bar is temporary; a later in-band bar can be judged | Watchlist heuristic. Not a continuation result |
-| Earnings post-entry bracket | GTC stop at half the gap, 2R, hold 3 sessions | Long and short follow the sign of the gap under the same caps | Implemented paper rule. Not measured by side |
-| Shared account gate | `paper/shared_risk.py` | Same symbol, snapshot buying power, working quantity, read-only peer book | Active for those checks. Portfolio numbers inactive |
+| Earnings post-entry bracket | DAY stop at half the gap, 2R, same-session exit | Long and short follow the sign of the gap under the same caps | Implemented paper rule. Not measured by side |
+| Shared account gate | `paper/shared_risk.py` | Atomic symbol/capacity reservation, ordered buying-power sampling, working quantity, verified read-only peer book | Active for those checks. Portfolio numbers inactive |
 | Fresh-evidence comparison | `paper/evaluation.py` | Next-open fill, observed excursion, common-session uncertainty | Machinery only. Performance unverified |
 | Learning | `paper/learning.py` | Nested legs reconcile; fallback and earnings stay out of the intraday study | Intraday study implemented. Earnings stored, not promoted |
 
 `LIVE` still raises. Approved dollar caps are unchanged.
 
-Observed local checks, Python 3.12. The pre-repair count on `ba032129b7900cafec2535fde0db902eae715b36` was 785 passed. That count did not include these review repairs. No pre-existing failures were present. Root pytest does not include `research/astra-desk/tests`.
+Earlier shared-risk/fallback repair receipt (not the atomic repair above), Python 3.12. The pre-repair count on `ba032129b7900cafec2535fde0db902eae715b36` was 785 passed. That count did not include these review repairs. No pre-existing failures were present. Root pytest does not include `research/astra-desk/tests`.
 
 ```bash
 python3 -m pytest -q                # 807 passed in 6.24s
@@ -59,7 +89,39 @@ GitHub Actions on `ba032129b7900cafec2535fde0db902eae715b36` did not run the tes
 
 Actions on `253900e0d51bba64aa6b697c1d364b42cfe63a06` did start. Ruff passed. Pytest failed three subprocess tests (`38461815469` push, `38461823625` pull request) because those tests set the child working directory to `/workspace`. That path is this checkout, not the Actions workspace. The child now uses the repository root. Local recheck after that path fix: `python3 -m pytest -q` passed 807 tests in 7.06s. Root pytest still does not include `research/astra-desk/tests`.
 
-## Earnings Adaptive paper book — 13 October 2026
+## Earnings close ownership and same-session policy — 13 October 2026
+
+Tested runtime revision: `cdbf8b9b5223255803d33e142593f6d5a77f112b`, on prior PR #29 head `dd71add0170a03b7c9da92a31c31bbe49b2c732c`. The owner confirmed no overnight positions at 21:41 UTC. This resolves the earlier holding-policy conflict without granting deployment, provider calls, spending or LIVE authority.
+
+| Finding / requirement | Implemented behavior and regression evidence |
+|---|---|
+| Unrelated close adoption / unowned residual | Match opposite side, exact requested quantity, non-reserved ID and creation/submission timing to the durable intent. Retry requires exact signed residual explained by owned fills. Quantity-bounded DELETE prevents a concurrent addition from expanding the close request. Fractional, opposite-side and unexplained shares halt rather than being liquidated |
+| Historical earnings ownership | Account-bound exact entry, leg and close identities are rebuilt from the durable journal independently of active symbols. They remain after closure/restart. Intraday terminal learning no longer hides a manual order solely because its symbol is in the active earnings ledger |
+| Terminal-before-restart lost acknowledgement | Search bounded complete terminal history and working observations, deduplicate consistent identities, reject conflicting/truncated/ambiguous evidence. A missing match remains visibly unresolved; no duplicate close or fabricated fill |
+| Partial and terminal-zero attempts | Refresh working partial acknowledgements, validate immutable order identity, accept verified terminal zero-fill cancellations/rejections/expirations and aggregate later fills. Every attempt must be terminal before retry or publication |
+| No overnight positions | DAY entry brackets; 15-minute pre-close exit using actual regular-session calendar and early closes; pending-entry cancellation and prior-day recovery without models. Default hold is one session; legacy 2..5 settings are readable for recovery but block new entries |
+| Execution limitations | A market halt, outage or closed session can prevent flatness. `EXIT_UNRESOLVED`, `FLATTENING` and `POSITION_MISMATCH` remain visible and block new entries. Cancellation or acknowledgement alone is not a confirmed close |
+
+Regression-first verification: all eight independently reported adverse cases failed on the starting head. Thirty-six new in-repository sequence cases cover those invariants and the subsequent same-session policy. Fixture updates supply actual broker-shaped timestamps, unique per-symbol IDs and signed short-close behavior; the old multiday expectations were replaced by the owner's new policy. Existing research, model-role boundaries, risk caps and broker pin were preserved.
+
+Observed local checks used Python 3.12.14 with an empty inherited environment, temporary journals/learning stores and a Python socket-denial audit hook. No real broker/provider was called:
+
+```bash
+python -m pytest -p no:cacheprovider -q                 # 814 passed in 7.80s
+python -m ruff check .                                 # clean, 0.15.8
+bash -n deploy/install.sh                               # clean
+git diff --check                                        # clean
+python -m pip install --no-index --no-deps --no-build-isolation --target <isolated-package-dir> .
+# local wheel built/installed; installed-package earnings/ownership imports passed
+```
+
+Final durability follow-up: `daedc2f5849d8468f1a002bd5f34b58b6e45c68c` also closes the verified event-publication crash window. The reconciled earnings receipt is persisted before `position_closed`, missing events are idempotently recovered, and old journals already containing `position_closed` without a receipt remain in recovery. Missing terminal fill evidence stays `FLATTENING` and never silently completes the episode. Six further tests cover crashes immediately before/after both durable appends, the legacy reversed-order state, and unavailable recovery evidence. Three new assertions reproduced failures before the fix; two append-boundary controls already passed. Final full suite: **820 passed in 7.39s**; Ruff, installer syntax, diff checks and fresh local package build/install/import all passed with the same empty-environment network guard. The total addition is 42 in-repository tests. This follow-up does not change authority, risk, strategy selection or deployment.
+
+The close quantity parameter and bounded history query follow Alpaca's [close-position schema](https://docs.alpaca.markets/us/reference/deleteopenposition-1) and [order-history schema](https://docs.alpaca.markets/us/reference/getallorders-1). Schema review and synthetic fixtures are not broker-execution evidence. A timestamp-constrained recovery candidate still depends on complete trustworthy broker observations; unresolved identity requires operator reconciliation. Root pytest excludes Astra Desk. These local checks do not establish hosted CI, deployment, current account health or profitable strategy behavior. The shared reservation repair above is layered onto this dependency. Comprehensive portfolio correlation, concentration and loss/drawdown controls remain incomplete.
+
+## Earlier Earnings Adaptive paper book evidence — 13 October 2026
+
+The following section preserves the previous implementation and its 778-test receipt. Its GTC/multi-day behavior is superseded by the same-session policy above.
 
 The earnings arm is a second PAPER book. It reads a free Nasdaq earnings calendar and an operator copy of the screener's `universe_75.txt`. It submits a GTC bracket only when the live gap is inside the screener's 4–12% band, Jev accepts it on the same floors as the intraday arm, and the dollar caps allow the share count. `parse_authority("LIVE")` still raises. Client order ids start with `athe-`. The book file is separate from the dated intraday journals. A restart reconciles those ids and does not resubmit them. SIGTERM does not flatten. The intraday runner ignores `athe-` orders and symbols in the earnings ledger, and it still refuses any other foreign symbol.
 

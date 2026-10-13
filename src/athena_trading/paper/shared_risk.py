@@ -8,9 +8,12 @@ approved threshold. Those checks are listed and do not authorize exposure.
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -59,10 +62,11 @@ def _number(value: Any) -> float | None:
 
 
 # A filled or otherwise finished parent releases shares that never filled.
-_TERMINAL_RELEASE = {"filled", "canceled", "expired", "rejected", "replaced", "done_for_day"}
+_TERMINAL_RELEASE = {"filled", "canceled", "expired", "rejected", "replaced"}
 _WORKING = {
     "new", "accepted", "pending_new", "accepted_for_bidding", "partially_filled",
     "pending_cancel", "pending_replace", "held", "stopped", "suspended", "calculated",
+    "done_for_day",  # GTC orders can resume tomorrow; this is not a cancellation.
 }
 
 
@@ -179,7 +183,9 @@ def _exposures_from_events(events: list[dict[str, Any]], arm: str) -> list[OpenE
             continue
         open_rows.append(OpenExposure(
             arm=arm, symbol=str(order.get("symbol") or ""), notional=price * qty,
-            stop_risk=abs(price - stop) * qty, overnight=arm == "earnings",
+            stop_risk=abs(price - stop) * qty,
+            # Describes legacy GTC exposure for recovery, never entry authority.
+            overnight=arm == "earnings" and order.get("time_in_force") != "day",
             client_order_id=identity, acknowledged=identity in acknowledged,
         ))
     return open_rows
@@ -191,30 +197,94 @@ def exposures_from_journal(journal: PaperJournal, arm: str) -> list[OpenExposure
 
 
 class SharedBookBusy(ValueError):
-    """The other arm's journal is locked. Exposure is unknown, so new entries stop."""
+    """Another entry holds the account coordinator. Defer entries, never protection."""
+
+
+def _coordinator_directory() -> Path:
+    raw = os.environ.get("ATHENA_SHARED_RISK_DIR", "").strip()
+    if not raw or not Path(raw).is_absolute():
+        raise SharedExposureUnreadable("ATHENA_SHARED_RISK_DIR must name an absolute shared directory")
+    return Path(raw).resolve()
+
+
+def _check_coordination_binding(events: list[dict[str, Any]], account_id: str) -> None:
+    expected = {"account_id": account_id, "directory": str(_coordinator_directory())}
+    for event in events:
+        if event.get("kind") == "shared_risk_binding" and event.get("binding") != expected:
+            raise SharedExposureUnreadable("shared risk account/coordinator binding changed")
+        if event.get("kind") == "binding":
+            bound = event.get("binding", {}).get("account_id")
+            if bound is not None and bound != account_id:
+                raise SharedExposureUnreadable("peer journal belongs to a different account")
+
+
+@contextmanager
+def entry_coordination(journal: PaperJournal, account_id: str) -> Iterator[None]:
+    """Serialize fresh evidence, checks and the durable intent across both processes.
+
+    The shared file is only a mutex. The own journal remains the durable reservation,
+    visible read-only to the peer after a crash. A dead process releases flock; it
+    does not release that reservation. Only entry paths acquire this lock.
+    """
+    root = _coordinator_directory()
+    try:
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        descriptor = os.open(
+            root / (canonical_hash({"account_id": account_id}) + ".lock"),
+            os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600,
+        )
+    except OSError as exc:
+        raise SharedExposureUnreadable("shared risk coordinator is unavailable") from exc
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise SharedBookBusy("another entry holds the shared account coordinator") from exc
+        except OSError as exc:
+            raise SharedExposureUnreadable("shared risk coordinator cannot be locked") from exc
+        _check_coordination_binding(journal.events, account_id)
+        if journal.last("shared_risk_binding") is None:
+            # Publish before reading the peer, including if operators accidentally
+            # configured different mutex locations. At most one entrant can miss
+            # the other's binding; the other must fail closed on the mismatch.
+            journal.append("shared_risk_binding", binding={
+                "account_id": account_id, "directory": str(root),
+            })
+        yield
+    finally:
+        os.close(descriptor)
 
 
 def _read_events(path: Path) -> list[dict[str, Any]]:
     """Read a committed hash chain without the owning runner's writer lock.
 
     The sqlite file is opened read-only. This does not create the lock file,
-    write a checkpoint, or change permissions. An unreadable or broken chain
-    fails closed instead of looking like an empty book.
+    write a checkpoint, or change permissions. Both the hash chain and existing
+    durable checkpoint are verified. A moving checkpoint retries the read rather
+    than combining unrelated versions of the file and its integrity anchor.
     """
     uri = path.resolve().as_uri() + "?mode=ro"
-    try:
-        db = sqlite3.connect(uri, uri=True, timeout=1.0)
-    except sqlite3.Error as exc:
-        raise SharedExposureUnreadable(f"peer exposure is unreadable: {path}") from exc
-    try:
+    checkpoint = path.with_suffix(path.suffix + ".checkpoint")
+    for _attempt in range(3):
         try:
-            rows = list(db.execute(
-                "SELECT seq, payload, previous, digest FROM events ORDER BY seq"
-            ))
-        except sqlite3.Error as exc:
+            before = checkpoint.read_bytes() if checkpoint.exists() else None
+            db = sqlite3.connect(uri, uri=True, timeout=1.0)
+            try:
+                db.execute("BEGIN")
+                rows = list(db.execute("SELECT seq, payload, previous, digest FROM events ORDER BY seq"))
+                has_meta = db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='journal_meta'"
+                ).fetchone()
+                checkpointed = has_meta and db.execute("SELECT checkpointed FROM journal_meta").fetchone()
+                after = checkpoint.read_bytes() if checkpoint.exists() else None
+            finally:
+                db.close()
+        except (OSError, sqlite3.Error) as exc:
             raise SharedExposureUnreadable(f"peer exposure is unreadable: {path}") from exc
-    finally:
-        db.close()
+        if before == after:
+            break
+    else:
+        raise SharedExposureUnreadable(f"peer checkpoint changed during read: {path}")
     events: list[dict[str, Any]] = []
     head = "0" * 64
     for seq, payload, previous, digest in rows:
@@ -229,17 +299,40 @@ def _read_events(path: Path) -> list[dict[str, Any]]:
             raise SharedExposureUnreadable(f"peer exposure is unreadable: {path}")
         events.append(event)
         head = digest
+    if before is not None:
+        try:
+            anchor = json.loads(before)
+            seq = anchor["seq"]
+            if type(seq) is not int or not 0 <= seq <= len(events):
+                raise ValueError("journal truncated past checkpoint")
+            digest = rows[seq - 1][3] if seq else "0" * 64
+            if anchor["digest"] != digest or len(events) - seq > 1:
+                raise ValueError("checkpoint mismatch")
+        except (KeyError, TypeError, ValueError, UnicodeError) as exc:
+            raise SharedExposureUnreadable(f"peer journal checkpoint failed: {path}") from exc
+    elif checkpointed:
+        raise SharedExposureUnreadable(f"peer journal checkpoint is missing: {path}")
     return events
 
 
-def _read_journal(path: Path, arm: str) -> list[OpenExposure]:
+def _read_journal(path: Path, arm: str, account_id: str | None = None) -> list[OpenExposure]:
     if not path.exists():
+        if path.with_suffix(path.suffix + ".checkpoint").exists():
+            raise SharedExposureUnreadable(f"peer journal is missing: {path}")
         return []
-    return _exposures_from_events(_read_events(path), arm)
+    events = _read_events(path)
+    if account_id is not None:
+        _check_coordination_binding(events, account_id)
+    return _exposures_from_events(events, arm)
 
 
 def reflected_exposure(snapshot: dict[str, Any]) -> tuple[set[str], set[str]]:
-    """Client order ids and position symbols already inside one broker snapshot."""
+    """Exposure sampled before the account by the broker snapshot contract.
+
+    LivePaperAPI samples account last. A later order can never use an earlier
+    buying-power sample to exempt its reservation. Synthetic brokers must return
+    a coherent snapshot (or honor that same sampling order).
+    """
     ids: set[str] = set()
 
     def walk(order: Any) -> None:
@@ -266,24 +359,27 @@ def reflected_exposure(snapshot: dict[str, Any]) -> tuple[set[str], set[str]]:
     return ids, symbols
 
 
-def other_arm_exposure(arm: str, *, today: date | None = None) -> list[OpenExposure]:
+def other_arm_exposure(
+    arm: str, *, today: date | None = None, account_id: str | None = None,
+) -> list[OpenExposure]:
     """The other book. A missing directory is an arm that is not running."""
     if arm == "earnings":
         root = Path(os.environ.get("ATHENA_STATE_DIR", ""))
         if not os.environ.get("ATHENA_STATE_DIR", "").strip() or not root.is_dir():
             return []
         rows: list[OpenExposure] = []
-        paths = sorted(root.glob("*.sqlite"))
-        if today is not None:
-            current = root / f"{today.isoformat()}.sqlite"
-            paths = [current] if current in paths else []
+        # A new date does not release yesterday's unresolved reservation. Include
+        # orphaned anchors as well, so deleting the DB cannot hide its exposure.
+        paths = sorted(set(root.glob("*.sqlite")) | {
+            path.with_suffix("") for path in root.glob("*.sqlite.checkpoint")
+        })
         for path in paths:
-            rows.extend(_read_journal(path, "intraday"))
+            rows.extend(_read_journal(path, "intraday", account_id))
         return rows
     root = Path(os.environ.get("ATHENA_EARNINGS_STATE_DIR", ""))
     if not os.environ.get("ATHENA_EARNINGS_STATE_DIR", "").strip() or not root.is_dir():
         return []
-    return _read_journal(root / "book.sqlite", "earnings")
+    return _read_journal(root / "book.sqlite", "earnings", account_id)
 
 
 def _already_in_buying_power(
@@ -312,7 +408,7 @@ def authorize_entry(
     """
     if arm not in {"intraday", "earnings"}:
         return SharedDecision(False, "UNKNOWN_ARM")
-    if overnight and arm != "earnings":
+    if overnight:
         return SharedDecision(False, "OVERNIGHT_NOT_AUTHORIZED")
     if notional < 0 or stop_risk < 0 or buying_power < 0:
         return SharedDecision(False, "INVALID_EXPOSURE")
@@ -328,5 +424,4 @@ def authorize_entry(
     )
     if used + notional > buying_power:
         return SharedDecision(False, "BUYING_POWER")
-    authority = "earnings-paper-exception" if arm == "earnings" and overnight else "flat-by-close"
-    return SharedDecision(True, "AUTHORIZED", overnight_authority=authority)
+    return SharedDecision(True, "AUTHORIZED", overnight_authority="flat-by-close")

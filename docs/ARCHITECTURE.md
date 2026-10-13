@@ -11,7 +11,7 @@ Both **Earnings Adaptive** and **Athena Predictive Intraday** share:
 
 See the [hybrid contract and image acceptance map](HYBRID_MODEL_CONTRACT.md). Astra 6's exact deployment/API model ID and access are unverified; no silent substitution is allowed. Agreement between the models is not independent proof and neither confidence score is profit probability.
 
-The current main runner is still a narrow Jev-only intraday paper implementation. The hybrid, full APDE, complete forecasts and general Core learning remain incomplete; Earnings PR #29 is pending integration. The diagram's pre-close-flat rule and PR #29's multiday proposal require an explicit owner policy decision. Nothing here enables LIVE or changes risk limits.
+The current main runner is still a narrow Jev-only intraday paper implementation. The hybrid, full APDE, complete forecasts and general Core learning remain incomplete; Earnings PR #29 is pending integration. Nick confirmed the diagram's pre-close-flat rule on 13 October 2026: neither arm may plan an overnight position. PR #29's earlier multi-day proposal is superseded; legacy positions must be recovered without renewing that permission. Nothing here enables LIVE or changes risk limits.
 
 [Implementation status and repository map](IMPLEMENTATION_STATUS.md) · [Active build sequence](BUILD_PLAN.md) · [Documentation index](README.md)
 

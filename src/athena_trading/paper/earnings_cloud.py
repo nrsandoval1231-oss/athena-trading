@@ -1,8 +1,9 @@
 """Always-on supervisor for the earnings paper book. Separate from athena-paper.
 
 One process, one SQLite book, one Alpaca paper account that the intraday service
-may also use. SIGTERM stops this process and leaves GTC brackets working. It
-does not flatten, and it does not signal the intraday service.
+may also use. SIGTERM stops this process without confirming a flat account.
+DAY orders (and legacy GTC orders) remain broker-managed until terminal. This
+does not flatten or signal the intraday service; recover unfinished exposure.
 """
 from __future__ import annotations
 

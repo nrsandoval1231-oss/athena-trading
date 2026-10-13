@@ -2,7 +2,7 @@
 
 Inventory reviewed against main `8e9062a182c25c3745e8fd03326a66235fde04ed` and this earnings branch's lifecycle repair `5baae398e05c5a31b956280a002641694a4a4052`, on 13 October 2026. PR #29 remains open and unmerged.
 
-Start with [canon v4.0](ATHENA_TRADING_CANON.md), [current implementation](IMPLEMENTATION_STATUS.md), [build plan](BUILD_PLAN.md), then the [hybrid contract and image acceptance map](HYBRID_MODEL_CONTRACT.md). **Astra 6 + Jev + deterministic enforcement is the owner-approved target.** Current main remains Jev-only. Model deployment identity/access, full hybrid implementation and the pre-close-flat versus multiday earnings policy remain unresolved as described there.
+Start with [canon v4.0](ATHENA_TRADING_CANON.md), [current implementation](IMPLEMENTATION_STATUS.md), [build plan](BUILD_PLAN.md), then the [hybrid contract and image acceptance map](HYBRID_MODEL_CONTRACT.md). **Astra 6 + Jev + deterministic enforcement is the owner-approved target.** Current main remains Jev-only. Model deployment identity/access and full hybrid implementation remain unresolved. Nick confirmed no overnight holdings on 13 October 2026; both arms must pursue same-session, broker-confirmed exits.
 
 ## Historical boundary
 
@@ -57,4 +57,4 @@ The original [architecture image](assets/athena-trading-canon.jpg) is preserved 
 
 ## Pending branch documentation
 
-PR #29's branch-only `docs/EARNINGS_PAPER.md` is not present on main and is intentionally not copied here as a working launch guide. On integration/rebase, reconcile it and all overlapping current guides to canon v4.0, verify the runtime head separately, and resolve the owner's holding-policy choice. This docs PR does not merge/deploy that branch or authorize its multiday holds.
+PR #29's branch-only `docs/EARNINGS_PAPER.md` is not present on main and is intentionally not copied here as a working launch guide. On integration/rebase, reconcile it and all overlapping current guides to canon v4.0, verify the runtime head separately, and preserve the owner's confirmed no-overnight policy. This branch does not merge or deploy either service.
