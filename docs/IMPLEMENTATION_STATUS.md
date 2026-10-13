@@ -1,5 +1,40 @@
 # Implementation status
 
+## Current architecture and implementation — 13 October 2026
+
+**Target approved by Nick:** Astra 6 is the generative LLM for source-linked interpretation and structured theses/scenarios/plans; Jev is the bounded judge of underlying evidence plus proposal; deterministic code owns numbers, validated forecasts, freshness, sizing, shared portfolio risk, execution and APDE transitions. Critical protection and exits must not wait for either model. This supersedes Jev-only product direction, not the evidence of what earlier revisions implemented. See [canon v4.0](ATHENA_TRADING_CANON.md), [hybrid contract and diagram acceptance map](HYBRID_MODEL_CONTRACT.md) and [build plan](BUILD_PLAN.md).
+
+**Implementation baseline:** main `5708946616afb675d1c78138990d8fa46057b6d5`. This documentation change adds no model integration, code, configuration, credentials, deployment or execution authority. Astra 6's provider deployment/API model ID, account access and supported interface are unverified. No substitute is selected or permitted silently.
+
+| Capability | Verified repository scope / remaining work |
+|---|---|
+| Main entry path | Narrow ORB candidate → Jev-only judgment → deterministic pilot risk → Alpaca paper bracket/recovery; Astra 6 and hybrid entry are not implemented |
+| Operational evidence | The 13 October held-bracket incident below records a first filled bracket and protective flatten. Earlier no-traded-session statements are historical. Current deployed host SHA, health and exposure were not checked by this docs task |
+| Earnings | [PR #29](https://github.com/nrsandoval1231-oss/athena-trading/pull/29) remains open/unmerged at `8b9fedeaa0e582c11f2b7a0587c663b661ee5e0f` when checked on 13 October; it proposes a narrow Jev-only paper arm, not full source intelligence or thesis/scenario generation. Its runtime review/remediation is separate work |
+| Holding policy | Current product guardrail is pre-close flat/no overnight. PR #29 proposes a three-session default hold (five-session ceiling). Explicit owner resolution is required before adopting that multiday policy |
+| Forecasting / APDE / portfolio risk | Comprehensive validated forecasts, full shared EXPLORE/PROTECT/HARVEST/DEFEND/EXIT management, hybrid management and complete cross-arm portfolio controls remain incomplete |
+| Learning / Core | Current trading-specific outcome store, retrieval and prospective temporary veto study exist; general Core context/replay/validation/knowledge integration and measured performance improvement are not established |
+| Authority | PAPER/ABSENT only; LIVE remains rejected. Aggressive valid opportunity capture/adaptive winners does not raise risk caps or grant overnight permission |
+
+PR #29 reconciliation: when integrating/rebasing, align its branch-only `docs/EARNINGS_PAPER.md` and overlapping README/AGENTS/build/status/live/cloud/learning text with the hybrid canon. Do not represent branch-only capabilities as main or treat tests/approval as deployment. Earlier runtime findings must be checked against the actual candidate head before claiming they persist or are fixed.
+
+### Documentation-only verification
+
+Local verification on the documentation candidate, Python 3.12.14, with runtime/test/config/workflow blobs byte-identical to main `5708946616afb675d1c78138990d8fa46057b6d5`:
+
+- `python -m pytest -q`: **730 passed** (7.45s); dependencies supplied from an isolated temporary test directory.
+- `python -m ruff check .`: **all checks passed**, Ruff 0.15.8.
+- `bash -n deploy/install.sh` and `git diff --check`: **clean**.
+- Git-blob comparison against the exact main tree: only 11 existing Markdown files changed and 2 Markdown files added; all 236 other tracked blobs, including 25 unchanged Markdown records, match.
+- Relative file/heading link validation: **139 links passed**. Full inventory: **38 Markdown files**, each listed once. Independent consistency review inspected the original image and all 13 changed/added docs.
+
+The draft PR identifies the published exact head and subsequent CI result. Local tests above exercise the unchanged runtime; they do not test an Astra 6 integration. The source/runtime/config/test/workflow files, original diagram, frozen experiments, audit reports and receipts are unchanged. Dated test counts below remain evidence for their named revisions, not tests of the unimplemented hybrid. Current documentation navigation and historical supersession are inventoried in [docs/README.md](README.md).
+
+## Dated implementation evidence
+
+The remainder retains dated runtime history. Older statements about Jev-only architecture, waiting for market open or no filled paper session apply to their recorded dates; the current summary above governs current capability. Fixture/local tests never establish a broker fill or improved trading performance.
+
+
 ## Transient paper reads — 13 October 2026
 
 Broker GET calls, including minute bars, retry twice with backoff and jitter after a timeout, HTTP 429, or a 5xx response. Order POSTs are not retried. A single transient tick failure no longer flattens an open paper trade. The runner halts `RUNNER_ERROR` only after 3 consecutive transient failures or 60 seconds. A DELETE that returns 404 or 422 for an already finished or canceled leg is a successful cancel. A take-profit or stop fill still halts `POSITION_EXITED` and is also journaled as `TAKE_PROFIT_FILLED` or `STOP_FILLED`. Flat confirmation reads order history with `nested=true`. `parse_authority("LIVE")` still raises. **LIVE remains rejected.** This is not a broker fill and not evidence of trading performance.
@@ -133,7 +168,7 @@ Status date: 24 September 2026. Product authority: [Athena Trading Canon v3.0](A
 
 **Status as of 24 September 2026:** implemented and locally verified, and not deployed on that date. Cloud access and server-side Alpaca/TypeSafe credentials were unavailable then. Deployment status after 10 October 2026 is the Hostinger section above. No broker session has traded, and improved trading performance has not been observed.
 
-## Canon-to-code map
+## Canon-to-code map — September baseline (historical)
 
 | Capability | Current implementation | Remaining boundary |
 |---|---|---|
@@ -148,9 +183,9 @@ Status date: 24 September 2026. Product authority: [Athena Trading Canon v3.0](A
 | Cloud scheduling | paper/cloud.py starts sessions, prioritizes recovery and reviews after 20:15 Eastern; Hostinger VPS service enabled 10 October 2026, last observed `WAITING_FOR_MARKET` | External alerting and backup restore not verified; LIVE remains rejected; no traded session observed |
 | Athena Core | Shared adapter identity contracts reused; trading-specific experience policy implemented | General Core service/context/replay/promotion integration remains incomplete |
 
-## Active sources
+## Active documentation sources
 
-- [LIVE_PAPER.md](LIVE_PAPER.md): the one active broker runner and operating bounds.
+- [LIVE_PAPER.md](LIVE_PAPER.md): the current main broker runner and operating bounds, with separate hybrid integration gates.
 - [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md): host setup, persistent service, preflight and activation.
 - [LEARNING.md](LEARNING.md): exact learning schedule, evidence, validation and adaptive limits.
 - [BUILD_PLAN.md](BUILD_PLAN.md): the single product build sequence.
