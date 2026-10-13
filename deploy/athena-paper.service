@@ -12,6 +12,7 @@ WorkingDirectory=/opt/athena-trading
 EnvironmentFile=/etc/athena/paper.env
 Environment=PYTHONUNBUFFERED=1
 Environment=ATHENA_STATE_DIR=/var/lib/athena
+Environment=ATHENA_EARNINGS_STATE_DIR=/var/lib/athena-earnings
 ExecStart=/opt/athena-trading/.venv/bin/python -m athena_trading.paper.cloud
 Restart=always
 RestartSec=30

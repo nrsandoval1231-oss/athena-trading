@@ -283,3 +283,131 @@ def test_promoted_rule_changes_actual_pilot_behavior(tmp_path):
     assert not any(m == "POST" for m, _, _ in broker.calls)
     journal.close()
     store.close()
+
+
+def test_earnings_excursion_ignores_other_trades_and_future_samples(tmp_path):
+    from athena_trading.paper.learning import earnings_episode
+
+    journal = PaperJournal(tmp_path / "book.sqlite")
+    policy = asdict(POLICY)
+    journal.append("binding", binding={"account_id": "paper-account", "policy": policy})
+    journal.append("broker_observation", at=datetime(2026, 7, 1, 15, tzinfo=UTC), snapshot={
+        "positions": [{"symbol": "DECK", "unrealized_pl": "9999"}],
+    })
+    journal.append("broker_observation", at=datetime(2026, 7, 1, 16, tzinfo=UTC), snapshot={
+        "positions": [{"symbol": "DECK", "unrealized_pl": "-7777"}],
+    })
+    entry_at = datetime(2026, 10, 13, 13, 40, tzinfo=UTC)
+    order = {"client_order_id": "athe-october", "symbol": "DECK", "side": "buy",
+             "qty": "1", "limit_price": "104", "stop_loss": {"stop_price": "102"}}
+    receipt = {"accepted": True, "question_hash": canonical_hash(questions())}
+    journal.append("adjudication", receipt=receipt)
+    journal.append("entry_intent", session="2026-10-13", at=entry_at, order=order,
+                   verdict_hash=canonical_hash(receipt))
+    journal.append("broker_observation", at=datetime(2026, 10, 13, 14, tzinfo=UTC), snapshot={
+        "positions": [{"symbol": "DECK", "unrealized_pl": "0"}],
+    })
+    journal.append(
+        "broker_observation", at=datetime(2026, 10, 13, 14, 30, tzinfo=UTC),
+        client_order_id="athe-other",
+        snapshot={"positions": [{"symbol": "DECK", "unrealized_pl": "12345"}]},
+    )
+    journal.append("broker_observation", at=datetime(2026, 10, 13, 18, tzinfo=UTC), snapshot={
+        "positions": [{"symbol": "DECK", "unrealized_pl": "5000"}],
+    })
+    journal.append("position_closed", client_order_id="athe-october", symbol="DECK", reason="STOP_FILLED")
+    parent = {"id": "parent", "symbol": "DECK", "side": "buy", "filled_qty": "1", "filled_avg_price": "104"}
+    close = {"id": "stop", "symbol": "DECK", "side": "sell", "filled_qty": "1", "filled_avg_price": "102"}
+    journal.append(
+        "earnings_experience", client_order_id="athe-october", symbol="DECK", reason="STOP_FILLED",
+        parent=parent, close_orders=[close],
+    )
+    observed = datetime(2026, 10, 13, 16, tzinfo=UTC)
+    episode = earnings_episode(journal, "athe-october", observed)
+    assert episode["sampled_mfe_dollars"] == "0"
+    assert episode["sampled_mae_dollars"] == "0"
+    assert "complete market path" in episode["excursion_basis"]
+    journal.close()
+
+
+def test_nested_bracket_exit_reconciles_and_the_next_session_can_start(tmp_path):
+    """A filled parent whose exit lives only under legs must not block the next session."""
+    from athena_trading.paper.cloud import SessionTask, next_session
+
+    at = START
+    source = PaperJournal(tmp_path / (at.date().isoformat() + ".sqlite"))
+    source.append("binding", binding={"account_id": "paper-account", "policy": asdict(POLICY)})
+    order = {"client_order_id": "fixture-nested", "symbol": "AAPL", "side": "buy",
+             "limit_price": "100", "stop_loss": {"stop_price": "98"}}
+    receipt = {"accepted": True, "question_hash": canonical_hash(questions())}
+    source.append("adjudication", receipt=receipt)
+    source.append("entry_intent", session=at.date().isoformat(), at=at, order=order,
+                  verdict_hash=canonical_hash(receipt))
+    exit_order = {"id": "exit", "symbol": "AAPL", "side": "sell", "qty": "1", "filled_qty": "1",
+                  "filled_avg_price": "98", "status": "filled"}
+    canceled = {"id": "stop", "symbol": "AAPL", "side": "sell", "qty": "1", "filled_qty": "0",
+                "filled_avg_price": None, "status": "canceled"}
+    parent = {**order, "id": "parent", "qty": "1", "filled_qty": "1", "filled_avg_price": "100",
+              "status": "filled", "legs": [canceled, exit_order]}
+    source.append(
+        "flat_confirmed", parent=parent, order_history=[parent],
+        snapshot={"clock": {"timestamp": (at + timedelta(hours=1)).isoformat()},
+                  "positions": [], "orders": []},
+    )
+    now = at + timedelta(hours=2)
+    episode = outcome(source, now)
+    assert episode["eligible"] is True
+    assert episode["status"] == "CLOSED"
+    assert episode["gross_pnl"] == "-2"
+    assert episode["gross_r"] == -1.0
+    source.close()
+    maintain(tmp_path, now)
+    assert next_session(tmp_path, date(2026, 7, 2)) == SessionTask(tmp_path / "2026-07-02.sqlite")
+
+
+def test_fallback_entry_is_stored_and_excluded_from_the_study(tmp_path):
+    """An accepted receipt reused after the cutoff is kept and cannot open a study."""
+    store = LearningStore(tmp_path)
+    now = START
+    for index in range(20):
+        source, now = completed(tmp_path, index)
+        source.last("entry_intent")["fallback"] = True
+        episode = outcome(source, now)
+        assert episode["status"] == "CLOSED" and episode["eligible"] is False
+        assert source.last("adjudication")["receipt"]["accepted"] is True
+        store.ingest(source, now)
+        source.close()
+    stored = store.experiences()
+    assert len(stored) == 20 and all(item["eligible"] is False for item in stored)
+    report = store.review(night(now).date(), night(now))
+    assert report["episodes"]
+    assert not any(event["kind"] == "candidate" for event in store.journal.events)
+    store.close()
+
+
+def test_earnings_arm_cannot_train_or_fill_intraday_context(tmp_path):
+    """Twenty losing earnings rows, even if marked eligible, stay out of the study."""
+    store = LearningStore(tmp_path)
+    policy = asdict(POLICY)
+    question_hash = canonical_hash(questions())
+    observed = datetime(2026, 10, 15, 20, tzinfo=UTC)
+    for index in range(20):
+        store.journal.append("experience", episode={
+            "id": f"earn-{index}", "arm": "earnings", "eligible": True, "cohort": "shared-looking",
+            "account": "paper-account", "symbol": "AAPL", "direction": "LONG",
+            "question_hash": question_hash, "policy_hash": canonical_hash(policy),
+            "session": "2026-10-15", "observed_at": observed.isoformat(),
+            "entry_at": datetime(2026, 10, 15, 14, tzinfo=UTC).isoformat(),
+            "status": "CLOSED", "result": "LOSS", "gross_r": -1.0, "gross_pnl": "-2",
+            "quantity": "1", "costs": "UNMEASURED",
+        })
+    report = store.review(date(2026, 10, 15), datetime(2026, 10, 16, 2, tzinfo=UTC))
+    assert report["episodes"] == []
+    assert len(report["earnings_episodes"]) == 20
+    assert not any(event["kind"] == "candidate" for event in store.journal.events)
+    context = store.context(
+        "paper-account", "AAPL", "LONG", datetime(2026, 10, 16, 2, tzinfo=UTC), policy=policy,
+    )
+    assert context["recent_experiences"] == []
+    assert context["validated_rules"] == []
+    store.close()

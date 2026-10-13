@@ -7,7 +7,9 @@ list of tickers most likely to have a **4–12% absolute next-day move after an
 earnings report**, based on ~5 years of earnings history.
 
 `universe_screener.py` is a single, self-contained, one-shot script. It does not
-import from or modify any trading-bot files.
+import from or modify any trading-bot files. The paper earnings arm does not
+import this script either. An operator copies `logs/universe_75.txt` to the
+path in `ATHENA_EARNINGS_UNIVERSE`. See [EARNINGS_PAPER.md](../../docs/EARNINGS_PAPER.md).
 
 ## What it does
 

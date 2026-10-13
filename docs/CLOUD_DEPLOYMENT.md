@@ -1,8 +1,8 @@
 # Continuous cloud paper operation
 
-> **Current-runner runbook; hybrid target is not deployed by this document.** Main `5708946` remains Jev-only. The 13 October owner direction selects Astra 6 + Jev; follow the [hybrid contract](HYBRID_MODEL_CONTRACT.md) and [build plan](BUILD_PLAN.md) before changing the runtime. This docs PR performs no installation, paid calls or broker operations.
+> **Current-runner runbook; hybrid target is not deployed by this document.** The active intraday runner remains Jev-only. The 13 October owner direction selects Astra 6 + Jev; follow the [hybrid contract](HYBRID_MODEL_CONTRACT.md) and [build plan](BUILD_PLAN.md) before changing that runtime. Astra 6's provider deployment and API model ID are unverified. This document performs no installation, paid calls, or broker operations.
 
-Deploy the existing active paper runner on one persistent Linux VPS. The active host is a Hostinger VPS, installed on 10 October 2026. A DigitalOcean Droplet remains an optional path. Either host uses the same `deploy/install.sh`, `athena-paper.service`, and root-owned `/etc/athena/paper.env`. The service stays online across market sessions and reboots; entries remain restricted to the broker's market session and the bounded policy in [LIVE_PAPER.md](LIVE_PAPER.md). The bounded learning review is implemented; the full Earnings arm, APDE and general Core integration remain incomplete.
+Deploy the existing active paper runner on one persistent Linux VPS. The active host is a Hostinger VPS, installed on 10 October 2026. A DigitalOcean Droplet remains an optional path. Either host uses the same `deploy/install.sh`, `athena-paper.service`, and root-owned `/etc/athena/paper.env`. The service stays online across market sessions and reboots; entries remain restricted to the broker's market session and the bounded policy in [LIVE_PAPER.md](LIVE_PAPER.md). The bounded learning review is implemented. A separate Jev-only earnings paper service is defined in [EARNINGS_PAPER.md](EARNINGS_PAPER.md). It is not enabled by the intraday installer until an operator preflights it, and it is not deployed by this branch. The hybrid Earnings arm, full APDE, and general Core integration remain incomplete. Nick confirmed no overnight positions on 13 October 2026; the earnings book now pursues same-session exits and cannot grant multi-day holding permission.
 
 ## Existing Jev-only setup
 
@@ -28,7 +28,7 @@ Resolve and pin the owner-selected **Astra 6** provider deployment/API model ID,
 
 Extend this runtime with bounded event-driven Astra 6 proposals and Jev judgments, separate call/cost/latency budgets, evidence and plan expiry, identity/version health and operator alerts. Neither model may stall broker protection, mandatory exits or restart recovery. Add shared portfolio accounting before treating two books' individual limits as a portfolio guarantee. Keep one reconciled source of account exposure; do not launch parallel services from a future architecture description.
 
-PR #29 remains pending integration. Its proposed multiday earnings policy must first be resolved against the owner's pre-close-flat guardrail, and its branch-only earnings runbook plus overlapping guides reconciled. Record approval of the resolved policy and implementation acceptance separately from deployment authorization. Hybrid configuration, preflight, rollout, rollback, alerts and restore tests remain implementation deliverables, not commands to run in this documentation change.
+PR #29's Jev-only earnings book is on this branch and is still unmerged. The owner resolved its holding policy on 13 October 2026: no overnight positions. New earnings brackets are DAY orders; exits start 15 minutes before the actual regular-session close, including early closes. Legacy journals remain recoverable. `EXIT_UNRESOLVED` requires operator attention when the market is closed; broker outages or halts can prevent actual flatness, and pending fills remain `FLATTENING`. This policy decision is not deployment authorization. Hybrid configuration, preflight, rollout, rollback, alerts and restore tests remain implementation deliverables. This runbook does not install either service.
 
 ## Install a reviewed revision
 
@@ -60,6 +60,8 @@ systemd-run --wait --pipe --collect --unit=athena-paper-preflight \
 ```
 
 Require `ok: true`, Jev and the intended symbol/feed, and a flat dedicated paper account. This verifies authentication/model availability and account reads; it does not perform inference or submit an order. Market-data freshness, asset eligibility and risk are checked in the active session.
+
+`deploy/install.sh` also installs `athena-earnings.service` and, when missing, `/etc/athena/earnings.env` from the example. It leaves that service stopped. Do not enable it in the same step as the intraday service. Preflight and the ownership rules are in [EARNINGS_PAPER.md](EARNINGS_PAPER.md). The two units use different state directories and different env files. They can share one Alpaca paper account. The intraday unit is given `ATHENA_EARNINGS_STATE_DIR` so it does not flatten `athe-` positions.
 
 Then start the authorized active paper service and follow its first market session:
 

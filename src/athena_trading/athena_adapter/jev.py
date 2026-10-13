@@ -21,6 +21,24 @@ OPTIONS = {
 }
 
 
+def _bounded_questions(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Allow different instructions. Do not allow a different choice set."""
+    if set(value) != {"entry_decision"}:
+        raise ModelError("questions must ask entry_decision only")
+    entry = value.get("entry_decision")
+    if not isinstance(entry, dict) or entry.get("type") != "choice":
+        raise ModelError("questions must use the paper decision choices")
+    criteria = entry.get("criteria")
+    if not isinstance(criteria, dict) or set(criteria) != set(OPTIONS):
+        raise ModelError("questions must use the paper decision choices")
+    instructions = entry.get("instructions")
+    if not isinstance(instructions, str) or not instructions.strip():
+        raise ModelError("questions require instructions")
+    return {"entry_decision": {
+        "type": "choice", "instructions": instructions, "criteria": dict(OPTIONS),
+    }}
+
+
 def questions() -> dict[str, Any]:
     return {"entry_decision": {
         "type": "choice",
@@ -159,13 +177,17 @@ class JevDecisionEngine:
     def decide(
         self, packet: Mapping[str, Any], *,
         before_validation: Callable[[Any], None] | None = None,
+        questions_override: Mapping[str, Any] | None = None,
     ) -> JevVerdict:
         if packet.get("candidate_direction") not in ("LONG", "SHORT"):
             raise ModelError("a bounded candidate direction is required")
         state = json.loads(canonical_json(packet))
         if len(canonical_json(state).encode()) > 24_000:
             raise ModelError("adjudication state exceeds bounded input limit")
-        request = {"model": JEV_MODEL, "state": state, "questions": questions()}
+        # The intraday path keeps questions(). Another arm may change the
+        # instructions only. The choice set and the numeric gate stay here.
+        asked = questions() if questions_override is None else _bounded_questions(questions_override)
+        request = {"model": JEV_MODEL, "state": state, "questions": asked}
         response = self._transport(
             "POST", JEV_ENDPOINT,
             {"Authorization": f"Bearer {self._key}", "Content-Type": "application/json"},

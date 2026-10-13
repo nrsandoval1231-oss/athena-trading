@@ -38,7 +38,7 @@ The owner selected **Astra 6** to produce evidence-linked theses/scenarios/plans
 
 Before any future hybrid activation, complete the [build acceptance gates](BUILD_PLAN.md) and [contract](HYBRID_MODEL_CONTRACT.md): source and plan validation, expiry/invalidation, no new exposure on either model's failure, bounded event-driven updates, shared portfolio risk and deterministic APDE transitions. Critical protection, mandatory exits and recovery must not wait for either model. The current daily fallback is not a hybrid acceptance rule; it cannot bypass missing/expired proposals or Jev vetoes. No risk limit or order policy changes in this docs PR.
 
-[PR #29](https://github.com/nrsandoval1231-oss/athena-trading/pull/29) is pending/unmerged at `8b9fedeaa0e582c11f2b7a0587c663b661ee5e0f` as checked on 13 October 2026. Its branch-only `docs/EARNINGS_PAPER.md` is not a launch procedure for current main. Its proposed multiday earnings holds require an owner decision against the diagram's pre-close-flat rule before adoption. Do not launch a second book from this runbook or infer overnight permission.
+[PR #29](https://github.com/nrsandoval1231-oss/athena-trading/pull/29) remains unmerged. Its `docs/EARNINGS_PAPER.md` is the earnings book's runbook, not a launch procedure for the intraday service and not an Astra 6 deployment. Nick confirmed no overnight positions on 13 October 2026, superseding its earlier multi-day proposal. Both arms begin closing before the actual regular-session close. Do not launch a second book from this runbook; unresolved exposure during a halt or outage is not a confirmed flat account.
 
 ## Configure the existing runner
 
@@ -56,7 +56,9 @@ Optional paper policy, also read by the runner when unset values are left blank.
 
 Use paper-account keys. The order endpoint is fixed to `https://paper-api.alpaca.markets`; there is no real-money endpoint switch. Do not put keys in Git, command arguments, reports, or chat. No keys are required for the test suite.
 
-Choose an existing persistent writable state directory. Use the same journal path on restart. One journal represents one pilot session. The cloud supervisor creates dated journals, retains earlier records, and prioritizes unresolved entries before a new day. For a manual run, use the same journal through broker-confirmed completion and select a new dated path for a later session. The broker client ID includes account/session identity to prevent duplicate same-day submissions even if a new local journal is accidentally used. Do not delete state to bypass a halt. Keep the account dedicated to this runner; manual/concurrent orders are outside its ownership contract.
+Choose an existing persistent writable state directory. Use the same journal path on restart. One journal represents one pilot session. The cloud supervisor creates dated journals, retains earlier records, and prioritizes unresolved entries before a new day. For a manual run, use the same journal through broker-confirmed completion and select a new dated path for a later session. The broker client ID includes account/session identity to prevent duplicate same-day submissions even if a new local journal is accidentally used. Do not delete state to bypass a halt. Manual orders that use neither `athp-` nor `athe-` remain outside the ownership contract.
+
+The intraday runner can share the paper account with the earnings book. It ignores an order whose client id starts with `athe-`, and a position whose symbol is on that order or listed in `/var/lib/athena-earnings/ownership.json`. It does not ignore its own symbol. Any other symbol still blocks startup and cleanup. See [EARNINGS_PAPER.md](EARNINGS_PAPER.md).
 
 The following example uses AAPL only as a command example; the operator supplies the intended symbol:
 

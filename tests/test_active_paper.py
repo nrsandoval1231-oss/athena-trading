@@ -6,6 +6,7 @@ import math
 import sqlite3
 from dataclasses import asdict
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 
@@ -18,7 +19,9 @@ from athena_trading.execution.authority import (
     AuthorityError, ExecutionAuthority, parse_authority,
 )
 from athena_trading.paper import cloud
+from athena_trading.paper.ownership import write_ownership_ledger
 from athena_trading.paper.journal import PaperJournal
+from athena_trading.paper.learning import maintain, outcome
 from athena_trading.paper.live import (
     ActivePaperPilot, DataDeferral, LivePaperAPI, PilotPolicy, policy_from_environment,
     signal_packet,
@@ -1634,4 +1637,186 @@ def test_bad_answer_does_not_block_the_daily_fallback(tmp_path):
     assert journal.last("entry_intent")["fallback"] is True
     assert calls["n"] == 2
     assert _posts(broker) == 1
+    journal.close()
+
+
+def test_earnings_prefix_does_not_block_or_get_flattened(setup):
+    """An athe- order and its position are the earnings book, not unowned exposure."""
+    pilot, broker, _, journal = setup
+    broker.state["positions"] = [{
+        "asset_id": "b0b6dd9d-8b9b-48a9-ba46-b9d54906e415",
+        "symbol": "DECK", "exchange": "NASDAQ", "asset_class": "us_equity",
+        "avg_entry_price": "142.15", "qty": "4", "side": "long",
+        "market_value": "568.60", "cost_basis": "568.60", "current_price": "142.15",
+    }]
+    broker.state["orders"] = [{
+        "id": "8f6c1d2e-1b3a-4c5d-9e7f-0a1b2c3d4e5f",
+        "client_order_id": "athe-deckreport-stop",
+        "symbol": "DECK", "asset_class": "us_equity", "qty": "4", "filled_qty": "0",
+        "side": "sell", "type": "stop", "order_type": "stop", "order_class": "bracket",
+        "time_in_force": "gtc", "status": "held", "stop_price": "130.00",
+        "limit_price": None, "extended_hours": False, "legs": None,
+    }]
+    assert pilot.tick() == "ENTRY_SUBMITTED"
+    assert journal.last("entry_intent")["order"]["symbol"] == "AAPL"
+    broker.parent.update(status="filled", filled_qty="1")
+    broker.state["positions"] = [
+        {"symbol": "AAPL", "qty": "1", "side": "long"},
+        {"symbol": "DECK", "qty": "4", "side": "long", "asset_class": "us_equity"},
+    ]
+    broker.state["orders"] = [
+        {"id": "aapl-stop", "client_order_id": "athp-aapl-stop", "symbol": "AAPL",
+         "qty": "1", "filled_qty": "0", "side": "sell", "type": "stop", "status": "new",
+         "stop_price": "99"},
+        {"id": "8f6c1d2e-1b3a-4c5d-9e7f-0a1b2c3d4e5f", "client_order_id": "athe-deckreport-stop",
+         "symbol": "DECK", "qty": "4", "filled_qty": "0", "side": "sell", "type": "stop",
+         "status": "held", "stop_price": "130.00"},
+    ]
+    broker.state["clock"]["timestamp"] = NOW.replace(hour=19, minute=46).isoformat()
+    assert pilot.tick() == "FLATTENING"
+    deleted = [path for method, path, _ in broker.calls if method == "DELETE"]
+    assert deleted
+    assert all("DECK" not in path and "8f6c1d2e" not in path for path in deleted)
+    assert journal.last("halt")["reason"] == "SESSION_CLOSE"
+
+
+def test_earnings_ledger_hides_a_naked_position_and_not_our_symbol(setup, monkeypatch, tmp_path):
+    monkeypatch.setenv("ATHENA_EARNINGS_STATE_DIR", str(tmp_path))
+    (tmp_path / "ownership.json").write_text(
+        '{"arm":"earnings","prefix":"athe-","symbols":["MSFT"],'
+        '"orders":[{"symbol":"MSFT","client_order_id":"athe-msft"}]}'
+    )
+    pilot, broker, _, journal = setup
+    broker.state["positions"] = [{
+        "symbol": "MSFT", "qty": "2", "side": "long", "asset_class": "us_equity",
+        "avg_entry_price": "410.00", "current_price": "412.00",
+    }]
+    assert pilot.tick() == "ENTRY_SUBMITTED"
+    assert journal.last("entry_intent")["order"]["symbol"] == "AAPL"
+
+    fresh = PaperJournal(tmp_path / "other.sqlite")
+    other = ActivePaperPilot(broker, pilot.jev, fresh, POLICY)
+    broker.state["positions"] = [{"symbol": "AAPL", "qty": "1", "side": "long"}]
+    broker.state["orders"] = []
+    (tmp_path / "ownership.json").write_text(
+        '{"arm":"earnings","prefix":"athe-","symbols":["AAPL"],"orders":[]}'
+    )
+    with pytest.raises(ValueError, match="dedicated"):
+        other.tick()
+    fresh.close()
+
+
+def test_unknown_symbol_is_still_unowned(setup, monkeypatch, tmp_path):
+    monkeypatch.setenv("ATHENA_EARNINGS_STATE_DIR", str(tmp_path))
+    (tmp_path / "ownership.json").write_text(
+        '{"arm":"earnings","prefix":"athe-","symbols":["DECK"],"orders":[]}'
+    )
+    pilot, broker, _, _journal = setup
+    broker.state["positions"] = [{"symbol": "QQQ", "qty": "1", "side": "long"}]
+    with pytest.raises(ValueError, match="dedicated"):
+        pilot.tick()
+
+
+def _earnings_history_rows():
+    """Concurrent earnings fills that share the paper account, including a nested leg."""
+    return [
+        {
+            "id": "deck-earn-1", "client_order_id": "athe-deck-parent", "symbol": "DECK",
+            "side": "buy", "type": "limit", "status": "filled", "qty": "19",
+            "filled_qty": "19", "filled_avg_price": "104.00", "order_class": "bracket",
+            "legs": [{
+                "id": "deck-earn-stop", "client_order_id": "athe-deck-parent-stop",
+                "symbol": "DECK", "side": "sell", "type": "stop", "status": "filled",
+                "qty": "19", "filled_qty": "19", "filled_avg_price": "102.00",
+                "order_class": "bracket", "legs": None,
+            }],
+        },
+        {
+            "id": "deck-ledger-1", "client_order_id": "manual-deck-close", "symbol": "DECK",
+            "side": "sell", "type": "market", "status": "filled", "qty": "4",
+            "filled_qty": "4", "filled_avg_price": "105.00", "order_class": "simple",
+            "legs": None,
+        },
+    ]
+
+
+def _prepare_flat_history(tmp_path, monkeypatch, extra_orders):
+    journal = PaperJournal(tmp_path / "2026-09-24.sqlite")
+    broker, actor = Broker(), DecisionHook()
+    broker.journal = journal
+    pilot = ActivePaperPilot(
+        broker, JevDecisionEngine("fixture-key", transport=actor.transport), journal, POLICY,
+    )
+    assert pilot.tick() == "ENTRY_SUBMITTED"
+    _fill_bracket(broker, stop_status="canceled")
+    assert pilot.tick() == "FLATTENING"
+    broker.state["orders"] = []
+    for leg in broker.parent["legs"]:
+        leg.update(status="canceled", filled_qty="0", filled_avg_price=None)
+    assert pilot.tick() == "FLATTENING"
+    assert journal.last("close_ack")["order"]["id"] == "close-1"
+    broker.state["positions"] = []
+    broker.state["orders"] = []
+    close = {
+        "id": "close-1", "client_order_id": "broker-close", "symbol": "AAPL",
+        "side": "sell", "type": "market", "status": "filled", "qty": "1",
+        "filled_qty": "1", "filled_avg_price": "99.00", "order_class": "simple",
+        "legs": None,
+    }
+    earnings_dir = tmp_path / "earnings-state"
+    write_ownership_ledger(
+        earnings_dir, {"DECK"},
+        [{"symbol": "DECK", "client_order_id": "athe-deck-parent"}],
+    )
+    monkeypatch.setenv("ATHENA_EARNINGS_STATE_DIR", str(earnings_dir))
+    original = broker.call
+
+    def call(method, path, payload=None):
+        result = original(method, path, payload)
+        if isinstance(path, str) and path.startswith("/v2/orders?"):
+            return [copy.deepcopy(broker.parent), close, *copy.deepcopy(extra_orders)]
+        return result
+
+    broker.call = call
+    return pilot, broker, journal
+
+
+def test_earnings_fills_do_not_corrupt_the_intraday_outcome(tmp_path, monkeypatch):
+    pilot, _broker, journal = _prepare_flat_history(tmp_path, monkeypatch, _earnings_history_rows())
+    # The generated close is attributable by exact journal-published provenance,
+    # not merely because another earnings trade has this symbol in its live book.
+    write_ownership_ledger(
+        tmp_path / "earnings-state", {"DECK"}, [],
+        historical_orders=[_earnings_history_rows()[1]], account_id="paper-account",
+    )
+    assert pilot.tick() == "FLATTENING"
+    assert pilot.tick() == "COMPLETE"
+    flat = journal.last("flat_confirmed")
+    assert any(order["symbol"] == "DECK" for order in flat["account_order_history"])
+    assert all(order.get("symbol") != "DECK" for order in flat["order_history"])
+    parent = next(order for order in flat["order_history"] if order["id"] == "entry-1")
+    assert parent["legs"]
+    assert any(order["id"] == "close-1" for order in flat["order_history"])
+    episode = outcome(journal, NOW + timedelta(hours=2))
+    assert episode["symbol"] == "AAPL"
+    assert episode["quantity"] == "1"
+    assert Decimal(episode["gross_pnl"]) == Decimal("-2.50")
+    journal.close()
+    maintain(tmp_path, datetime(2026, 9, 25, 1, tzinfo=UTC))
+    assert cloud.next_session(tmp_path, date(2026, 9, 25)) == cloud.SessionTask(
+        tmp_path / "2026-09-25.sqlite",
+    )
+
+
+def test_unexplained_terminal_order_is_not_dropped_from_account_history(tmp_path, monkeypatch):
+    pilot, _broker, journal = _prepare_flat_history(tmp_path, monkeypatch, [{
+        "id": "qqq-stranger", "client_order_id": "manual-qqq", "symbol": "QQQ",
+        "side": "buy", "type": "market", "status": "filled", "qty": "3",
+        "filled_qty": "3", "filled_avg_price": "400.00", "order_class": "simple",
+        "legs": None,
+    }])
+    assert pilot.tick() == "FLATTENING"
+    with pytest.raises(ValueError, match="unexplained"):
+        pilot.tick()
+    assert journal.last("flat_confirmed") is None
     journal.close()
