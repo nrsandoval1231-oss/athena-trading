@@ -55,7 +55,9 @@ python3 -m pip install .            # imports shared_risk, evaluation, funnel, l
 
 No type checker is configured in `pyproject.toml` or `.github/workflows/ci.yml`. Tested revision of this repair: `19402ce3d100a5a28a83f3c23dadc2b17164aa5d`. The 785-passed result on `ba032129b7900cafec2535fde0db902eae715b36` is historical and is not this repair.
 
-GitHub Actions on `ba032129b7900cafec2535fde0db902eae715b36` did not run the test job. Push run `38448610766` and pull-request run `38448676036` both failed in a few seconds with empty steps. The annotation says the job was not started because recent account payments have failed or the spending limit needs to be increased. That is a billing block, not a pytest or ruff failure. Later empty commits retriggered CI after the repository was public. Those runs are not a substitute for this repair. CI for `19402ce3d100a5a28a83f3c23dadc2b17164aa5d` is separate and is recorded on the pull request.
+GitHub Actions on `ba032129b7900cafec2535fde0db902eae715b36` did not run the test job. Push run `38448610766` and pull-request run `38448676036` both failed in a few seconds with empty steps. The annotation says the job was not started because recent account payments have failed or the spending limit needs to be increased. That is a billing block, not a pytest or ruff failure. Later empty commits retriggered CI after the repository was public. Those runs are not a substitute for this repair.
+
+Actions on `253900e0d51bba64aa6b697c1d364b42cfe63a06` did start. Ruff passed. Pytest failed three subprocess tests (`38461815469` push, `38461823625` pull request) because those tests set the child working directory to `/workspace`. That path is this checkout, not the Actions workspace. The child now uses the repository root. Local recheck after that path fix: `python3 -m pytest -q` passed 807 tests in 7.06s. Root pytest still does not include `research/astra-desk/tests`.
 
 ## Earnings Adaptive paper book — 13 October 2026
 
