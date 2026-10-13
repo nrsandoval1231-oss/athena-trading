@@ -6,7 +6,7 @@ report to the close after it. This arm does not rerun that study. It trades a
 name from that universe only when the live gap, on the first regular session
 after a known report, lands inside the same band, in the gap's direction.
 
-The bracket is GTC so the hold can last more than one session. A restart reads
+New brackets are DAY orders and exits begin before the entry session closes. A restart reads
 the same SQLite book and the same client order id; it does not resubmit.
 Protective exits do not call Jev. ``LIVE`` is not an authority.
 
@@ -204,18 +204,13 @@ def hold_action(
     entry_day: str, today: str, sessions: list[str], max_hold: int,
     *, is_open: bool, now: datetime, close_at: datetime, close_buffer_minutes: int,
 ) -> str:
-    """HOLD, FLATTEN, or WAIT. Session 1 is the entry day. Flatten on the last session's close buffer.
+    """No overnight holds, including legacy journals whose max_hold exceeded one.
 
-    A later session means the exit day was missed. Flatten at the next open.
+    A closed market cannot establish flatness. WAIT leaves an explicit unresolved
+    exit that must be recovered as soon as broker execution is available.
     """
-    elapsed = [day for day in sorted(set(sessions)) if entry_day <= day <= today]
-    if len(elapsed) < max_hold:
-        return "HOLD"
-    if len(elapsed) == max_hold and today == elapsed[-1]:
-        if not is_open:
-            return "WAIT"
-        if now >= close_at - timedelta(minutes=close_buffer_minutes):
-            return "FLATTEN"
+    due = entry_day < today or now >= close_at - timedelta(minutes=close_buffer_minutes)
+    if not due:
         return "HOLD"
     return "FLATTEN" if is_open else "WAIT"
 
@@ -270,7 +265,7 @@ def plan_entry(
 def bracket_order(symbol: str, plan: dict[str, Any]) -> dict[str, Any]:
     return {
         "symbol": symbol, "qty": str(plan["shares"]), "side": plan["side"],
-        "type": "limit", "limit_price": f"{plan['price']:.2f}", "time_in_force": "gtc",
+        "type": "limit", "limit_price": f"{plan['price']:.2f}", "time_in_force": "day",
         "order_class": "bracket", "extended_hours": False,
         "stop_loss": {"stop_price": f"{plan['stop']:.2f}"},
         "take_profit": {"limit_price": f"{plan['target']:.2f}"},
@@ -290,7 +285,7 @@ class EarningsPolicy:
     max_notional_total: float = 6000.0
     max_positions: int = 3
     max_new_entries_per_day: int = 1
-    max_hold_sessions: int = 3
+    max_hold_sessions: int = 1
     support_min: float = 0.6
     confidence_min: float = 0.5
     gap_low: float = 0.04
@@ -446,7 +441,7 @@ def policy_from_environment(universe_path: str, feed: str = "iex") -> EarningsPo
 
 def _status_rank(status: str) -> int:
     order = (
-        "FLATTENING", "POSITION_MISMATCH", "ORDER_NOT_FOUND_RECHECK", "ENTRY_NOT_CREATED",
+        "EXIT_UNRESOLVED", "FLATTENING", "POSITION_MISMATCH", "ORDER_NOT_FOUND_RECHECK", "ENTRY_NOT_CREATED",
         "JEV_UNAVAILABLE", "ENTRY_SUBMITTED", "JEV_VETO", "ENTRY_WORKING", "POSITION_OPEN",
         "ENTRY_TERMINATED", "WAITING", "NO_CANDIDATE", "MANAGING", "ENTRIES_BLOCKED",
         "DAILY_ENTRY_DONE", "FLAT",
@@ -455,7 +450,7 @@ def _status_rank(status: str) -> int:
 
 
 class EarningsBook:
-    """Multi-day paper book. One SQLite file. New entries require Jev and PAPER."""
+    """Persistent intraday earnings book. New entries require Jev and PAPER."""
 
     def __init__(
         self, broker: LivePaperAPI, jev: JevDecisionEngine | None, journal: PaperJournal,
@@ -477,9 +472,15 @@ class EarningsBook:
         self.state_dir = Path(journal.checkpoint).parent
 
     def open_trades(self) -> dict[str, dict[str, Any]]:
+        receipts = {
+            event["client_order_id"] for event in self.journal.events
+            if event["kind"] == "earnings_experience"
+            and isinstance(event.get("client_order_id"), str)
+        }
         closed = {
             event["client_order_id"] for event in self.journal.events
             if event["kind"] in _CLOSED and isinstance(event.get("client_order_id"), str)
+            and (event["kind"] == "entry_not_created" or event["client_order_id"] in receipts)
         }
         trades: dict[str, dict[str, Any]] = {}
         for event in self.journal.events:
@@ -497,7 +498,42 @@ class EarningsBook:
             for client_order_id, trade in sorted(trades.items())
         ]
         symbols = {item["symbol"] for item in orders}
-        write_ownership_ledger(self.state_dir, symbols, orders)
+        historical: dict[str, dict[str, str]] = {}
+        reservations = {
+            event["order"]["client_order_id"]: event["order"] for event in self.journal.events
+            if event["kind"] == "entry_intent"
+        }
+
+        def collect(order: Any, symbol: str) -> None:
+            keys = ("id", "client_order_id", "symbol", "side", "type")
+            if not isinstance(order, dict) or order.get("symbol") != symbol or not all(
+                isinstance(order.get(key), str) and order[key] for key in keys
+            ):
+                return
+            identity = {key: order[key] for key in keys}
+            previous = historical.get(order["id"])
+            if previous is not None and previous != identity:
+                raise ValueError("conflicting earnings historical ownership")
+            historical[order["id"]] = identity
+            for leg in order.get("legs") or []:
+                collect(leg, symbol)
+
+        for event in self.journal.events:
+            if event.get("client_order_id") not in reservations:
+                continue
+            symbol = reservations[event["client_order_id"]]["symbol"]
+            if event["kind"] in {"entry_ack", "entry_observation", "close_ack"}:
+                collect(event.get("order"), symbol)
+            elif event["kind"] == "earnings_experience":
+                collect(event.get("parent"), symbol)
+                for order in event.get("close_orders", []):
+                    collect(order, symbol)
+        binding = self.journal.last("binding")
+        account_id = binding["binding"]["account_id"] if binding else None
+        write_ownership_ledger(
+            self.state_dir, symbols, orders, historical_orders=list(historical.values()),
+            account_id=account_id,
+        )
 
     def _last(self, kind: str, client_order_id: str) -> dict[str, Any] | None:
         return next((
@@ -630,7 +666,7 @@ class EarningsBook:
                 continue
             client_order_id = str(order.get("client_order_id") or "")
             if client_order_id.startswith(INTRADAY_ORDER_PREFIX):
-                raise ValueError("intraday order shares an earnings symbol; refusing to cancel it")
+                continue
             if (
                 client_order_id.startswith(EARNINGS_ORDER_PREFIX)
                 or order.get("id") in known
@@ -718,21 +754,63 @@ class EarningsBook:
         )
         return None if acknowledged else latest
 
+    def _close_intent_spec(self, pending: dict[str, Any]) -> tuple[datetime, str, Decimal] | None:
+        """Recover only the quantity, direction and send window durably recorded before DELETE."""
+        try:
+            positions = pending["positions"]
+            if len(positions) != 1:
+                return None
+            qty = Decimal(str(positions[0]["qty"]))
+            if not qty.is_finite() or qty == 0:
+                return None
+            # Older intents have no timestamp. Their preceding broker observation
+            # is the only admissible lower bound; never substitute restart time.
+            at = pending.get("at")
+            if at is None:
+                index = self.journal.events.index(pending)
+                observation = next((event for event in reversed(self.journal.events[:index])
+                                    if event["kind"] == "broker_observation"), None)
+                at = observation["at"] if observation else None
+            return timestamp(at), "sell" if qty > 0 else "buy", abs(qty)
+        except (KeyError, TypeError, ValueError, AttributeError, ArithmeticError):
+            return None
+
     def _market_close_candidates(
-        self, snapshot: dict[str, Any], symbol: str,
+        self, orders: list[dict[str, Any]], symbol: str, pending: dict[str, Any],
     ) -> list[dict[str, Any]]:
-        """Working broker market closes on this symbol that this book did not reserve."""
+        """Match immutable broker evidence to one intent, not just a market-order shape."""
+        spec = self._close_intent_spec(pending)
+        if spec is None:
+            return []
+        at, side, qty = spec
+        # The broker request has a five-second timeout. A bounded minute permits
+        # clock/transport skew without adopting later manual activity after restart.
+        through = at + timedelta(minutes=1)
+        previous_ids = set(pending.get("known_order_ids", []))
+        previous_ids.update(self._acknowledged_close_ids(pending["client_order_id"]))
         found: list[dict[str, Any]] = []
-        for order in working_orders(snapshot["orders"]):
-            if order.get("symbol") != symbol or not isinstance(order.get("id"), str):
-                continue
-            client_order_id = str(order.get("client_order_id") or "")
+        for order in orders:
             if (
-                client_order_id.startswith(EARNINGS_ORDER_PREFIX)
-                or client_order_id.startswith(INTRADAY_ORDER_PREFIX)
+                order.get("symbol") != symbol or not isinstance(order.get("id"), str)
+                or not order["id"] or order["id"] in previous_ids or order.get("side") != side
+                or order.get("type") != "market" or order.get("order_class", "simple") != "simple"
             ):
                 continue
-            if order.get("type") != "market" or order.get("order_class", "simple") != "simple":
+            client_order_id = str(order.get("client_order_id") or "")
+            if not client_order_id or client_order_id.startswith(
+                (EARNINGS_ORDER_PREFIX, INTRADAY_ORDER_PREFIX),
+            ):
+                continue
+            times = [order[key] for key in ("created_at", "submitted_at") if order.get(key)]
+            try:
+                filled = Decimal(str(order["filled_qty"]))
+                if (
+                    Decimal(str(order["qty"])) != qty or not filled.is_finite()
+                    or not 0 <= filled <= qty or not times
+                    or any(not at <= timestamp(value) <= through for value in times)
+                ):
+                    continue
+            except (KeyError, TypeError, ValueError, AttributeError, ArithmeticError):
                 continue
             found.append(order)
         return found
@@ -751,29 +829,55 @@ class EarningsBook:
     def _adopt_lost_close(
         self, trade: dict[str, Any], snapshot: dict[str, Any],
     ) -> str | None:
-        """Wait for a close the broker accepted after its response was lost.
-
-        One unique market close is adopted and then left working. Zero or several
-        matches are not adopted, canceled, or replaced. Returning FLATTENING
-        leaves every other symbol free to keep its own protection.
-        """
+        """Reconcile working AND terminal evidence; unknown closes never get resent."""
         client_order_id = trade["order"]["client_order_id"]
         pending = self._pending_close(client_order_id)
         if pending is None:
             return None
         symbol = trade["order"]["symbol"]
-        candidates = self._market_close_candidates(snapshot, symbol)
-        if len(candidates) == 1:
+        spec = self._close_intent_spec(pending)
+        candidates: list[dict[str, Any]] = []
+        if spec is not None:
+            at, _side, _qty = spec
+            try:
+                history = self.broker.call("GET", "/v2/orders?" + urlencode({
+                    "status": "all", "after": (at - timedelta(microseconds=1)).isoformat(),
+                    "until": (at + timedelta(minutes=1)).isoformat(),
+                    "limit": 500, "direction": "asc", "nested": "true",
+                }))
+            except ModelError:
+                history = None
+            if isinstance(history, list) and len(history) < 500:
+                unique: dict[str, dict[str, Any]] = {}
+                complete = True
+                for order in [*snapshot["orders"], *history]:
+                    if not isinstance(order, dict) or not isinstance(order.get("id"), str):
+                        complete = False
+                        break
+                    previous = unique.get(order["id"])
+                    if previous is not None and not self._same_order(previous, order):
+                        complete = False
+                        break
+                    unique[order["id"]] = order
+                if complete:
+                    candidates = self._market_close_candidates(list(unique.values()), symbol, pending)
+        known = {row["id"] for row in self._proven_working(
+            snapshot, symbol, self._last("entry_observation", client_order_id).get("order")
+            if self._last("entry_observation", client_order_id) else None,
+            self._acknowledged_close_ids(client_order_id),
+        )}
+        unknown = {
+            row["id"] for row in working_orders(snapshot["orders"])
+            if row.get("symbol") == symbol and row["id"] not in known
+        }
+        if len(candidates) == 1 and not (unknown - {candidates[0]["id"]}):
             self.journal.append(
                 "close_ack", client_order_id=client_order_id, attempt=pending.get("attempt"),
-                order=candidates[0],
+                order=candidates[0], recovered=True,
             )
             return None
-        position_open = any(item.get("symbol") == symbol for item in snapshot["positions"])
-        if len(candidates) > 1 or position_open:
-            self._note_close_uncertain(client_order_id, pending.get("attempt"), len(candidates))
-            return "FLATTENING"
-        return None
+        self._note_close_uncertain(client_order_id, pending.get("attempt"), len(candidates))
+        return "FLATTENING"
 
     def _close_step(
         self, trade: dict[str, Any], snapshot: dict[str, Any], parent: dict[str, Any] | None,
@@ -783,6 +887,17 @@ class EarningsBook:
         symbol = trade["order"]["symbol"]
         if self._last("trade_halt", client_order_id):
             return "POSITION_MISMATCH"
+        if not snapshot["clock"]["is_open"] and any(
+            row.get("symbol") == symbol for row in snapshot["positions"]
+        ):
+            prior = self._last("exit_unresolved", client_order_id)
+            if not prior or prior.get("reason") != "MARKET_CLOSED":
+                self.journal.append(
+                    "exit_unresolved", client_order_id=client_order_id, symbol=symbol,
+                    reason="MARKET_CLOSED", at=timestamp(snapshot["clock"]["timestamp"]),
+                    action="Resume owned-exposure recovery at market open; operator attention required",
+                )
+            return "EXIT_UNRESOLVED"
         uncertain = self._adopt_lost_close(trade, snapshot) == "FLATTENING"
         close_ids = self._acknowledged_close_ids(client_order_id)
         if uncertain:
@@ -790,13 +905,13 @@ class EarningsBook:
             # close, and any unrelated order, untouched and do not send another close.
             owned = self._proven_working(snapshot, symbol, parent, close_ids)
         else:
-            owned = self._owned_working(snapshot, symbol, parent, close_ids)
+            try:
+                owned = self._owned_working(snapshot, symbol, parent, close_ids)
+            except ValueError:
+                self._note_close_uncertain(client_order_id, None, 0)
+                uncertain = True
+                owned = self._proven_working(snapshot, symbol, parent, close_ids)
         cancelable = cancel_targets(owned, close_ids)
-        if uncertain:
-            blocked = {
-                order["id"] for order in self._market_close_candidates(snapshot, symbol)
-            }
-            cancelable = [order for order in cancelable if order.get("id") not in blocked]
         for order in cancelable:
             self._delete_order(str(order["id"]))
         if uncertain or cancelable or any(order.get("id") in close_ids for order in owned):
@@ -805,6 +920,22 @@ class EarningsBook:
         positions = [item for item in snapshot["positions"] if item.get("symbol") == symbol]
         if positions:
             self._flat_counts[client_order_id] = 0
+            closes = self._terminal_closes(client_order_id)
+            if closes is None:
+                return "FLATTENING"
+            residual = self._owned_residual(trade, parent, closes)
+            try:
+                observed = Decimal(str(positions[0]["qty"]))
+            except (KeyError, TypeError, ValueError, ArithmeticError):
+                observed = None
+            if (
+                len(positions) != 1 or residual is None or residual == 0
+                or observed is None or not observed.is_finite() or observed != residual
+            ):
+                self.journal.append(
+                    "trade_halt", client_order_id=client_order_id, reason="POSITION_MISMATCH",
+                )
+                return "POSITION_MISMATCH"
             attempts = sum(
                 event["kind"] == "close_intent" and event.get("client_order_id") == client_order_id
                 for event in self.journal.events
@@ -813,15 +944,21 @@ class EarningsBook:
                 raise ValueError("earnings close attempts exhausted; exposure remains unresolved")
             self.journal.append(
                 "close_intent", client_order_id=client_order_id, attempt=attempts + 1,
-                positions=positions,
+                positions=positions, at=timestamp(snapshot["clock"]["timestamp"]),
+                known_order_ids=sorted({
+                    row["id"] for row in snapshot["orders"]
+                    if isinstance(row.get("id"), str)
+                }),
             )
             try:
-                closing = self.broker.call("DELETE", "/v2/positions/" + symbol)
+                closing = self.broker.call(
+                    "DELETE", "/v2/positions/" + symbol + "?" + urlencode({"qty": str(abs(residual))}),
+                )
             except ModelError as exc:
                 if getattr(exc, "status", None) != 404:
                     raise
                 closing = None
-            if isinstance(closing, dict) and closing.get("id"):
+            if self._close_ack_matches(closing, symbol, residual):
                 self.journal.append(
                     "close_ack", client_order_id=client_order_id, attempt=attempts + 1, order=closing,
                 )
@@ -834,18 +971,48 @@ class EarningsBook:
             return "FLATTENING"
         reason = (self._last("trade_exit", client_order_id) or {}).get("reason", "FLAT")
         self._record_close(client_order_id, symbol, reason, parent)
-        return "FLAT"
+        return "FLAT" if client_order_id not in self.open_trades() else "FLATTENING"
+
+    @staticmethod
+    def _close_ack_matches(order: Any, symbol: str, residual: Decimal) -> bool:
+        if not isinstance(order, dict) or not isinstance(order.get("id"), str) or not order["id"]:
+            return False
+        try:
+            return (
+                order.get("symbol") == symbol
+                and order.get("side") == ("sell" if residual > 0 else "buy")
+                and order.get("type") == "market"
+                and order.get("order_class", "simple") == "simple"
+                and Decimal(str(order["qty"])) == abs(residual)
+            )
+        except (KeyError, TypeError, ValueError, ArithmeticError):
+            return False
 
     def _close_view_is_final(self, view: dict[str, Any]) -> bool:
-        """A new acknowledgement with zero shares is not fill evidence."""
-        try:
-            qty = number(view.get("filled_qty") or 0)
-        except (TypeError, ValueError):
+        """Only terminal orders have immutable fills, including terminal no-fills."""
+        if view.get("status") not in {"filled", *_ENTRY_DONE}:
             return False
-        price = view.get("filled_avg_price")
-        return qty > 0 and price not in (None, "") and view.get("status") in {
-            "filled", "partially_filled", "canceled", "expired", "rejected", "replaced",
-        }
+        try:
+            qty = Decimal(str(view["filled_qty"]))
+            requested = Decimal(str(view["qty"]))
+            if not qty.is_finite() or not requested.is_finite() or not 0 <= qty <= requested:
+                return False
+            if requested <= 0 or (view["status"] == "filled" and qty != requested):
+                return False
+            return qty == 0 or number(view.get("filled_avg_price"), positive=True) > 0
+        except (KeyError, TypeError, ValueError, ArithmeticError):
+            return False
+
+    @staticmethod
+    def _same_order(left: dict[str, Any], right: dict[str, Any]) -> bool:
+        """A refreshed observation cannot change the acknowledged order's identity."""
+        keys = ("id", "client_order_id", "symbol", "side", "type")
+        if any(not left.get(key) or left.get(key) != right.get(key) for key in keys):
+            return False
+        try:
+            return Decimal(str(left["qty"])) == Decimal(str(right["qty"]))
+        except (KeyError, TypeError, ValueError, ArithmeticError):
+            return False
 
     def _refresh_close_view(self, order: Any) -> dict[str, Any] | None:
         view = fill_view(order)
@@ -861,9 +1028,64 @@ class EarningsBook:
         except ModelError:
             return None
         refreshed = fill_view(fresh)
-        if refreshed is None or not self._close_view_is_final(refreshed):
+        if (
+            refreshed is None or not self._same_order(view, refreshed)
+            or not self._close_view_is_final(refreshed)
+        ):
             return None
         return refreshed
+
+    def _terminal_closes(self, client_order_id: str) -> list[dict[str, Any]] | None:
+        """All acknowledged attempts must be final before retrying or publishing."""
+        found: dict[str, dict[str, Any]] = {}
+        for event in self.journal.events:
+            if event["kind"] != "close_ack" or event.get("client_order_id") != client_order_id:
+                continue
+            refreshed = self._refresh_close_view(event.get("order"))
+            if refreshed is None:
+                return None
+            previous = found.get(refreshed["id"])
+            if previous is not None and previous != refreshed:
+                return None
+            found[refreshed["id"]] = refreshed
+        return list(found.values())
+
+    def _owned_residual(
+        self, trade: dict[str, Any], parent: dict[str, Any] | None,
+        closes: list[dict[str, Any]],
+    ) -> Decimal | None:
+        """Signed shares explained by this entry, its legs, and exact close IDs."""
+        if not isinstance(parent, dict):
+            return None
+        symbol, entry_side = trade["order"]["symbol"], trade["order"]["side"]
+        exit_side = "sell" if entry_side == "buy" else "buy"
+        rows = [parent, *(parent.get("legs") or []), *closes]
+        seen: dict[str, dict[str, Any]] = {}
+        residual = Decimal(0)
+        try:
+            for row in rows:
+                if not isinstance(row, dict) or not isinstance(row.get("id"), str):
+                    return None
+                prior = seen.get(row["id"])
+                if prior is not None:
+                    if prior != row:
+                        return None
+                    continue
+                seen[row["id"]] = row
+                qty = Decimal(str(row["filled_qty"]))
+                maximum = Decimal(str(row["qty"]))
+                expected_side = entry_side if row is parent else exit_side
+                if (
+                    row.get("symbol") != symbol or row.get("side") != expected_side
+                    or not qty.is_finite() or not maximum.is_finite() or not 0 <= qty <= maximum
+                ):
+                    return None
+                residual += qty if row is parent else -qty
+        except (KeyError, TypeError, ValueError, ArithmeticError):
+            return None
+        if residual < 0:
+            return None
+        return residual if entry_side == "buy" else -residual
 
     def _fills_balance(
         self, parent: dict[str, Any] | None, close_orders: list[dict[str, Any]],
@@ -887,32 +1109,34 @@ class EarningsBook:
         self, client_order_id: str, symbol: str, reason: str, parent: dict[str, Any] | None,
     ) -> None:
         """Journal the close only after terminal fills reconcile. Otherwise retry."""
-        if any(
-            event["kind"] == "position_closed" and event.get("client_order_id") == client_order_id
-            for event in self.journal.events
-        ):
+        closed = self._last("position_closed", client_order_id)
+        experience = self._last("earnings_experience", client_order_id)
+        if closed and experience:
             return
-        close_orders: list[dict[str, Any]] = []
-        for event in self.journal.events:
-            if event["kind"] != "close_ack" or event.get("client_order_id") != client_order_id:
-                continue
-            refreshed = self._refresh_close_view(event.get("order"))
-            if refreshed is None:
-                return
-            close_orders.append(refreshed)
+        close_orders = self._terminal_closes(client_order_id)
+        if close_orders is None:
+            return
         parent_view = fill_view(parent)
+        trade = self.open_trades().get(client_order_id)
+        if trade is None or self._owned_residual(trade, parent, close_orders) != 0:
+            return
         if not self._fills_balance(parent_view, close_orders):
             return
-        self.journal.append(
-            "position_closed", client_order_id=client_order_id, symbol=symbol, reason=reason,
-            parent_id=None if parent is None else parent.get("id"),
-            eligible_for_intraday_study=False,
-        )
-        self.journal.append(
-            "earnings_experience", client_order_id=client_order_id, symbol=symbol, reason=reason,
-            arm="earnings", eligible_for_intraday_study=False,
-            parent=parent_view, close_orders=close_orders,
-        )
+        # Persist the outcome before removing the trade from recovery. Either
+        # append may be interrupted; restart fills only the missing event, also
+        # repairing older journals that durably closed before saving a receipt.
+        if experience is None:
+            self.journal.append(
+                "earnings_experience", client_order_id=client_order_id, symbol=symbol, reason=reason,
+                arm="earnings", eligible_for_intraday_study=False,
+                parent=parent_view, close_orders=close_orders,
+            )
+        if closed is None:
+            self.journal.append(
+                "position_closed", client_order_id=client_order_id, symbol=symbol, reason=reason,
+                parent_id=None if parent is None else parent.get("id"),
+                eligible_for_intraday_study=False,
+            )
 
     def _delete_order(self, order_id: str) -> None:
         try:
@@ -958,6 +1182,14 @@ class EarningsBook:
         if parent is None:
             return self._missing(trade, snapshot)
         self.journal.append("entry_observation", client_order_id=client_order_id, order=parent)
+        session_action = hold_action(
+            trade["session"], today, sessions, self.policy.max_hold_sessions,
+            is_open=is_open, now=now, close_at=close_at,
+            close_buffer_minutes=self.policy.close_buffer_minutes,
+        )
+        if session_action != "HOLD":
+            self._begin_close(trade, "OVERNIGHT_RECOVERY" if trade["session"] < today else "SESSION_CLOSE")
+            return self._close_step(trade, snapshot, parent)
         filled = number(parent["filled_qty"])
         if parent["status"] == "partially_filled" or (filled > 0 and parent["status"] != "filled"):
             self._begin_close(trade, "PARTIAL_ENTRY")
@@ -994,14 +1226,6 @@ class EarningsBook:
         if not self._protected(parent, snapshot, symbol, trade["order"]["side"], position_qty):
             self._begin_close(trade, "PROTECTION_MISSING")
             return self._close_step(trade, snapshot, parent)
-        action = hold_action(
-            trade["session"], today, sessions, self.policy.max_hold_sessions,
-            is_open=is_open, now=now, close_at=close_at,
-            close_buffer_minutes=self.policy.close_buffer_minutes,
-        )
-        if action == "FLATTEN":
-            self._begin_close(trade, "MAX_HOLD")
-            return self._close_step(trade, snapshot, parent)
         return "POSITION_OPEN"
 
     def _halt_blocks(self, today: str) -> bool:
@@ -1024,6 +1248,8 @@ class EarningsBook:
     def _entries_blocked(self, account: dict[str, Any], today: str) -> str | None:
         if self._halt_blocks(today):
             return "ENTRIES_BLOCKED"
+        if self.policy.max_hold_sessions != 1:
+            return "MULTIDAY_POLICY_DISABLED"
         if account.get("status") != "ACTIVE" or any(
             account.get(key) for key in ("trading_blocked", "account_blocked", "trade_suspended_by_user")
         ):
@@ -1048,10 +1274,16 @@ class EarningsBook:
         if not isinstance(rows, list):
             raise ValueError("broker calendar unavailable")
         current = [row for row in rows if row.get("date") == today]
+        if not current:
+            # Weekend/holiday recovery keeps exposure visible without inventing a
+            # trading session. An old entry is already overdue by its entry date.
+            upcoming = [row for row in rows if row.get("date", "") > today]
+            current = sorted(upcoming, key=lambda row: row["date"])[:1]
         if len(current) != 1:
             raise ValueError("broker calendar unavailable")
-        session_open = datetime.fromisoformat(today + "T" + current[0]["open"]).replace(tzinfo=NY)
-        close_at = datetime.fromisoformat(today + "T" + current[0]["close"]).replace(tzinfo=NY)
+        session_day = current[0]["date"]
+        session_open = datetime.fromisoformat(session_day + "T" + current[0]["open"]).replace(tzinfo=NY)
+        close_at = datetime.fromisoformat(session_day + "T" + current[0]["close"]).replace(tzinfo=NY)
         sessions = sorted({
             row["date"] for row in rows if isinstance(row.get("date"), str)
         })
@@ -1616,7 +1848,7 @@ class EarningsBook:
                 session_open=session_open, close_at=close_at, is_open=bool(snapshot["clock"]["is_open"]),
             ))
         self.publish_ledger()
-        if any(status in {"FLATTENING", "POSITION_MISMATCH"} for status in statuses):
+        if any(status in {"EXIT_UNRESOLVED", "FLATTENING", "POSITION_MISMATCH"} for status in statuses):
             status = min(statuses, key=_status_rank)
         else:
             blocked = self._entries_blocked(snapshot["account"], today)

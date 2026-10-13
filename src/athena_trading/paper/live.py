@@ -36,7 +36,8 @@ from ..orb_m.market import Bar, average_true_range
 from .alpaca import PAPER_API_BASE, AlpacaPaperBroker
 from .journal import PaperJournal
 from .ownership import (
-    earnings_state_dir, intraday_book, load_ownership_symbols, terminal_learning_history,
+    earnings_state_dir, intraday_book, load_ownership_orders, load_ownership_symbols,
+    terminal_learning_history,
 )
 
 NY = ZoneInfo("America/New_York")
@@ -690,8 +691,8 @@ class ActivePaperPilot:
         if isinstance(parent.get("id"), str):
             owned_ids.add(parent["id"])
         learning_history = terminal_learning_history(
-            history, own_symbol=symbol, owned_ids=owned_ids,
-            ledger_symbols=load_ownership_symbols(earnings_state_dir()),
+            history, owned_ids=owned_ids,
+            earnings_orders=load_ownership_orders(earnings_state_dir(), snapshot["account"]["id"]),
         )
         self.journal.append(
             "flat_confirmed", parent=parent, snapshot=snapshot,

@@ -10,13 +10,45 @@
 |---|---|
 | Main entry path | Narrow ORB candidate → Jev-only judgment → deterministic pilot risk → Alpaca paper bracket/recovery; Astra 6 and hybrid entry are not implemented |
 | Operational evidence | The 13 October held-bracket incident below records a first filled bracket and protective flatten. Earlier no-traded-session statements are historical. Current deployed host SHA, health and exposure were not checked by this repair |
-| Earnings | This open PR implements a narrow Jev-only paper book, not source intelligence or thesis/scenario generation. Lifecycle repair `5baae398e05c5a31b956280a002641694a4a4052` is described in the next section. It is not merged and not deployed |
-| Holding policy | Current product guardrail is pre-close flat and no overnight exposure. The earnings book still uses a three-session default hold (five-session ceiling). That conflict is unresolved. This repair does not authorize the hold |
+| Earnings | This open PR implements a narrow Jev-only paper book, not source intelligence or thesis/scenario generation. Lifecycle and no-overnight repair, including final durability follow-up `daedc2f5849d8468f1a002bd5f34b58b6e45c68c`, is described in the next section. It is not merged and not deployed |
+| Holding policy | Nick explicitly confirmed no overnight positions on 13 October 2026. New earnings brackets use DAY and begin closing 15 minutes before the actual session close, including early closes. Old journals remain recoverable; unknown or unexecuted exits stay visible and block new entries |
 | Forecasting / APDE / portfolio risk | Comprehensive validated forecasts, full shared EXPLORE/PROTECT/HARVEST/DEFEND/EXIT management, hybrid management and complete cross-arm portfolio controls remain incomplete |
 | Learning / Core | Current trading-specific outcome store, retrieval and prospective temporary veto study exist; general Core context/replay/validation/knowledge integration and measured performance improvement are not established |
 | Authority | PAPER/ABSENT only; LIVE remains rejected. Aggressive valid opportunity capture and adaptive winners do not raise risk caps or grant overnight permission |
 
-## Earnings Adaptive paper book — 13 October 2026
+## Earnings close ownership and same-session policy — 13 October 2026
+
+Tested runtime revision: `cdbf8b9b5223255803d33e142593f6d5a77f112b`, on prior PR #29 head `dd71add0170a03b7c9da92a31c31bbe49b2c732c`. The owner confirmed no overnight positions at 21:41 UTC. This resolves the earlier holding-policy conflict without granting deployment, provider calls, spending or LIVE authority.
+
+| Finding / requirement | Implemented behavior and regression evidence |
+|---|---|
+| Unrelated close adoption / unowned residual | Match opposite side, exact requested quantity, non-reserved ID and creation/submission timing to the durable intent. Retry requires exact signed residual explained by owned fills. Quantity-bounded DELETE prevents a concurrent addition from expanding the close request. Fractional, opposite-side and unexplained shares halt rather than being liquidated |
+| Historical earnings ownership | Account-bound exact entry, leg and close identities are rebuilt from the durable journal independently of active symbols. They remain after closure/restart. Intraday terminal learning no longer hides a manual order solely because its symbol is in the active earnings ledger |
+| Terminal-before-restart lost acknowledgement | Search bounded complete terminal history and working observations, deduplicate consistent identities, reject conflicting/truncated/ambiguous evidence. A missing match remains visibly unresolved; no duplicate close or fabricated fill |
+| Partial and terminal-zero attempts | Refresh working partial acknowledgements, validate immutable order identity, accept verified terminal zero-fill cancellations/rejections/expirations and aggregate later fills. Every attempt must be terminal before retry or publication |
+| No overnight positions | DAY entry brackets; 15-minute pre-close exit using actual regular-session calendar and early closes; pending-entry cancellation and prior-day recovery without models. Default hold is one session; legacy 2..5 settings are readable for recovery but block new entries |
+| Execution limitations | A market halt, outage or closed session can prevent flatness. `EXIT_UNRESOLVED`, `FLATTENING` and `POSITION_MISMATCH` remain visible and block new entries. Cancellation or acknowledgement alone is not a confirmed close |
+
+Regression-first verification: all eight independently reported adverse cases failed on the starting head. Thirty-six new in-repository sequence cases cover those invariants and the subsequent same-session policy. Fixture updates supply actual broker-shaped timestamps, unique per-symbol IDs and signed short-close behavior; the old multiday expectations were replaced by the owner's new policy. Existing research, model-role boundaries, risk caps and broker pin were preserved.
+
+Observed local checks used Python 3.12.14 with an empty inherited environment, temporary journals/learning stores and a Python socket-denial audit hook. No real broker/provider was called:
+
+```bash
+python -m pytest -p no:cacheprovider -q                 # 814 passed in 7.80s
+python -m ruff check .                                 # clean, 0.15.8
+bash -n deploy/install.sh                               # clean
+git diff --check                                        # clean
+python -m pip install --no-index --no-deps --no-build-isolation --target <isolated-package-dir> .
+# local wheel built/installed; installed-package earnings/ownership imports passed
+```
+
+Final durability follow-up: `daedc2f5849d8468f1a002bd5f34b58b6e45c68c` also closes the verified event-publication crash window. The reconciled earnings receipt is persisted before `position_closed`, missing events are idempotently recovered, and old journals already containing `position_closed` without a receipt remain in recovery. Missing terminal fill evidence stays `FLATTENING` and never silently completes the episode. Six further tests cover crashes immediately before/after both durable appends, the legacy reversed-order state, and unavailable recovery evidence. Three new assertions reproduced failures before the fix; two append-boundary controls already passed. Final full suite: **820 passed in 7.39s**; Ruff, installer syntax, diff checks and fresh local package build/install/import all passed with the same empty-environment network guard. The total addition is 42 in-repository tests. This follow-up does not change authority, risk, strategy selection or deployment.
+
+The close quantity parameter and bounded history query follow Alpaca's [close-position schema](https://docs.alpaca.markets/us/reference/deleteopenposition-1) and [order-history schema](https://docs.alpaca.markets/us/reference/getallorders-1). Schema review and synthetic fixtures are not broker-execution evidence. A timestamp-constrained recovery candidate still depends on complete trustworthy broker observations; unresolved identity requires operator reconciliation. Root pytest excludes Astra Desk. These local checks do not establish hosted CI, deployment, current account health or profitable strategy behavior. Full shared portfolio authorization is being repaired separately in PR #31; this PR does not certify that broader gate.
+
+## Earlier Earnings Adaptive paper book evidence — 13 October 2026
+
+The following section preserves the previous implementation and its 778-test receipt. Its GTC/multi-day behavior is superseded by the same-session policy above.
 
 The earnings arm is a second PAPER book. It reads a free Nasdaq earnings calendar and an operator copy of the screener's `universe_75.txt`. It submits a GTC bracket only when the live gap is inside the screener's 4–12% band, Jev accepts it on the same floors as the intraday arm, and the dollar caps allow the share count. `parse_authority("LIVE")` still raises. Client order ids start with `athe-`. The book file is separate from the dated intraday journals. A restart reconciles those ids and does not resubmit them. SIGTERM does not flatten. The intraday runner ignores `athe-` orders and symbols in the earnings ledger, and it still refuses any other foreign symbol.
 

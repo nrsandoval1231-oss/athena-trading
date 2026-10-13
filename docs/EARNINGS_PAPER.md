@@ -1,5 +1,7 @@
 # Earnings Adaptive paper book
 
+Nick confirmed on 13 October 2026 that he does not want to hold overnight. Both strategy arms must pursue pre-close, same-session exits.
+
 PAPER only. `parse_authority("LIVE")` raises `AuthorityError`. The order endpoint stays `https://paper-api.alpaca.markets`. This arm does not grant real-money authority, and it does not rerun the frozen earnings-universe study.
 
 The screener in `research/earnings-universe/universe_screener.py` ranks about 75 names that historically move 4–12% from the close before a report to the close after it. This book does not import that script. It trades a name from the operator's copy of `universe_75.txt` only when the live gap, on the first regular session after a known report, lands inside that same band.
@@ -14,8 +16,8 @@ The screener in `research/earnings-universe/universe_screener.py` ranks about 75
 | Before the open (BMO) | Entry session is the report date |
 | After the close (AMC) | Entry session is the next regular session |
 | Unknown report time | Skipped. The book does not guess |
-| Order | GTC limit bracket, whole shares, no extended hours. Stop is halfway back toward the prior close. Target is 2R |
-| Max hold | 3 regular sessions, including the entry day. Exit starts 15 minutes before that session's close. A later session flattens at the next open |
+| Order | DAY limit bracket, whole shares, no extended hours. Stop is halfway back toward the prior close. Target is 2R |
+| Max hold | Same regular session only. Exit starts 15 minutes before the broker calendar's actual close, including early closes. An overdue position is recovered at the next available open |
 | Unfilled entry | Canceled when the entry window ends. The client order id is not reused |
 | Partial fill or missing stop | Close that symbol. Jev is not called |
 | Quantity the book does not recognize | `POSITION_MISMATCH`. No market close |
@@ -36,11 +38,11 @@ Default paper caps, which the environment may tighten but not raise past the cei
 | Notional per trade | $2,000, and 2% of equity | $5,000 |
 | Open notional | $6,000 | $10,000 |
 | Open positions | 3 | 5 |
-| Hold | 3 sessions | 5 |
+| Hold | Same session | No overnight permission |
 
 Buying power is checked again before the order is sent. One share that would exceed the risk or notional cap is skipped. Sizing is not fractional Kelly.
 
-A 0.5% drop versus broker `last_equity` stops new entries. It does not flatten brackets that already have a stop.
+A 0.5% drop versus broker `last_equity` stops new entries. Existing stops remain managed, and the same-session exit deadline still applies.
 
 ## Calendar
 
@@ -65,7 +67,15 @@ Session dates come from Alpaca's paper calendar, not from Nasdaq.
 
 Client order ids start with `athe-` and are a hash of account, symbol, and report date. The id is journaled before the POST. A lost response looks the id up. It is not sent again. Two flat HTTP 404s, with no acknowledgement and no exposure in that symbol, record `entry_not_created`.
 
-The book file is `/var/lib/athena-earnings/book.sqlite`. It is not a dated intraday journal. A restart loads the same file, republishes `ownership.json`, and reconciles open ids before it looks for a new entry. A partial take-profit leaves the unsold shares under management: the position must match entry fills minus opposite-side fills. A quantity those legs cannot explain still halts. A close Alpaca created under its own client order id is waited on when that id is already in `close_ack`. If the close was accepted and the response was lost, the book adopts that order only when exactly one market close on the symbol matches the durable intent. It does not send a second close, cancel an unrelated order, or stop managing another symbol. The shared outcome waits for the terminal fill. A zero-quantity acknowledgement is not stored as the result. SIGTERM stops the process and leaves GTC brackets at the broker. It does not flatten. `--flatten-owned` closes earnings symbols only and records an operator halt even when an older daily-loss halt is already in the book. The three-session hold is this book's paper rule. It is not an approved change to the product's pre-close-flat policy.
+The book file is `/var/lib/athena-earnings/book.sqlite`, reused across sessions. A restart loads the same journal, republishes `ownership.json`, and reconciles open ids before seeking another entry. Live symbol ownership clears only when the trade closes; exact account-bound historical entry, leg and acknowledged close identities remain in the ledger so completed earnings orders cannot contaminate intraday outcomes. A manual order on the same symbol is not historical ownership.
+
+A close must match the signed residual explained by entry fills, bracket fills and all previous terminal close attempts. Every position-close request specifies that exact remaining quantity; a concurrent manual addition cannot expand it to an account-wide quantity. Partial working acknowledgements are refreshed. Terminal canceled, rejected or expired zero-fill attempts contribute zero while later attempts can complete the cashflow. A changed broker ID, symbol, side or requested quantity is not accepted as the refreshed close.
+
+After a lost response, recovery reads both working orders and bounded terminal history. A unique candidate must match symbol, opposite side, requested quantity and a broker creation/submission time inside the durable intent's one-minute send window; prior known order IDs and competing unknown working orders are excluded. Missing, malformed, truncated or ambiguous evidence stays `FLATTENING`; the request is never blindly repeated. Other symbols continue their own protection. Outcomes require terminal, balanced fills and broker-flat observations. The receipt is committed before the closure marker; restart fills in only a missing event. Legacy journals with a closure marker but no receipt remain in recovery until the exact fills can be reconstructed.
+
+The holding policy is same-session only. New brackets use DAY, with no extended hours. Exit begins 15 minutes before the actual regular-session close, including early closes, regardless of model availability. Pending entries are canceled. Prior-day exposure is recovered as soon as the broker can execute. Legacy GTC orders and policies remain readable; `ATHENA_EARNINGS_MAX_HOLD_SESSIONS=2..5` is recovery-only and produces `MULTIDAY_POLICY_DISABLED` for new entries. Remove that old setting or set it to 1; do not replace a journal containing unresolved trades.
+
+`EXIT_UNRESOLVED` and the durable `exit_unresolved` event identify a closed-market position requiring operator attention. A market halt, rejected cancellation, disconnected broker or failed close can prevent actual flatness. `FLATTENING` means execution or bookkeeping remains unresolved, and `POSITION_MISMATCH` requires resolving unowned exposure. Do not claim a flat account from cancellation or order acknowledgement alone. New entries are blocked while these states remain. SIGTERM stops the process and does not establish flatness; the next start must recover the journal. Before planned downtime, complete the operator-owned flatten workflow and verify broker-confirmed flatness; do not leave unresolved exposure unattended or treat DAY expiration as a position close. `--flatten-owned` closes only owned earnings exposure and durably blocks new entries, even after an older daily-loss halt.
 
 Intraday orders start with `athp-`. The intraday runner's flat check and `flatten_step` ignore `athe-` orders and symbols listed in the earnings ledger. They still flatten `athp-` exposure, and they still refuse a symbol that belongs to neither arm. The earnings book will not cancel an `athp-` order.
 

@@ -54,17 +54,12 @@ def symbols_for_prefix(orders: Any, prefix: str) -> set[str]:
     return found
 
 
-def load_ownership_symbols(state_dir: Path | None) -> set[str]:
-    """Symbols the earnings arm says it still holds. A missing file is an empty book.
-
-    A present but unreadable file fails closed. Ignoring it could let the other
-    arm flatten those positions.
-    """
+def _load_ownership(state_dir: Path | None) -> dict[str, Any]:
     if state_dir is None:
-        return set()
+        return {}
     path = state_dir / OWNERSHIP_FILENAME
     if not path.exists():
-        return set()
+        return {}
     try:
         payload = json.loads(path.read_text())
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -73,25 +68,66 @@ def load_ownership_symbols(state_dir: Path | None) -> set[str]:
         raise ValueError("earnings ownership ledger is unreadable")
     if payload.get("arm") != "earnings" or payload.get("prefix") != EARNINGS_ORDER_PREFIX:
         raise ValueError("earnings ownership ledger is not the earnings arm")
-    symbols = payload.get("symbols")
+    return payload
+
+
+def load_ownership_symbols(state_dir: Path | None) -> set[str]:
+    """Active symbols only. Historical orders must never hide a new position."""
+    payload = _load_ownership(state_dir)
+    symbols = payload.get("symbols") if payload else []
     if not isinstance(symbols, list) or any(type(symbol) is not str or not symbol for symbol in symbols):
         raise ValueError("earnings ownership ledger symbols are invalid")
     return set(symbols)
 
 
-def write_ownership_ledger(state_dir: Path, symbols: set[str], orders: list[dict[str, str]]) -> None:
-    """Atomically publish the symbols and client order ids the earnings arm owns."""
+_ORDER_IDENTITY = ("id", "client_order_id", "symbol", "side", "type")
+
+
+def load_ownership_orders(state_dir: Path | None, account_id: str) -> dict[str, dict[str, str]]:
+    """Exact historical order identities published from the durable earnings journal."""
+    payload = _load_ownership(state_dir)
+    rows = payload.get("historical_orders", [])
+    if not isinstance(rows, list):
+        raise ValueError("earnings historical ownership is invalid")
+    if rows and payload.get("account_id") != account_id:
+        raise ValueError("earnings historical ownership belongs to a different account")
+    orders: dict[str, dict[str, str]] = {}
+    for row in rows:
+        if not isinstance(row, dict) or any(
+            not isinstance(row.get(key), str) or not row[key] for key in _ORDER_IDENTITY
+        ):
+            raise ValueError("earnings historical ownership is invalid")
+        identity = {key: row[key] for key in _ORDER_IDENTITY}
+        if row["id"] in orders and orders[row["id"]] != identity:
+            raise ValueError("conflicting earnings historical ownership")
+        orders[row["id"]] = identity
+    return orders
+
+
+def write_ownership_ledger(
+    state_dir: Path, symbols: set[str], orders: list[dict[str, str]], *,
+    historical_orders: list[dict[str, str]] | None = None, account_id: str | None = None,
+) -> None:
+    """Publish live symbols separately from durable, account-bound order provenance."""
     state_dir.mkdir(parents=True, exist_ok=True)
     payload = {
-        "arm": "earnings",
-        "prefix": EARNINGS_ORDER_PREFIX,
-        "symbols": sorted(symbols),
-        "orders": orders,
+        "arm": "earnings", "prefix": EARNINGS_ORDER_PREFIX,
+        "symbols": sorted(symbols), "orders": orders,
+        "historical_orders": historical_orders or [], "account_id": account_id,
     }
     path = state_dir / OWNERSHIP_FILENAME
     temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
+    with temporary.open("w") as stream:
+        json.dump(payload, stream, sort_keys=True)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
     temporary.replace(path)
+    descriptor = os.open(state_dir, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def intraday_book(
@@ -133,34 +169,22 @@ def _tree_ids(order: dict[str, Any]) -> set[str]:
     return found
 
 
-def _ledger_symbol(order: dict[str, Any], ledger_symbols: set[str], own_symbol: str) -> bool:
-    symbol = order.get("symbol")
-    if isinstance(symbol, str) and symbol in ledger_symbols and symbol != own_symbol:
-        return True
-    legs = order.get("legs") or []
-    if isinstance(legs, list):
-        return any(
-            isinstance(leg, dict) and _ledger_symbol(leg, ledger_symbols, own_symbol)
-            for leg in legs
-        )
-    return False
-
-
 def _terminal_role(
-    order: dict[str, Any], *, own_symbol: str, owned_ids: set[str], ledger_symbols: set[str],
+    order: dict[str, Any], *, owned_ids: set[str], earnings_orders: dict[str, dict[str, str]],
 ) -> str:
-    """Classify one top-level broker order, including its nested legs."""
+    """Attribute terminal history by order provenance, never by a live symbol alone."""
     if _prefixed_tree(order, EARNINGS_ORDER_PREFIX):
         return "earnings"
     if _prefixed_tree(order, INTRADAY_ORDER_PREFIX) or bool(_tree_ids(order) & owned_ids):
         return "intraday"
-    if _ledger_symbol(order, ledger_symbols, own_symbol):
+    identity = earnings_orders.get(order.get("id"))
+    if identity and all(order.get(key) == identity[key] for key in _ORDER_IDENTITY):
         return "earnings"
     return "unexplained"
 
 
 def terminal_learning_history(
-    history: Any, *, own_symbol: str, owned_ids: set[str], ledger_symbols: set[str],
+    history: Any, *, owned_ids: set[str], earnings_orders: dict[str, dict[str, str]],
 ) -> list[Any]:
     """Learning input for one arm. Account evidence stays with the caller.
 
@@ -175,7 +199,7 @@ def terminal_learning_history(
         if not isinstance(order, dict) or not isinstance(order.get("id"), str):
             raise ValueError("terminal broker order history is incomplete")
         role = _terminal_role(
-            order, own_symbol=own_symbol, owned_ids=owned_ids, ledger_symbols=ledger_symbols,
+            order, owned_ids=owned_ids, earnings_orders=earnings_orders,
         )
         if role == "earnings":
             continue

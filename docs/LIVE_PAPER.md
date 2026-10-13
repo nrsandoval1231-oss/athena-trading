@@ -38,7 +38,7 @@ The owner selected **Astra 6** to produce evidence-linked theses/scenarios/plans
 
 Before any future hybrid activation, complete the [build acceptance gates](BUILD_PLAN.md) and [contract](HYBRID_MODEL_CONTRACT.md): source and plan validation, expiry/invalidation, no new exposure on either model's failure, bounded event-driven updates, shared portfolio risk and deterministic APDE transitions. Critical protection, mandatory exits and recovery must not wait for either model. The current daily fallback is not a hybrid acceptance rule; it cannot bypass missing/expired proposals or Jev vetoes. No risk limit or order policy changes in this docs PR.
 
-[PR #29](https://github.com/nrsandoval1231-oss/athena-trading/pull/29) remains unmerged. Its `docs/EARNINGS_PAPER.md` is the earnings book's runbook, not a launch procedure for the intraday service and not an Astra 6 deployment. Its multiday holds require an owner decision against the diagram's pre-close-flat rule before adoption. Do not launch a second book from this runbook or infer overnight permission.
+[PR #29](https://github.com/nrsandoval1231-oss/athena-trading/pull/29) remains unmerged. Its `docs/EARNINGS_PAPER.md` is the earnings book's runbook, not a launch procedure for the intraday service and not an Astra 6 deployment. Nick confirmed no overnight positions on 13 October 2026, superseding its earlier multi-day proposal. Both arms begin closing before the actual regular-session close. Do not launch a second book from this runbook; unresolved exposure during a halt or outage is not a confirmed flat account.
 
 ## Configure the existing runner
 
