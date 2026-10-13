@@ -1,8 +1,10 @@
 # Paper outcome learning
 
-Owner direction: Jev is the sole active model. Evaluate every trade, retain experience, review the day after after-hours, and improve decisions through evidence. The implementation is `paper/learning.py`, using the existing Athena adapter identity contracts. This is trading-specific policy, not a new general-purpose Core.
+> This runbook describes existing behavior on main `5708946`; it does not activate hybrid learning. Dated implementation evidence is retained in [status](IMPLEMENTATION_STATUS.md).
 
-## What runs
+Owner direction, 13 October 2026: **Astra 6 proposes, Jev judges, deterministic code authorizes and enforces**. Evaluate every trade, retain experience, review after after-hours and improve decisions only through evidence. The current implementation in `paper/learning.py` remains the narrower Jev-only paper study, using existing Athena adapter identity contracts. It is trading-specific policy, not complete general Core integration. See the [hybrid contract](HYBRID_MODEL_CONTRACT.md) and [build plan](BUILD_PLAN.md).
+
+## What runs today: the Jev-only paper study
 
 1. Strategy code builds a bounded candidate and computes its features. The runner retrieves prior experience and active validated rules for the same account, symbol, direction, policy and Jev question identity.
 2. Code enforces any applicable learned abstention rule. Otherwise Jev chooses TAKE_TRADE, NO_TRADE or INSUFFICIENT_EVIDENCE. Deterministic risk still authorizes the exact entry.
@@ -41,7 +43,15 @@ At one trade per session, a promoted rule will take substantial time to earn. Th
 - A bad learning store blocks new decisions. Broker recovery is prioritized and does not require the store or Jev to be healthy. The supervisor retries deferred outcome import after the broker lifecycle is complete.
 - Use `systemctl stop athena-paper.service` to suspend future activity. No automatic promotion can override the deterministic risk policy.
 
-The trade-to-memory-to-candidate-to-prospective-validation-to-veto path is exercised with fixtures, including a test that a promoted rule changes the actual pilot's behavior. **No live paper session or measured performance improvement has yet been observed.** The general Athena Core service integration, richer strategy lessons, full replay counterfactuals and automatic code/model training remain incomplete.
+The trade-to-memory-to-candidate-to-prospective-validation-to-veto path is exercised with fixtures, including a test that a promoted rule changes the actual pilot's behavior. The dated 13 October [held-bracket incident](IMPLEMENTATION_STATUS.md#held-bracket-stop--13-october-2026) records a filled paper trade and flatten; earlier no-session claims are historical. **This does not establish a validated lesson, successful promotion or measured performance improvement.** The general Athena Core service integration, richer strategy lessons, full replay counterfactuals and automatic code/model training remain incomplete.
+
+## Target hybrid learning contract
+
+Both arms must attach Astra 6 proposal/model/schema identity and Jev evidence/question/judgment identity to the same episode, alongside original sources, calculated/validated forecast versions, deterministic verdict, broker lifecycle and APDE transitions. Record rejected proposals and insufficiency, not only successful trades. Source facts, model hypotheses, measured outcomes and simulated counterfactuals remain distinct.
+
+Learning must attribute outcomes to strategy, market regime and the policy/model versions in use; a winning trade or model agreement is not proof the thesis or judgment was correct. New hybrid cohorts and changed question/model identities cannot silently inherit the old Jev-only study's validation. Predeclare evaluation and meaningful controls; measure calibration, expectancy, drawdown, execution costs and uncertainty where data supports them. General temporal-firewall replay, Core knowledge promotion/rollback and later versioned retrieval remain deliverables in [BUILD_PLAN.md](BUILD_PLAN.md).
+
+The current 20/20 prospective NO_TRADE policy and 14-day expiry described above are unchanged implementation policy, not permission to auto-tune Astra 6/Jev, raise risk, widen stops, promote code or reuse frozen holdouts. Critical protection and mandatory exits remain model- and learning-store-independent. PR #29's changes to learning attribution require reconciliation at integration, not a claim that its branch is on main.
 
 ## Fixture self-improve lab
 
