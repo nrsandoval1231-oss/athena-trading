@@ -1635,3 +1635,80 @@ def test_bad_answer_does_not_block_the_daily_fallback(tmp_path):
     assert calls["n"] == 2
     assert _posts(broker) == 1
     journal.close()
+
+
+def test_earnings_prefix_does_not_block_or_get_flattened(setup):
+    """An athe- order and its position are the earnings book, not unowned exposure."""
+    pilot, broker, _, journal = setup
+    broker.state["positions"] = [{
+        "asset_id": "b0b6dd9d-8b9b-48a9-ba46-b9d54906e415",
+        "symbol": "DECK", "exchange": "NASDAQ", "asset_class": "us_equity",
+        "avg_entry_price": "142.15", "qty": "4", "side": "long",
+        "market_value": "568.60", "cost_basis": "568.60", "current_price": "142.15",
+    }]
+    broker.state["orders"] = [{
+        "id": "8f6c1d2e-1b3a-4c5d-9e7f-0a1b2c3d4e5f",
+        "client_order_id": "athe-deckreport-stop",
+        "symbol": "DECK", "asset_class": "us_equity", "qty": "4", "filled_qty": "0",
+        "side": "sell", "type": "stop", "order_type": "stop", "order_class": "bracket",
+        "time_in_force": "gtc", "status": "held", "stop_price": "130.00",
+        "limit_price": None, "extended_hours": False, "legs": None,
+    }]
+    assert pilot.tick() == "ENTRY_SUBMITTED"
+    assert journal.last("entry_intent")["order"]["symbol"] == "AAPL"
+    broker.parent.update(status="filled", filled_qty="1")
+    broker.state["positions"] = [
+        {"symbol": "AAPL", "qty": "1", "side": "long"},
+        {"symbol": "DECK", "qty": "4", "side": "long", "asset_class": "us_equity"},
+    ]
+    broker.state["orders"] = [
+        {"id": "aapl-stop", "client_order_id": "athp-aapl-stop", "symbol": "AAPL",
+         "qty": "1", "filled_qty": "0", "side": "sell", "type": "stop", "status": "new",
+         "stop_price": "99"},
+        {"id": "8f6c1d2e-1b3a-4c5d-9e7f-0a1b2c3d4e5f", "client_order_id": "athe-deckreport-stop",
+         "symbol": "DECK", "qty": "4", "filled_qty": "0", "side": "sell", "type": "stop",
+         "status": "held", "stop_price": "130.00"},
+    ]
+    broker.state["clock"]["timestamp"] = NOW.replace(hour=19, minute=46).isoformat()
+    assert pilot.tick() == "FLATTENING"
+    deleted = [path for method, path, _ in broker.calls if method == "DELETE"]
+    assert deleted
+    assert all("DECK" not in path and "8f6c1d2e" not in path for path in deleted)
+    assert journal.last("halt")["reason"] == "SESSION_CLOSE"
+
+
+def test_earnings_ledger_hides_a_naked_position_and_not_our_symbol(setup, monkeypatch, tmp_path):
+    monkeypatch.setenv("ATHENA_EARNINGS_STATE_DIR", str(tmp_path))
+    (tmp_path / "ownership.json").write_text(
+        '{"arm":"earnings","prefix":"athe-","symbols":["MSFT"],'
+        '"orders":[{"symbol":"MSFT","client_order_id":"athe-msft"}]}'
+    )
+    pilot, broker, _, journal = setup
+    broker.state["positions"] = [{
+        "symbol": "MSFT", "qty": "2", "side": "long", "asset_class": "us_equity",
+        "avg_entry_price": "410.00", "current_price": "412.00",
+    }]
+    assert pilot.tick() == "ENTRY_SUBMITTED"
+    assert journal.last("entry_intent")["order"]["symbol"] == "AAPL"
+
+    fresh = PaperJournal(tmp_path / "other.sqlite")
+    other = ActivePaperPilot(broker, pilot.jev, fresh, POLICY)
+    broker.state["positions"] = [{"symbol": "AAPL", "qty": "1", "side": "long"}]
+    broker.state["orders"] = []
+    (tmp_path / "ownership.json").write_text(
+        '{"arm":"earnings","prefix":"athe-","symbols":["AAPL"],"orders":[]}'
+    )
+    with pytest.raises(ValueError, match="dedicated"):
+        other.tick()
+    fresh.close()
+
+
+def test_unknown_symbol_is_still_unowned(setup, monkeypatch, tmp_path):
+    monkeypatch.setenv("ATHENA_EARNINGS_STATE_DIR", str(tmp_path))
+    (tmp_path / "ownership.json").write_text(
+        '{"arm":"earnings","prefix":"athe-","symbols":["DECK"],"orders":[]}'
+    )
+    pilot, broker, _, _journal = setup
+    broker.state["positions"] = [{"symbol": "QQQ", "qty": "1", "side": "long"}]
+    with pytest.raises(ValueError, match="dedicated"):
+        pilot.tick()

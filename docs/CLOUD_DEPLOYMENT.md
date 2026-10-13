@@ -1,6 +1,6 @@
 # Continuous cloud paper operation
 
-Deploy the existing active paper runner on one persistent Linux VPS. The active host is a Hostinger VPS, installed on 10 October 2026. A DigitalOcean Droplet remains an optional path. Either host uses the same `deploy/install.sh`, `athena-paper.service`, and root-owned `/etc/athena/paper.env`. The service stays online across market sessions and reboots; entries remain restricted to the broker's market session and the bounded policy in [LIVE_PAPER.md](LIVE_PAPER.md). The bounded learning review is implemented; the full Earnings arm, APDE and general Core integration remain incomplete.
+Deploy the existing active paper runner on one persistent Linux VPS. The active host is a Hostinger VPS, installed on 10 October 2026. A DigitalOcean Droplet remains an optional path. Either host uses the same `deploy/install.sh`, `athena-paper.service`, and root-owned `/etc/athena/paper.env`. The service stays online across market sessions and reboots; entries remain restricted to the broker's market session and the bounded policy in [LIVE_PAPER.md](LIVE_PAPER.md). The bounded learning review is implemented. A separate earnings paper service is defined in [EARNINGS_PAPER.md](EARNINGS_PAPER.md). It is not enabled by the intraday installer until an operator preflights it. Full APDE and general Core integration remain incomplete.
 
 ## Selected setup
 
@@ -50,6 +50,8 @@ systemd-run --wait --pipe --collect --unit=athena-paper-preflight \
 ```
 
 Require `ok: true`, Jev and the intended symbol/feed, and a flat dedicated paper account. This verifies authentication/model availability and account reads; it does not perform inference or submit an order. Market-data freshness, asset eligibility and risk are checked in the active session.
+
+`deploy/install.sh` also installs `athena-earnings.service` and, when missing, `/etc/athena/earnings.env` from the example. It leaves that service stopped. Do not enable it in the same step as the intraday service. Preflight and the ownership rules are in [EARNINGS_PAPER.md](EARNINGS_PAPER.md). The two units use different state directories and different env files. They can share one Alpaca paper account. The intraday unit is given `ATHENA_EARNINGS_STATE_DIR` so it does not flatten `athe-` positions.
 
 Then start the authorized active paper service and follow its first market session:
 

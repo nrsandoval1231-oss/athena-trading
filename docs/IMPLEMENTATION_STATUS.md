@@ -1,5 +1,22 @@
 # Implementation status
 
+## Earnings Adaptive paper book — 13 October 2026
+
+The earnings arm is a second PAPER book. It reads a free Nasdaq earnings calendar and an operator copy of the screener's `universe_75.txt`. It submits a GTC bracket only when the live gap is inside the screener's 4–12% band, Jev accepts it on the same floors as the intraday arm, and the dollar caps allow the share count. `parse_authority("LIVE")` still raises. Client order ids start with `athe-`. The book file is separate from the dated intraday journals. A restart reconciles those ids and does not resubmit them. SIGTERM does not flatten. The intraday runner ignores `athe-` orders and symbols in the earnings ledger, and it still refuses any other foreign symbol.
+
+The calendar has no SLA, no surprise or guidance fields, and skips `time-not-supplied`. Options, multi-leg orders, Kelly sizing, and PROTECT/HARVEST/DEFEND ratchets are not in this slice. Closed earnings trades stay on the earnings journal. They are not imported into the intraday learning study. Nothing here was deployed, and nothing here is a broker fill or a performance result. **LIVE remains rejected.**
+
+Observed local checks, Python 3.12. The baseline on `main` `5708946616afb675d1c78138990d8fa46057b6d5` (after PR #28) was 730 passed and 0 failed. No pre-existing failures were present. This change adds 22 tests.
+
+```bash
+python -m pytest -q                 # 752 passed in 5.33s
+python -m ruff check .              # clean, ruff 0.15.8
+bash -n deploy/install.sh           # clean
+git diff --check                    # clean
+```
+
+Root pytest does not include Astra Desk; that suite lives in its own repository. Tested revision: `PENDING_COMMIT`.
+
 ## Transient paper reads — 13 October 2026
 
 Broker GET calls, including minute bars, retry twice with backoff and jitter after a timeout, HTTP 429, or a 5xx response. Order POSTs are not retried. A single transient tick failure no longer flattens an open paper trade. The runner halts `RUNNER_ERROR` only after 3 consecutive transient failures or 60 seconds. A DELETE that returns 404 or 422 for an already finished or canceled leg is a successful cancel. A take-profit or stop fill still halts `POSITION_EXITED` and is also journaled as `TAKE_PROFIT_FILLED` or `STOP_FILLED`. Flat confirmation reads order history with `nested=true`. `parse_authority("LIVE")` still raises. **LIVE remains rejected.** This is not a broker fill and not evidence of trading performance.
@@ -139,7 +156,7 @@ Status date: 24 September 2026. Product authority: [Athena Trading Canon v3.0](A
 |---|---|---|
 | Jev decision model | athena_adapter/jev.py: one typed TAKE_TRADE / NO_TRADE / INSUFFICIENT_EVIDENCE decision; active threshold gate | Semantic trading quality unmeasured; no generated thesis |
 | Predictive Intraday | Existing ORB trigger/risk frame feeds paper/live.py | Bounded opening-range component, not full multi-source forecasting |
-| Earnings Adaptive | research/earnings-universe input research | Integrated earnings strategy remains incomplete |
+| Earnings Adaptive | paper/earnings.py: Nasdaq calendar, screener universe file, 4–12% post-earnings GTC bracket, Jev gate, separate paper service | Options, guidance/sentiment, Kelly, and full APDE ratchet remain incomplete. Not deployed |
 | Risk and execution | Dedicated paper account; one share/entry/day; rechecked limits; bracket, partial fills, cancellation and broker reconciliation | Full portfolio weekly/monthly/correlation policy remains incomplete |
 | APDE | Shared vocabulary and historical strategy management; broker protection/cleanup in active pilot | Full EXPLORE/PROTECT/HARVEST/DEFEND ratcheting not integrated |
 | Persistence | Single-writer SQLite events, verified chain and separate durable checkpoint | Privileged rewrites of both DB/anchor or lost disk require independent recovery evidence |

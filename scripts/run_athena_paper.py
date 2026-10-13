@@ -18,6 +18,9 @@ from athena_trading.paper.live import (
     ActivePaperPilot, LivePaperAPI, PilotPolicy, policy_from_environment,
     transient_broker_failure,
 )
+from athena_trading.paper.ownership import (
+    earnings_state_dir, intraday_book, load_ownership_symbols,
+)
 
 
 TRANSIENT_TICK_LIMIT = 3
@@ -35,7 +38,16 @@ def _halt_for_failure(pilot: ActivePaperPilot, broker: LivePaperAPI) -> bool:
         snapshot = broker.snapshot()
     except Exception:
         return False
-    return bool(snapshot.get("positions") or snapshot.get("orders"))
+    try:
+        positions, orders = intraday_book(
+            snapshot.get("positions"), snapshot.get("orders"),
+            own_symbol=pilot.policy.symbol,
+            ledger_symbols=load_ownership_symbols(earnings_state_dir()),
+        )
+    except ValueError:
+        # An unreadable ledger must not be treated as a flat intraday account.
+        return bool(snapshot.get("positions") or snapshot.get("orders"))
+    return bool(positions or orders)
 
 
 def _continue_after_transient(

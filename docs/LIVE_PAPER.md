@@ -48,7 +48,9 @@ Optional paper policy, also read by the runner when unset values are left blank.
 
 Use paper-account keys. The order endpoint is fixed to `https://paper-api.alpaca.markets`; there is no real-money endpoint switch. Do not put keys in Git, command arguments, reports, or chat. No keys are required for the test suite.
 
-Choose an existing persistent writable state directory. Use the same journal path on restart. One journal represents one pilot session. The cloud supervisor creates dated journals, retains earlier records, and prioritizes unresolved entries before a new day. For a manual run, use the same journal through broker-confirmed completion and select a new dated path for a later session. The broker client ID includes account/session identity to prevent duplicate same-day submissions even if a new local journal is accidentally used. Do not delete state to bypass a halt. Keep the account dedicated to this runner; manual/concurrent orders are outside its ownership contract.
+Choose an existing persistent writable state directory. Use the same journal path on restart. One journal represents one pilot session. The cloud supervisor creates dated journals, retains earlier records, and prioritizes unresolved entries before a new day. For a manual run, use the same journal through broker-confirmed completion and select a new dated path for a later session. The broker client ID includes account/session identity to prevent duplicate same-day submissions even if a new local journal is accidentally used. Do not delete state to bypass a halt. Manual orders that use neither `athp-` nor `athe-` remain outside the ownership contract.
+
+The intraday runner can share the paper account with the earnings book. It ignores an order whose client id starts with `athe-`, and a position whose symbol is on that order or listed in `/var/lib/athena-earnings/ownership.json`. It does not ignore its own symbol. Any other symbol still blocks startup and cleanup. See [EARNINGS_PAPER.md](EARNINGS_PAPER.md).
 
 The following example uses AAPL only as a command example; the operator supplies the intended symbol:
 

@@ -1,7 +1,9 @@
 """One active live-data paper pilot using ORB input and Jev decisions.
 
-One share, one entry per session, one dedicated paper account. This is the first
-intraday execution slice, not the complete dual-strategy or learning system.
+One share, one entry per session. This is the intraday execution slice. An
+earnings position on the same paper account is not this runner's exposure when
+its client order id starts with ``athe-`` or the earnings ledger lists the
+symbol. This runner still flattens only its own symbol.
 
 A TAKE_TRADE label clears the gate at p(TAKE_TRADE) >= 0.6 and confidence >= 0.5
 unless the operator overrides those floors. Probability mass within 0.02 of 1 is
@@ -33,6 +35,7 @@ from ..orb_m.entry import build_risk_frame, detect_breakout, freeze_opening_rang
 from ..orb_m.market import Bar, average_true_range
 from .alpaca import PAPER_API_BASE, AlpacaPaperBroker
 from .journal import PaperJournal
+from .ownership import earnings_state_dir, intraday_book, load_ownership_symbols
 
 NY = ZoneInfo("America/New_York")
 TERMINAL = {"filled", "canceled", "expired", "rejected", "replaced"}
@@ -431,6 +434,21 @@ class ActivePaperPilot:
         self.daily = None
         self._flat_observations = 0
 
+    def _without_earnings(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        """Copy a snapshot with earnings positions and orders removed.
+
+        The raw snapshot stays in the journal. Decisions and flatten use this view.
+        """
+        positions, orders = intraday_book(
+            snapshot.get("positions"), snapshot.get("orders"),
+            own_symbol=self.policy.symbol,
+            ledger_symbols=load_ownership_symbols(earnings_state_dir()),
+        )
+        view = dict(snapshot)
+        view["positions"] = positions
+        view["orders"] = orders
+        return view
+
     def halt(self, reason: str) -> None:
         if not self.journal.last("halt"):
             self.journal.append("halt", reason=reason, at=datetime.now(UTC))
@@ -450,7 +468,8 @@ class ActivePaperPilot:
             if not same_account or not same_policy:
                 raise ValueError("journal belongs to a different account or policy")
         else:
-            if snapshot["positions"] or snapshot["orders"]:
+            book = self._without_earnings(snapshot)
+            if book["positions"] or book["orders"]:
                 raise ValueError("pilot requires a dedicated, initially flat paper account")
             self.journal.append("binding", binding=binding)
 
@@ -484,7 +503,8 @@ class ActivePaperPilot:
 
     def _missing_reserved_order(self, snapshot: dict[str, Any]) -> str:
         """The reserved id was never created. Look twice, then stop. Never resubmit."""
-        if snapshot["positions"] or snapshot["orders"]:
+        book = self._without_earnings(snapshot)
+        if book["positions"] or book["orders"]:
             raise ValueError("reserved order is missing while exposure remains")
         client_order_id = self._entry()["order"]["client_order_id"]
         if self.journal.last("entry_not_created"):
@@ -540,13 +560,17 @@ class ActivePaperPilot:
         self.halt("FLATTEN_REQUESTED")
         tracked, lookup_error = self._lookup_parent()
         visible = self._visible_orders(snapshot["orders"], tracked)
+        positions, visible = intraday_book(
+            snapshot["positions"], visible, own_symbol=self.policy.symbol,
+            ledger_symbols=load_ownership_symbols(earnings_state_dir()),
+        )
         if not self._entry():
-            return not snapshot["positions"] and not visible
+            return not positions and not visible
         symbol = self.policy.symbol
-        if any(item["symbol"] != symbol for item in snapshot["positions"] + visible):
+        if any(item["symbol"] != symbol for item in positions + visible):
             raise ValueError("unowned exposure is present; refusing account-wide cleanup")
         if self.journal.last("entry_not_created"):
-            if snapshot["positions"] or visible:
+            if positions or visible:
                 raise ValueError("exposure remains after a missing-order closeout")
             return True
         close_events = [e for e in self.journal.events if e["kind"] == "close_ack"]
@@ -566,13 +590,13 @@ class ActivePaperPilot:
         if cancelable or any(o["id"] in close_ids for o in working):
             self._flat_observations = 0
             return False  # cancellation/close acknowledgement is not a fill
-        if snapshot["positions"]:
+        if positions:
             self._flat_observations = 0
             attempts = sum(e["kind"] == "close_intent" for e in self.journal.events)
             if attempts >= 3:
                 raise ValueError("close attempts exhausted; exposure remains unresolved")
             self.journal.append("close_intent", attempt=attempts + 1,
-                                positions=snapshot["positions"])
+                                positions=positions)
             order = self.broker.call("DELETE", "/v2/positions/" + symbol)
             self.journal.append("close_ack", attempt=attempts + 1, order=order)
             return False
@@ -719,7 +743,7 @@ class ActivePaperPilot:
     ) -> str:
         """Recheck risk, reserve one bracket, then send it. PAPER only."""
         require_paper(self.authority)
-        current = self.broker.snapshot()
+        current = self._without_earnings(self.broker.snapshot())
         current_now = timestamp(current["clock"]["timestamp"])
         if current_now < observed_at:
             raise ValueError("broker clock moved backwards during adjudication")
@@ -775,6 +799,7 @@ class ActivePaperPilot:
         now = timestamp(snapshot["clock"]["timestamp"])
         day = now.astimezone(NY).date().isoformat()
         self.journal.append("broker_observation", at=now, snapshot=snapshot)
+        snapshot = self._without_earnings(snapshot)
         snapshot["orders"] = working_orders(snapshot["orders"])
         if self.journal.last("flat_confirmed"):
             tracked, lookup_error = self._lookup_parent()
