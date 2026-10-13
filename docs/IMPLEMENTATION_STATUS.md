@@ -13,7 +13,7 @@ bash -n deploy/install.sh           # clean
 git diff --check                    # clean
 ```
 
-Root pytest does not include Astra Desk; that suite lives in its own repository.
+Root pytest does not include Astra Desk; that suite lives in its own repository. Tested revision: `59e8fff6333858f7f7940c3d54f512445cb8b4ae`. This sentence is a docs-only follow-up; the runner, tests, and the checks above are that commit.
 
 ## Held bracket stop — 13 October 2026
 
