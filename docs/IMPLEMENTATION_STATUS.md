@@ -6,17 +6,17 @@ Intraday paper submission no longer rests a limit on the signal bar's close. `Li
 
 The quote midpoint may not already be more than five cents (`MAX_ENTRY_SLIPPAGE`) worse than the signal close. The limit itself may not be more than seven cents worse (`MAX_LIMIT_CONCESSION`, five cents plus the two-cent offset bound). The 15 October short is inside both bounds: close 765.21, bid 765.15, ask 765.18, sell limit 765.14, stop distance 2.28 from the unchanged 767.42 stop, target still 760.79. A missing, stale (older than 15 seconds), crossed, or invalid quote skips the entry with `entry_skipped`. A move beyond either bound does the same. No order is sent, a flat account is not halted, and a market order is not used. Submitted entries journal the bid, ask, quote time, limit, `slippage_vs_close`, and `midpoint_vs_close` on `entry_intent`. The client order id is still the account and session hash. The 60-second `ENTRY_TIMEOUT` is unchanged. Policy version `athena-jev-paper-pilot-v3` is unchanged. The earnings book, ORB-M constitution, authority gate, and APDE path are unchanged. **LIVE remains rejected.** This is not deployed.
 
-Observed local checks, Python 3.12. The baseline on main before this change was 871 passed. This change adds 21 tests. No pre-existing failures were present. Broker and quote transports in the new tests are fixtures.
+Observed local checks, Python 3.12, on runtime commit `45bea3eedc485ce97d475e3a5d87f39ba3383a7a`. The baseline on main before this change was 871 passed. This change adds 21 tests. No pre-existing failures were present. Broker and quote transports in the new tests are fixtures.
 
 ```bash
-python -m pytest -q                 # 892 passed in 11.32s
+python -m pytest -q                 # 892 passed in 10.87s
 python -m ruff check .              # clean, ruff 0.15.8
 bash -n deploy/install.sh           # clean
 python -m compileall -q src tests   # clean
 git diff --check                    # clean
 ```
 
-Root pytest does not include Astra Desk; that suite lives in its own repository. The tested revision is the commit that introduces this pricing. A docs-only follow-up records that SHA. This is not a broker fill and not evidence of trading performance.
+Root pytest does not include Astra Desk; that suite lives in its own repository. This paragraph only records that SHA. It does not change runtime behavior. This is not a broker fill and not evidence of trading performance.
 
 ## Current architecture and implementation — 13 October 2026
 
