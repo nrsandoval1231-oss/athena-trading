@@ -15,6 +15,13 @@ recorded when it does not qualify. Equivalent repeats of one opening-range
 setup do not each spend an adjudication. A malformed Jev answer vetoes that
 setup only and is not an approval. Risk, the bracket, and PAPER authority
 still apply.
+
+The signal builders record the completed close as the reference limit. At
+submission the runner reads the latest bid and ask and replaces only that
+limit: a buy is the ask plus one cent, and a sell is the bid minus one cent.
+The stop stays on the signal and the target stays the original 2R price. A
+missing, stale, crossed, or invalid quote, or a live price already beyond the
+slippage cap, skips the entry. This path never sends a market order.
 """
 from __future__ import annotations
 
@@ -25,6 +32,7 @@ import re
 import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
@@ -56,6 +64,22 @@ PROTECTIVE_STOP_STATUSES = frozenset({"held", "new", "accepted", "pending_new"})
 # One attempt plus two retries. Order POSTs are not retried.
 BROKER_GET_ATTEMPTS = 3
 BROKER_GET_BACKOFF_SECONDS = (0.25, 0.75)
+# Through the touch so the limit is marketable. One cent by default, never
+# more than two. This is still a limit, not a market order.
+ENTRY_LIMIT_OFFSET = Decimal("0.01")
+ENTRY_LIMIT_OFFSET_MAX = Decimal("0.02")
+# Adverse move of the quote midpoint versus the signal close. The 15 October
+# short sat 6 cents above the bid; the midpoint of 765.15 x 765.18 is 4.5 cents
+# under the 765.21 close, so that replay stays inside this cap.
+MAX_ENTRY_SLIPPAGE = Decimal("0.05")
+# The limit also pays the through-offset. That offset is at most two cents, so
+# the submitted limit cannot be more than seven cents worse than the signal
+# close. 765.21 versus a 765.14 sell is exactly this bound.
+MAX_LIMIT_CONCESSION = MAX_ENTRY_SLIPPAGE + ENTRY_LIMIT_OFFSET_MAX
+# A quote used to price an entry has to be current at submission. The completed
+# bar may be up to the policy's bar-age limit; the quote may not.
+QUOTE_MAX_AGE_SECONDS = 15
+QUOTE_FUTURE_SKEW_SECONDS = 2
 
 
 class DataDeferral(Exception):
@@ -63,6 +87,15 @@ class DataDeferral(Exception):
 
     def __init__(self, reason: str) -> None:
         self.reason = reason
+        super().__init__(reason)
+
+
+class EntryNotPriced(Exception):
+    """Skip this entry. Do not halt a flat account and do not send an order."""
+
+    def __init__(self, reason: str, **details: Any) -> None:
+        self.reason = reason
+        self.details = details
         super().__init__(reason)
 
 
@@ -326,11 +359,164 @@ def _order_from_packet(packet: dict[str, Any]) -> dict[str, Any] | None:
         return None
     return {
         "symbol": symbol, "qty": "1", "side": "buy" if sign == 1 else "sell",
+        # Signal close. Submission replaces this limit from the live quote.
         "type": "limit", "limit_price": f"{price:.2f}", "time_in_force": "day",
         "order_class": "bracket", "extended_hours": False,
         "stop_loss": {"stop_price": f"{stop:.2f}"},
         "take_profit": {"limit_price": f"{price + sign * 2 * risk:.2f}"},
     }
+
+
+def _cents(value: Decimal) -> Decimal:
+    return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _money(value: Decimal) -> str:
+    return f"{_cents(value):.2f}"
+
+
+def _points(value: Decimal) -> str:
+    """Four decimals, so a 4.5 cent midpoint move is not rounded onto the cap."""
+    return f"{value.quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP):.4f}"
+
+
+def _midpoint_vs_close(side: str, signal_close: Decimal, bid: Decimal, ask: Decimal) -> Decimal:
+    midpoint = (bid + ask) / Decimal(2)
+    if side == "buy":
+        return midpoint - signal_close
+    return signal_close - midpoint
+
+
+def _decimal_price(value: Any) -> Decimal:
+    if isinstance(value, bool) or value is None:
+        raise ValueError("invalid price")
+    if isinstance(value, Decimal):
+        parsed = value
+    elif isinstance(value, str):
+        parsed = Decimal(value.strip())
+    elif isinstance(value, int):
+        parsed = Decimal(value)
+    elif isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("invalid price")
+        parsed = Decimal(str(value))
+    else:
+        raise ValueError("invalid price")
+    if not parsed.is_finite() or parsed <= 0:
+        raise ValueError("invalid price")
+    return parsed
+
+
+def _parse_exchange_time(value: Any) -> datetime:
+    """Parse an Alpaca quote timestamp, including nanosecond fractions."""
+    if not isinstance(value, str) or not value.strip():
+        raise EntryNotPriced("QUOTE_INVALID")
+    text = value.strip().replace("Z", "+00:00")
+    dot = text.find(".")
+    if dot != -1:
+        index = dot + 1
+        while index < len(text) and text[index].isdigit():
+            index += 1
+        fraction = text[dot + 1:index]
+        if len(fraction) > 6:
+            text = text[:dot + 1] + fraction[:6] + text[index:]
+    try:
+        return timestamp(text)
+    except (TypeError, ValueError) as exc:
+        raise EntryNotPriced("QUOTE_INVALID") from exc
+
+
+def signal_reference_price(packet: dict[str, Any], order: dict[str, Any]) -> Decimal:
+    """Signal close in cents. The provisional limit is that close when no observation exists."""
+    observations = packet.get("observations") if isinstance(packet.get("observations"), dict) else {}
+    raw = observations.get("latest_completed_close")
+    if raw is None:
+        raw = order.get("limit_price")
+    try:
+        return _cents(_decimal_price(raw))
+    except (TypeError, ValueError, ArithmeticError) as exc:
+        raise EntryNotPriced("BRACKET_GEOMETRY") from exc
+
+
+def _quote_body(payload: Any) -> dict[str, Any]:
+    if payload is None:
+        raise EntryNotPriced("QUOTE_MISSING")
+    if not isinstance(payload, dict):
+        raise EntryNotPriced("QUOTE_INVALID")
+    if "quote" in payload:
+        inner = payload.get("quote")
+        if not isinstance(inner, dict):
+            if inner is None and not any(key in payload for key in ("bp", "ap", "bid", "ask")):
+                raise EntryNotPriced("QUOTE_MISSING")
+            raise EntryNotPriced("QUOTE_INVALID")
+        return inner
+    if not payload:
+        raise EntryNotPriced("QUOTE_MISSING")
+    return payload
+
+
+def assess_quote(payload: Any, *, now: datetime) -> tuple[Decimal, Decimal, datetime]:
+    """Return bid, ask, and quote time, or raise EntryNotPriced."""
+    body = _quote_body(payload)
+    try:
+        bid = _decimal_price(body.get("bp", body.get("bid")))
+        ask = _decimal_price(body.get("ap", body.get("ask")))
+    except (TypeError, ValueError, ArithmeticError) as exc:
+        raise EntryNotPriced("QUOTE_INVALID") from exc
+    quote_at = _parse_exchange_time(body.get("t", body.get("at")))
+    quote = {"bid": _money(bid), "ask": _money(ask), "at": quote_at}
+    if bid > ask:
+        raise EntryNotPriced("QUOTE_CROSSED", quote=quote)
+    age = now - quote_at
+    if (age > timedelta(seconds=QUOTE_MAX_AGE_SECONDS)
+            or quote_at - now > timedelta(seconds=QUOTE_FUTURE_SKEW_SECONDS)):
+        raise EntryNotPriced("QUOTE_STALE", quote=quote)
+    return bid, ask, quote_at
+
+
+def price_marketable_entry(
+    *,
+    side: str,
+    signal_close: Decimal,
+    bid: Decimal,
+    ask: Decimal,
+    stop: Decimal,
+    target: Decimal,
+    offset: Decimal = ENTRY_LIMIT_OFFSET,
+) -> tuple[Decimal, Decimal]:
+    """Return (limit, adverse slippage) or raise EntryNotPriced.
+
+    A sell is the bid minus the offset. A buy is the ask plus the offset.
+    Slippage is positive when that limit is worse than the signal close.
+    The midpoint of the quote may not have moved more than five cents against
+    the trade, and the limit itself may not concede more than that cap plus
+    the two-cent offset bound. The stop and target are not moved here.
+    """
+    if offset <= 0 or offset > ENTRY_LIMIT_OFFSET_MAX:
+        raise EntryNotPriced("ENTRY_OFFSET_INVALID")
+    if side not in {"buy", "sell"}:
+        raise EntryNotPriced("BRACKET_GEOMETRY")
+    if side == "buy":
+        limit = _cents(ask + offset)
+        slippage = limit - signal_close
+        geometry_ok = stop < limit < target
+    else:
+        limit = _cents(bid - offset)
+        slippage = signal_close - limit
+        geometry_ok = target < limit < stop
+    midpoint_adverse = _midpoint_vs_close(side, signal_close, bid, ask)
+    details = {
+        "quote": {"bid": _money(bid), "ask": _money(ask)},
+        "signal_close": _money(signal_close),
+        "limit_price": _money(limit),
+        "slippage_vs_close": _money(slippage),
+        "midpoint_vs_close": _points(midpoint_adverse),
+    }
+    if midpoint_adverse > MAX_ENTRY_SLIPPAGE or slippage > MAX_LIMIT_CONCESSION:
+        raise EntryNotPriced("ENTRY_SLIPPAGE_CAP", **details)
+    if not geometry_ok:
+        raise EntryNotPriced("BRACKET_GEOMETRY", **details)
+    return limit, slippage
 
 
 class LivePaperAPI(AlpacaPaperBroker):
@@ -376,6 +562,19 @@ class LivePaperAPI(AlpacaPaperBroker):
             tokens.add(token)
             params["page_token"] = token
         raise ValueError("incomplete market-data pagination")
+
+    def latest_quote(self, symbol: str, feed: str) -> dict[str, Any]:
+        """Latest bid/ask on the same data host and feed as ``bars``."""
+        raw = self._broker_http(
+            "GET",
+            "https://data.alpaca.markets/v2/stocks/"
+            + symbol
+            + "/quotes/latest?"
+            + urlencode({"feed": feed}),
+        )
+        if not isinstance(raw, dict) or not isinstance(raw.get("quote"), dict):
+            raise ValueError("latest quote payload is unusable")
+        return raw["quote"]
 
     def news(self, symbols: list[str], start: datetime, end: datetime) -> list[dict[str, Any]]:
         """Headlines since ``start``. Rate limits use the same GET retry as bars."""
@@ -489,6 +688,7 @@ def signal_packet(
     }
     order = {
         "symbol": policy.symbol, "qty": "1", "side": "buy" if sign == 1 else "sell",
+        # Signal close. Submission replaces this limit from the live quote.
         "type": "limit", "limit_price": f"{price:.2f}", "time_in_force": "day",
         "order_class": "bracket", "extended_hours": False,
         "stop_loss": {"stop_price": f"{stop:.2f}"},
@@ -921,6 +1121,72 @@ class ActivePaperPilot:
             },
         )
 
+    def _journal_entry_skip(
+        self, skipped: EntryNotPriced, packet: dict[str, Any], *, at: datetime, session: str,
+    ) -> None:
+        """One skip row per signal and reason. A later fresh quote can still submit."""
+        signal_at = packet.get("signal_at") if isinstance(packet, dict) else None
+        if any(
+            event["kind"] == "entry_skipped" and event.get("reason") == skipped.reason
+            and event.get("signal_at") == signal_at
+            for event in self.journal.events
+        ):
+            return
+        self.journal.append(
+            "entry_skipped", reason=skipped.reason, at=at, session=session,
+            signal_at=signal_at, **skipped.details,
+        )
+        record_opportunity(
+            self.journal, stage="rejected", reason=skipped.reason, at=at, signal_at=signal_at,
+        )
+
+    def _marketable_order(
+        self, order: dict[str, Any], packet: dict[str, Any], now: datetime,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Replace the signal-close limit. Leave the stop and the 2R target."""
+        if order.get("type") != "limit" or order.get("order_class") != "bracket":
+            raise EntryNotPriced("BRACKET_GEOMETRY")
+        quote_at = None
+        try:
+            try:
+                payload = self.broker.latest_quote(self.policy.symbol, self.policy.feed)
+            except ModelError as exc:
+                raise EntryNotPriced("QUOTE_MISSING") from exc
+            except AttributeError as exc:
+                raise EntryNotPriced("QUOTE_MISSING") from exc
+            except (TypeError, ValueError) as exc:
+                raise EntryNotPriced("QUOTE_INVALID") from exc
+            bid, ask, quote_at = assess_quote(payload, now=now)
+            try:
+                signal_close = signal_reference_price(packet, order)
+                stop = _decimal_price(order["stop_loss"]["stop_price"])
+                target = _decimal_price(order["take_profit"]["limit_price"])
+            except (KeyError, TypeError, ValueError, ArithmeticError) as exc:
+                raise EntryNotPriced("BRACKET_GEOMETRY") from exc
+            limit, slippage = price_marketable_entry(
+                side=str(order.get("side")), signal_close=signal_close, bid=bid, ask=ask,
+                stop=stop, target=target,
+            )
+        except EntryNotPriced as skipped:
+            quote = skipped.details.get("quote")
+            if quote_at is not None and isinstance(quote, dict) and "at" not in quote:
+                quote["at"] = quote_at
+            raise
+        priced = {
+            key: (dict(value) if isinstance(value, dict) else value) for key, value in order.items()
+        }
+        priced["type"] = "limit"
+        priced["limit_price"] = _money(limit)
+        pricing = {
+            "quote": {"bid": _money(bid), "ask": _money(ask), "at": quote_at},
+            "signal_close": _money(signal_close),
+            "slippage_vs_close": _money(slippage),
+            "midpoint_vs_close": _points(_midpoint_vs_close(
+                str(order.get("side")), signal_close, bid, ask,
+            )),
+        }
+        return priced, pricing
+
     def _commit_order(
         self, order: dict[str, Any], packet: dict[str, Any], *, session_day: str,
         account_id: str, observed_at: datetime, verdict_hash: str, allow_stale: bool,
@@ -969,12 +1235,17 @@ class ActivePaperPilot:
         if blocked:
             return "ACCOUNT_BLOCKED"
         current_equity = number(current["account"]["equity"], positive=True)
-        price = number(order["limit_price"], positive=True)
-        stop = number(order["stop_loss"]["stop_price"], positive=True)
         last_equity = number(current["account"]["last_equity"], positive=True)
         if current_equity <= last_equity * (1 - self.policy.max_daily_loss_fraction):
             self.halt("DAILY_LOSS_LIMIT")
             return "COMPLETE"
+        try:
+            order, pricing = self._marketable_order(order, packet, current_now)
+        except EntryNotPriced as skipped:
+            self._journal_entry_skip(skipped, packet, at=current_now, session=session_day)
+            return "ENTRY_SKIPPED"
+        price = number(order["limit_price"], positive=True)
+        stop = number(order["stop_loss"]["stop_price"], positive=True)
         too_large = price > min(
             self.policy.max_notional, current_equity * 0.01, number(current["account"]["buying_power"]),
         )
@@ -1021,7 +1292,7 @@ class ActivePaperPilot:
         self.journal.append(
             "entry_intent", session=session_day, at=current_now, order=reserved,
             packet_hash=canonical_hash(packet), verdict_hash=verdict_hash,
-            fallback=fallback is not None,
+            fallback=fallback is not None, **pricing,
         )
         # A lost response leaves a durable reservation. Recovery only queries this ID, never resends.
         ack = self.broker.call("POST", "/v2/orders", reserved)
