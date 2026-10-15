@@ -90,6 +90,22 @@ class Broker:
     def bars(self, symbol, start, end, timeframe, feed):
         return market_bars()[0 if timeframe == "1Min" else 1]
 
+    def latest_quote(self, symbol, feed):
+        """Quote one cent inside the last close so a buy limit stays on that close.
+
+        Production adds one cent through the live ask or bid. These fixtures
+        were written when the limit was the signal close, so the ask sits one
+        cent under that close and the submitted buy limit does not move.
+        """
+        close = Decimal(str(self.bars(symbol, None, None, "1Min", feed)[-1]["c"]))
+        ask = close - Decimal("0.01")
+        bid = ask - Decimal("0.01")
+        return {
+            "t": self.state["clock"]["timestamp"],
+            "bp": format(bid, "f"),
+            "ap": format(ask, "f"),
+        }
+
     def call(self, method, path, payload=None):
         self.calls.append((method, path, copy.deepcopy(payload)))
         if path.startswith("/v2/calendar"):

@@ -4,7 +4,7 @@ Nick requested active Jev adjudication and actual broker paper execution, with c
 
 ## What this existing slice runs
 
-`python scripts/run_athena_paper.py` uses current Alpaca minute bars, existing ORB opening-range/risk functions, **TypeSafe Jev as the only decision model**, deterministic limits and Alpaca paper bracket orders. There is no Terra, OpenAI or Ollama dependency in the active path.
+`python scripts/run_athena_paper.py` uses current Alpaca minute bars, the latest bid/ask on the same feed, existing ORB opening-range/risk functions, **TypeSafe Jev as the only decision model**, deterministic limits and Alpaca paper bracket orders. There is no Terra, OpenAI or Ollama dependency in the active path.
 
 Strategy code supplies a candidate direction and computed observations. Jev selects TAKE_TRADE, NO_TRADE or INSUFFICIENT_EVIDENCE. A normal entry requires p(TAKE_TRADE) at least 0.6 and confidence at least 0.5. Override those floors with `ATHENA_JEV_MIN_PTAKE` and `ATHENA_JEV_MIN_CONFIDENCE`. They are paper operating thresholds, not measured trading calibration. Full questions, inputs, distributions, policy and broker observations are journaled. Arithmetic, sizing, stops and final authority stay in code.
 
@@ -23,13 +23,17 @@ Reconciled completed trades enter the experience store. Relevant prior experienc
 | Exposure | At most $1,000 and 1% of account equity; buying power checked again before submission |
 | Initial stop risk | At most $10 and 0.1% of account equity; stop orders do not guarantee execution price |
 | Account daily loss | Stop new entries and flatten at 0.5% versus broker `last_equity` |
-| Orders | DAY limit entry with broker-held stop-market and 2R target bracket; no extended-hours orders |
+| Orders | DAY limit entry priced from the latest quote, broker-held stop-market, and the original 2R target; no market orders and no extended-hours orders |
 | Entry timeout | Cancel/close after 60 seconds; partial entry triggers cleanup |
 | Session close | Begin flattening 15 minutes before broker-reported close, including early closes |
 | Model budget | At most 20 distinct opening-range setups per session, plus one reassessment of a setup already reviewed. Equivalent later bars do not consume another slot. No inference retries. Probability sums within 0.02 of 1 are renormalized. A bad answer vetoes that setup and is not an approval |
 | Daily fallback | At the cutoff (default 120 minutes after the open, or `ATHENA_FALLBACK_AFTER_OPEN_MINUTES` from 1 to 300), submit the remembered TAKE_TRADE only if the fresh bar is still that setup. A stale bar or a direction change records `fallback_no_trade` and does not send the old order. Same one-share bracket and risk limits |
 | Shared account | Refuse a new entry when the earnings book already reserves the symbol, when combined reserved notional exceeds buying power, or when the shared entry coordinator is busy/unavailable or peer exposure cannot be verified. The peer journal remains read-only and may keep its writer lock. Portfolio correlation, concentration, weekly and monthly loss, drawdown, and overnight stress stay inactive until a number is approved |
-| Data age | Completed bar no more than 90 seconds old; rechecked after model calls |
+| Data age | Completed bar no more than 90 seconds old; rechecked after model calls. The entry quote must be no more than 15 seconds old at submission |
+
+At submission the runner reads the latest Alpaca quote on the configured feed (`iex` or `sip`, the same feed as the bars). A buy limit is the ask plus `ENTRY_LIMIT_OFFSET` (one cent). A sell limit is the bid minus that offset. The offset cannot exceed two cents (`ENTRY_LIMIT_OFFSET_MAX`). The order stays a limit. A market order is not used. The stop stays at the signal `risk_stop`. The target stays the original 2R price from the signal close. Notional and initial stop-risk are checked again against the limit that would be sent, and those caps stay $1,000 / 1% and $10 / 0.1%.
+
+The quote midpoint may not already be more than five cents (`MAX_ENTRY_SLIPPAGE`) worse than the signal close. The limit itself may not be more than seven cents worse (`MAX_LIMIT_CONCESSION`, the five-cent cap plus the two-cent offset bound). That is what makes the 15 October 2026 short marketable: close 765.21, bid 765.15, ask 765.18, sell limit 765.14. The midpoint is 4.5 cents under the close, and the limit is exactly seven cents under it. A wider move is skipped. A missing, stale, crossed, or otherwise invalid quote is skipped. The journal records `entry_skipped` with the reason, and, when a price was computed, the bid, ask, refused limit, and slippage versus the signal close. No order is sent and a flat account is not halted. A submitted entry records the same quote, the limit, `slippage_vs_close`, and `midpoint_vs_close` on `entry_intent`. The client order id is still the account and session hash. The 60-second entry timeout is unchanged. This pricing is not deployed.
 
 This uses the ORB trigger as one intraday component. It is not the full historical ORB-M qualification/campaign, continuously updated predictive engine, Earnings Adaptive arm, full APDE ratchet, or complete general Athena Core integration. The initial bounded paper learning loop is implemented; its observed live results remain unverified. No profit or prediction-accuracy claim is made.
 
@@ -103,6 +107,6 @@ The Jev-only/learning revision of 24 September 2026 passed **657 root tests and 
 Primary documentation checked 24 September 2026:
 
 - [TypeSafe HTTP API](https://docs.typesafe.ai/api), [models](https://docs.typesafe.ai/models), [confidence](https://docs.typesafe.ai/confidence), and [Jev limitations](https://docs.typesafe.ai/model-jaggedness/jev-1.13).
-- [Alpaca order lifecycle and bracket rules](https://docs.alpaca.markets/us/docs/orders-at-alpaca), [current/historical stock bars](https://docs.alpaca.markets/us/reference/stockbars), [client-order-ID lookup](https://docs.alpaca.markets/us/reference/getorderbyclientorderid), and [position closure](https://docs.alpaca.markets/us/reference/deleteopenposition-1).
+- [Alpaca order lifecycle and bracket rules](https://docs.alpaca.markets/us/docs/orders-at-alpaca), [current/historical stock bars](https://docs.alpaca.markets/us/reference/stockbars), [latest stock quote](https://docs.alpaca.markets/us/reference/stocklatestquotesingle-1), [client-order-ID lookup](https://docs.alpaca.markets/us/reference/getorderbyclientorderid), and [position closure](https://docs.alpaca.markets/us/reference/deleteopenposition-1).
 
 Jev's documented weaknesses include numeric/date operations and adversarial content. Arithmetic, time comparisons, and execution stay in code. Instruction wording is not a proof of resistance to malicious evidence; the initial pilot sends code-derived market observations, not scraped instructions or arbitrary news text. Actual adjudication quality remains to be measured during paper operation.
