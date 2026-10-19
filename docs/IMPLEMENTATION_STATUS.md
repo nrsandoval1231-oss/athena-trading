@@ -1,5 +1,27 @@
 # Implementation status
 
+## Opt-in high-frequency paper profile — 19 October 2026
+
+`ATHENA_PAPER_PROFILE=high-frequency` adds a paper-only loop beside the one-trade ORB pilot. The default runner, its Jev floors, the ORB-M constitution, and the earnings book are unchanged. The profile is not deployed and not merged.
+
+The loop re-enters short-horizon momentum on SPY, QQQ, IWM, DIA, AAPL, MSFT, NVDA, and AMZN (overridable with 4–12 names). It allows 4 concurrent one-share positions, an 8-minute max hold, a 25-minute per-symbol cooldown, a 10-minute warmup, no new entries in the last 30 minutes, and flatten 15 minutes before the broker close. The session hard cap is 140 round trips. Jev is not called (`off` by default, or `advisory`, which only journals a bypass). Entries stay capped marketable limit brackets. This profile's quote concession is 15 cents on the midpoint and 17 cents on the limit; the one-trade pilot remains 5 cents and 7 cents. Per-position caps stay $1,000 / 1% and $10 / 0.1%. Gross notional stays $4,000. The daily loss halt stays 0.5%. Broker calls pause new entries at 150 per rolling minute and for 30 seconds after HTTP 429. An HTTP 403 pattern-day-trading body stops new entries and keeps flatten running; the body is not logged. Startup refuses any endpoint other than `https://paper-api.alpaca.markets`. `LIVE` still raises.
+
+An offline synthetic regular session, not a market recording and not a broker fill, produced these round trips with the same bracket planner: seed 20261019 → 97, 7 → 97, 11 → 97, 42 → 97, 99 → 97, 123 → 99, 256 → 98. Every seed stayed in 90–110, used only limit brackets, ended flat, stayed at or under 4 concurrent, and did not hit the daily-loss halt or the 140 cap. Changing the symbol list changes that count. A quiet session can print fewer trades. A paper account under $25,000 can be pattern-day-trade restricted after a few round trips. Names whose one share exceeds the notional cap are skipped.
+
+High-frequency journals use `hf_*` events. They do not enter the one-trade learning study. Shared risk counts `hf_entry_intent` until `hf_position_closed` or `hf_session_flat`. Cloud recovery of an unresolved high-frequency journal relaunches `--profile high-frequency` without `--symbol`.
+
+Observed local checks, Python 3.12, on the runtime commit recorded with these results. The baseline on main before this change, recorded for capped marketable entries, was 892 passed. This change adds 21 tests. No pre-existing failures were present. Broker transports in the new tests are fixtures.
+
+```bash
+python3 -m pytest -q                 # 913 passed in 11.53s
+python3 -m ruff check .              # clean, ruff 0.15.8
+bash -n deploy/install.sh           # clean
+python3 -m compileall -q src tests   # clean
+git diff --check                    # clean
+```
+
+Root pytest does not include Astra Desk. This is not a broker fill and not evidence of trading performance.
+
 ## Capped marketable paper entries — 15 October 2026
 
 Intraday paper submission no longer rests a limit on the signal bar's close. `LivePaperAPI.latest_quote` reads the latest Alpaca bid/ask on the same feed as `bars`. A buy limit is the ask plus one cent (`ENTRY_LIMIT_OFFSET`). A sell limit is the bid minus one cent. The offset cannot exceed two cents. The stop stays at the signal `risk_stop`. The target stays the original 2R price. Notional and initial stop-risk are checked again against that new limit. The caps are unchanged: $1,000 and 1% of equity, $10 and 0.1% of equity.

@@ -45,6 +45,8 @@ sudoedit /etc/athena/paper.env
 
 The installer rejects a dirty or mismatched checkout and an already active service. It installs the package and service definition, creates a restricted runtime user and state directory, and leaves the service stopped. Populate the three credential values (Alpaca key/secret and TypeSafe key) and the explicitly chosen `ATHENA_SYMBOL` in the environment file. No symbol or secret is supplied by the installer. Optional `ATHENA_JEV_MIN_PTAKE`, `ATHENA_JEV_MIN_CONFIDENCE`, and `ATHENA_FALLBACK_AFTER_OPEN_MINUTES` override the paper gate and the daily fallback cutoff. Leave them unset to use the defaults in [LIVE_PAPER.md](LIVE_PAPER.md).
 
+The default service is the one-trade pilot. To select the opt-in high-frequency paper profile after a reviewed install, set `ATHENA_PAPER_PROFILE=high-frequency` in the same env file. Optional `ATHENA_HF_SYMBOLS`, `ATHENA_HF_MAX_CONCURRENT` (1–4), and `ATHENA_HF_JEV` (`off` or `advisory`) are described in [LIVE_PAPER.md](LIVE_PAPER.md#opt-in-high-frequency-paper-profile). That profile does not read `ATHENA_SYMBOL` or `TYPESAFE_API_KEY`. Keep `ATHENA_SHARED_RISK_DIR=/var/lib/athena-risk` and `ATHENA_FEED=iex`. Do not point the one-trade pilot and this profile at the same account at the same time. An unresolved high-frequency journal is recovered with `--profile high-frequency` and without `--symbol`, even if the env file was switched back. Enabling the flag is not authorization to restart the live service; do that only after market close with the owner's approval.
+
 Terra/OpenAI and Ollama are removed from the active code and environment template. Existing reserved entries retain their original complete policy binding for model-free recovery; old model packages and credentials are not required.
 
 ## Shared-account entry coordination
@@ -69,7 +71,7 @@ systemd-run --wait --pipe --collect --unit=athena-paper-preflight \
   /bin/sh -c 'exec /opt/athena-trading/.venv/bin/python scripts/run_athena_paper.py --symbol "$ATHENA_SYMBOL" --feed "$ATHENA_FEED" --authority PAPER --journal /var/lib/athena/preflight.sqlite --preflight'
 ```
 
-Require `ok: true`, Jev and the intended symbol/feed, and a flat dedicated paper account. This verifies authentication/model availability and account reads; it does not perform inference or submit an order. Market-data freshness, asset eligibility and risk are checked in the active session.
+Require `ok: true`, Jev and the intended symbol/feed, and a flat dedicated paper account. This verifies authentication/model availability and account reads; it does not perform inference or submit an order. Market-data freshness, asset eligibility and risk are checked in the active session. The high-frequency preflight omits `--symbol` and passes `--profile high-frequency`. Its `ok: true` payload names the profile, the symbol list, and the concurrency and loss caps. It does not call Jev and it does not submit an order.
 
 `deploy/install.sh` also installs `athena-earnings.service` and, when missing, `/etc/athena/earnings.env` from the example. It leaves that service stopped. Do not enable it in the same step as the intraday service. Preflight and the ownership rules are in [EARNINGS_PAPER.md](EARNINGS_PAPER.md). The two units use different state directories and different env files. They can share one Alpaca paper account. The intraday unit is given `ATHENA_EARNINGS_STATE_DIR` so it does not flatten `athe-` positions.
 

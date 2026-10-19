@@ -42,6 +42,7 @@ At one trade per session, a promoted rule will take substantial time to earn. Th
 - Back up the complete state directory with the service stopped and broker exposure reconciled. Never delete state to clear a veto/halt or run two restored hosts against one account.
 - A bad learning store blocks new decisions. Broker recovery is prioritized and does not require the store or Jev to be healthy. The supervisor retries deferred outcome import after the broker lifecycle is complete.
 - Earnings Adaptive writes closed trades into this same store with `arm=earnings`. Those episodes are ineligible for this study. Discovery, validation, promotion, and intraday context retrieval use only `arm=intraday` (the arm on episodes recorded before this field existed). An earnings loss cannot create or fill an intraday cohort. The nightly report lists them under `earnings_episodes`, separate from `episodes`. There is no earnings promotion rule. A few earnings wins do not create one.
+- The opt-in high-frequency profile journals `hf_*` events. Those rows are not `entry_intent` episodes, so this study does not import them and they do not change the one-trade veto.
 - Both books journal an `opportunity` row for outcomes they can see: eligible, temporarily ineligible, rejected, model-vetoed, budget-limited, unfilled, fallback, and executed. Rejected and unfilled names stay in that journal. They are not dropped to improve a later study.
 - Use `systemctl stop athena-paper.service` to suspend future activity. No automatic promotion can override the deterministic risk policy.
 

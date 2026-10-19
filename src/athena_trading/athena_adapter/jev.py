@@ -63,6 +63,33 @@ class ModelError(RuntimeError):
         self.status = status
 
 
+class PatternDayTradeError(ModelError):
+    """Broker refused a new day trade under a pattern-day-trading restriction.
+
+    The message is fixed. The response body is not stored or logged.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("pattern day trade restriction", status=403)
+
+
+# Alpaca's 403 body names the restriction. Other 403s stay ordinary HTTP errors.
+_PDT_MARKERS = (
+    "pattern day trad",
+    "day trading protection",
+    "day-trading buying power",
+    "day trading buying power",
+)
+
+
+def pattern_day_trade_message(status: int, body: str) -> bool:
+    """True when an HTTP 403 body is a pattern-day-trading refusal."""
+    if status != 403 or not isinstance(body, str):
+        return False
+    text = body.lower()
+    return any(marker in text for marker in _PDT_MARKERS)
+
+
 class _NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
@@ -82,6 +109,13 @@ def request_json(
                 raise ModelError("response exceeds size limit")
             return json.loads(raw) if raw else None
     except HTTPError as exc:
+        body = ""
+        try:
+            body = exc.read().decode("utf-8", errors="replace")[:500]
+        except OSError:
+            body = ""
+        if pattern_day_trade_message(exc.code, body):
+            raise PatternDayTradeError() from None
         raise ModelError(f"HTTP {exc.code}", status=exc.code) from None
     except (URLError, OSError, UnicodeError, ValueError) as exc:
         reason = getattr(exc, "reason", None)
