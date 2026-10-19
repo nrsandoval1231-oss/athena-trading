@@ -10,7 +10,7 @@ An offline synthetic regular session, not a market recording and not a broker fi
 
 High-frequency journals use `hf_*` events. They do not enter the one-trade learning study. Shared risk counts `hf_entry_intent` until `hf_position_closed` or `hf_session_flat`. Cloud recovery of an unresolved high-frequency journal relaunches `--profile high-frequency` without `--symbol`.
 
-Observed local checks, Python 3.12, on the runtime commit recorded with these results. The baseline on main before this change, recorded for capped marketable entries, was 892 passed. This change adds 21 tests. No pre-existing failures were present. Broker transports in the new tests are fixtures.
+Observed local checks, Python 3.12, on runtime commit `3d4166c8895e1ece47a4fe7c5f7ebe686be26bf5`. The baseline on main before this change, recorded for capped marketable entries, was 892 passed. This change adds 21 tests. No pre-existing failures were present. Broker transports in the new tests are fixtures.
 
 ```bash
 python3 -m pytest -q                 # 913 passed in 11.53s
