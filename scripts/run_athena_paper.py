@@ -75,7 +75,9 @@ def _continue_after_transient(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--symbol", required=True, help="one explicit US equity symbol")
+    parser.add_argument("--profile", choices=["pilot", "high-frequency"], default=None,
+                        help="pilot is the one-trade runner; high-frequency is opt-in")
+    parser.add_argument("--symbol", help="one explicit US equity symbol; required for the default pilot")
     parser.add_argument("--authority", required=True, choices=["PAPER"])
     parser.add_argument("--feed", choices=["iex", "sip"], default="iex")
     parser.add_argument("--session-date", type=date.fromisoformat,
@@ -86,6 +88,14 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--preflight", action="store_true", help="check connections without placing orders")
     mode.add_argument("--run", action="store_true", help="actively adjudicate and execute a paper session")
     args = parser.parse_args(argv)
+    profile = (args.profile or os.environ.get("ATHENA_PAPER_PROFILE", "") or "pilot").strip().lower()
+    if profile == "high-frequency":
+        from athena_trading.paper.high_frequency import run_high_frequency
+        return run_high_frequency(args)
+    if profile != "pilot":
+        parser.error("--profile must be pilot or high-frequency")
+    if not args.symbol:
+        parser.error("--symbol is required")
     require_paper(parse_authority(args.authority))
     missing = [name for name in ("ALPACA_API_KEY", "ALPACA_API_SECRET")
                if not os.environ.get(name, "").strip()]

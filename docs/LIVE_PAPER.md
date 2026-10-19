@@ -75,6 +75,27 @@ python scripts/run_athena_paper.py --symbol AAPL --authority PAPER --feed iex --
 
 Preflight authenticates the broker and TypeSafe's read-only model-list endpoint without an inference or order. It is a connectivity check; current bar availability, asset eligibility, account state, and risk are checked in the active run. `--run` waits for the market and a qualifying fresh signal, then makes actual Jev calls and actual **paper** broker submissions. A session with no TAKE_TRADE label can still finish with no order. Keep the first session attended.
 
+## Opt-in high-frequency paper profile
+
+`ATHENA_PAPER_PROFILE=high-frequency` (or `--profile high-frequency`) selects a separate paper loop. The default one-trade ORB pilot, its Jev floors, and the earnings book stay as they are when the variable is unset or `pilot`. Do not run both profiles on the same account. A journal that already bound `high-frequency` keeps that profile on recovery, including when the environment is later flipped back.
+
+The profile trades a short-horizon momentum re-entry on liquid names. The default universe is SPY, QQQ, IWM, DIA, AAPL, MSFT, NVDA, and AMZN (`ATHENA_HF_SYMBOLS`, 4 to 12 uppercase names). It may hold 4 positions at once (`ATHENA_HF_MAX_CONCURRENT`, 1 to 4). Each name waits 25 minutes after a filled round trip, holds at most 8 minutes, and does not enter during the first 10 minutes or the last 30 minutes. Flatten still starts 15 minutes before the broker close, including an early close. The session stops new entries at 140 round trips. The operating point of the offline session is about 100, not a quota the broker is required to fill.
+
+Jev is not on this entry path. `ATHENA_HF_JEV=off` (the default) does not call it. `advisory` writes `hf_jev_bypassed` and still does not call it. `TYPESAFE_API_KEY` and `ATHENA_SYMBOL` are not required for this profile. A TypeSafe outage cannot reduce the trade count, and it also cannot approve an entry.
+
+Entries stay one-share day limit brackets. The limit is still the ask plus one cent, or the bid minus one cent. This profile allows the midpoint to be up to 15 cents worse than the signal close and the limit up to 17 cents worse than it. A wider quote is skipped. A market order is not used for entry. Exits may delete the position, the same way the existing flatten path does. Per-position ceilings stay $1,000 and 1% of equity, and $10 and 0.1% of equity for the stop. Gross reserved notional stays at $4,000. The daily loss halt stays 0.5% versus broker `last_equity`. New entries also stop when the paper call budget reaches 150 requests in a rolling minute, or for 30 seconds after HTTP 429.
+
+Startup and every tick refuse a broker whose endpoint is not exactly `https://paper-api.alpaca.markets`. `parse_authority("LIVE")` still raises. An HTTP 403 whose body matches a pattern-day-trading phrase records `hf_pdt_restricted`, stops new entries, and keeps managing and flattening what is already open. The response body is not logged. A paper account under $25,000 can hit that restriction after a few day trades. A name whose one share exceeds the notional cap is skipped. Earnings symbols and `athe-` orders are left alone.
+
+High-frequency events use `hf_*` kinds. They are not the one-trade study's `entry_intent` rows, so nightly learning does not ingest them. Client order ids still start with `athp-` and are unique per sequence. `ATHENA_SHARED_RISK_DIR` must be an absolute path. The shared book sees `hf_entry_intent` until `hf_position_closed` or `hf_session_flat`.
+
+```bash
+python scripts/run_athena_paper.py --profile high-frequency --authority PAPER --feed iex \
+  --journal /var/lib/athena/hf-preflight.sqlite --preflight
+```
+
+On the VPS, set `ATHENA_PAPER_PROFILE=high-frequency` in `/etc/athena/paper.env` and leave the one-trade service as the only `athena-paper.service`. Do not enable it while the default pilot is also submitting on that account. This profile is not deployed by this change.
+
 ## Recovery and exits
 
 The journal reserves a client order ID before submission. A lost acknowledgement never causes a blind resend; recovery queries the broker by that ID. NEW and accepted orders are not fills. Confirmed positions and open orders drive cleanup; cancel/close acknowledgements are not sufficient to declare flat.

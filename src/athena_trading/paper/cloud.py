@@ -14,6 +14,7 @@ from pathlib import Path
 
 from .journal import PaperJournal
 from .learning import maintain
+from .high_frequency import HighFrequencyPolicy, high_frequency_policy_from_environment
 from .live import LivePaperAPI, PilotPolicy, policy_from_environment, timestamp, NY
 
 
@@ -29,6 +30,26 @@ def _reservation_closed(journal: PaperJournal) -> bool:
     return bool(journal.last("flat_confirmed") or journal.last("entry_not_created"))
 
 
+def _bound_policy(journal: PaperJournal) -> dict:
+    binding = journal.last("binding")
+    if not isinstance(binding, dict):
+        return {}
+    body = binding.get("binding")
+    if not isinstance(body, dict):
+        return {}
+    policy = body.get("policy")
+    return policy if isinstance(policy, dict) else {}
+
+
+def _hf_unresolved(journal: PaperJournal) -> bool:
+    """A high-frequency book stays put until its own flat record, not a one-trade close."""
+    if _bound_policy(journal).get("profile") != "high-frequency":
+        return False
+    if journal.last("hf_session_flat"):
+        return False
+    return any(event.get("kind") == "hf_entry_intent" for event in journal.events)
+
+
 def next_session(state_dir: Path, today: date) -> SessionTask | None:
     """Never roll past an unresolved entry or a corrupt journal."""
     unresolved = []
@@ -39,14 +60,15 @@ def next_session(state_dir: Path, today: date) -> SessionTask | None:
         try:
             entry = journal.last("entry_intent")
             closed = _reservation_closed(journal)
-            if entry and not closed:
+            hf_open = _hf_unresolved(journal)
+            if (entry and not closed) or hf_open:
                 binding = journal.last("binding")
                 if binding is None:
                     raise ValueError("unresolved entry has no account/policy binding")
                 unresolved.append(SessionTask(path, True, binding["binding"]["policy"]))
             if path == current and (
-                journal.last("session_complete") or closed
-                or (journal.last("halt") and not entry)
+                journal.last("session_complete") or closed or journal.last("hf_session_flat")
+                or (journal.last("halt") and not entry and not hf_open)
             ):
                 current_finished = True
         finally:
@@ -58,11 +80,19 @@ def next_session(state_dir: Path, today: date) -> SessionTask | None:
     return None if current_finished else SessionTask(current)
 
 
-def session_command(task: SessionTask, policy: PilotPolicy, runner: Path) -> list[str]:
+def session_command(task: SessionTask, policy: PilotPolicy | HighFrequencyPolicy, runner: Path) -> list[str]:
     saved = task.saved_policy or {}
-    symbol, feed = saved.get("symbol", policy.symbol), saved.get("feed", policy.feed)
-    command = [sys.executable, str(runner), "--authority", "PAPER", "--symbol", symbol,
-               "--feed", feed, "--journal", str(task.path), "--run"]
+    profile = saved.get("profile") or getattr(policy, "profile", "pilot")
+    feed = saved.get("feed", getattr(policy, "feed", "iex"))
+    if profile == "high-frequency":
+        command = [
+            sys.executable, str(runner), "--authority", "PAPER", "--profile", "high-frequency",
+            "--feed", feed, "--journal", str(task.path), "--run",
+        ]
+    else:
+        symbol = saved.get("symbol", policy.symbol)
+        command = [sys.executable, str(runner), "--authority", "PAPER", "--symbol", symbol,
+                   "--feed", feed, "--journal", str(task.path), "--run"]
     if not task.recovery:
         command.extend(["--session-date", task.path.stem])
     return command
@@ -81,8 +111,16 @@ def main() -> int:
     runner = Path("scripts/run_athena_paper.py").resolve()
     if not runner.is_file():
         raise ValueError("run the cloud supervisor from the repository root")
-    policy = policy_from_environment(os.environ.get("ATHENA_SYMBOL", ""),
-                                     os.environ.get("ATHENA_FEED", "iex"))
+    profile_name = os.environ.get("ATHENA_PAPER_PROFILE", "").strip().lower()
+    if profile_name in {"", "pilot"}:
+        policy = policy_from_environment(os.environ.get("ATHENA_SYMBOL", ""),
+                                         os.environ.get("ATHENA_FEED", "iex"))
+    elif profile_name == "high-frequency":
+        policy = high_frequency_policy_from_environment(
+            os.environ.get("ATHENA_FEED", "iex") or "iex",
+        )
+    else:
+        raise ValueError("ATHENA_PAPER_PROFILE must be pilot or high-frequency")
     stopping = False
     child = None
 
@@ -113,8 +151,8 @@ def main() -> int:
                 elif not task.recovery and not clock["is_open"]:
                     heartbeat(state_dir, "WAITING_FOR_MARKET", next_open=clock.get("next_open"))
                 else:
-                    if not task.recovery and any(not os.environ.get(k, "").strip()
-                                                for k in ("TYPESAFE_API_KEY",)):
+                    needs_model = not isinstance(policy, HighFrequencyPolicy)
+                    if needs_model and not task.recovery and not os.environ.get("TYPESAFE_API_KEY", "").strip():
                         raise ValueError("hosted model credentials are not configured")
                     if stopping:
                         break

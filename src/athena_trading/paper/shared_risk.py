@@ -128,7 +128,7 @@ def _remaining_qty(order: dict[str, Any], parent: dict[str, Any] | None) -> floa
 def _acknowledged_ids(events: list[dict[str, Any]]) -> set[str]:
     found: set[str] = set()
     for event in events:
-        if event.get("kind") != "entry_ack":
+        if event.get("kind") not in {"entry_ack", "hf_entry_ack"}:
             continue
         identity = event.get("client_order_id")
         if isinstance(identity, str):
@@ -136,6 +136,17 @@ def _acknowledged_ids(events: list[dict[str, Any]]) -> set[str]:
         order = event.get("order")
         if isinstance(order, dict) and isinstance(order.get("client_order_id"), str):
             found.add(order["client_order_id"])
+    return found
+
+
+def _client_ids(events: list[dict[str, Any]], kind: str) -> set[str]:
+    found: set[str] = set()
+    for event in events:
+        if event.get("kind") != kind or not isinstance(event.get("order"), dict):
+            continue
+        identity = event["order"].get("client_order_id")
+        if isinstance(identity, str):
+            found.add(identity)
     return found
 
 
@@ -148,13 +159,16 @@ def _exposures_from_events(events: list[dict[str, Any]], arm: str) -> list[OpenE
     }
     flat = next((event for event in reversed(events) if event.get("kind") == "flat_confirmed"), None)
     if flat and arm == "intraday":
-        closed.update(
-            event["order"]["client_order_id"] for event in events
-            if event.get("kind") == "entry_intent" and isinstance(event.get("order"), dict)
-        )
+        closed.update(_client_ids(events, "entry_intent"))
+    hf_closed = {
+        event.get("client_order_id") for event in events
+        if event.get("kind") == "hf_position_closed" and isinstance(event.get("client_order_id"), str)
+    }
+    if any(event.get("kind") == "hf_session_flat" for event in events):
+        hf_closed.update(_client_ids(events, "hf_entry_intent"))
     parents: dict[str, dict[str, Any]] = {}
     for event in events:
-        if event.get("kind") != "entry_observation":
+        if event.get("kind") not in {"entry_observation", "hf_entry_observation"}:
             continue
         identity = event.get("client_order_id")
         order = event.get("order")
@@ -164,13 +178,18 @@ def _exposures_from_events(events: list[dict[str, Any]], arm: str) -> list[OpenE
     open_rows: list[OpenExposure] = []
     seen: set[str] = set()
     for event in events:
-        if event.get("kind") != "entry_intent":
+        kind = event.get("kind")
+        if kind == "entry_intent":
+            released = closed
+        elif kind == "hf_entry_intent":
+            released = hf_closed
+        else:
             continue
         order = event.get("order")
         if not isinstance(order, dict):
             raise _malformed("entry")
         identity = order.get("client_order_id")
-        if not isinstance(identity, str) or identity in closed or identity in seen:
+        if not isinstance(identity, str) or identity in released or identity in seen:
             continue
         seen.add(identity)
         qty = _remaining_qty(order, parents.get(identity))

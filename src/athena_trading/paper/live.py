@@ -483,16 +483,20 @@ def price_marketable_entry(
     stop: Decimal,
     target: Decimal,
     offset: Decimal = ENTRY_LIMIT_OFFSET,
+    max_slippage: Decimal = MAX_ENTRY_SLIPPAGE,
+    max_concession: Decimal | None = None,
 ) -> tuple[Decimal, Decimal]:
     """Return (limit, adverse slippage) or raise EntryNotPriced.
 
     A sell is the bid minus the offset. A buy is the ask plus the offset.
     Slippage is positive when that limit is worse than the signal close.
-    The midpoint of the quote may not have moved more than five cents against
-    the trade, and the limit itself may not concede more than that cap plus
-    the two-cent offset bound. The stop and target are not moved here.
+    The midpoint of the quote may not have moved more than ``max_slippage``
+    against the trade (five cents for the one-trade pilot). The limit itself
+    may not concede more than ``max_concession`` (that cap plus the two-cent
+    offset bound, seven cents, when omitted). The stop and target are not moved.
     """
-    if offset <= 0 or offset > ENTRY_LIMIT_OFFSET_MAX:
+    concession_cap = MAX_LIMIT_CONCESSION if max_concession is None else max_concession
+    if offset <= 0 or offset > ENTRY_LIMIT_OFFSET_MAX or max_slippage <= 0 or concession_cap <= 0:
         raise EntryNotPriced("ENTRY_OFFSET_INVALID")
     if side not in {"buy", "sell"}:
         raise EntryNotPriced("BRACKET_GEOMETRY")
@@ -512,7 +516,7 @@ def price_marketable_entry(
         "slippage_vs_close": _money(slippage),
         "midpoint_vs_close": _points(midpoint_adverse),
     }
-    if midpoint_adverse > MAX_ENTRY_SLIPPAGE or slippage > MAX_LIMIT_CONCESSION:
+    if midpoint_adverse > max_slippage or slippage > concession_cap:
         raise EntryNotPriced("ENTRY_SLIPPAGE_CAP", **details)
     if not geometry_ok:
         raise EntryNotPriced("BRACKET_GEOMETRY", **details)
