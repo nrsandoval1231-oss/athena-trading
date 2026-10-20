@@ -8,7 +8,7 @@ A working order is not unowned when its id, client order id, or parent id belong
 
 The submitted bracket now places the stop and target a full stop-cap away from the limit, which is the worst fill. After the actual fill is known, both legs are replaced around that fill at the planned risk, at least eight cents, on the correct side. A stop that is through the fill or closer than that minimum is flattened as `PROTECTION_MISSING` when the replace does not land. The one-trade pilot, its five-cent and seven-cent quote caps, the earnings book, and PAPER-only refusal are unchanged. This is not deployed.
 
-The offline synthetic session is unchanged: seed 20261019 still produces 97 round trips, because that simulator fills at the limit and then applies the same fill anchor. Observed local checks, Python 3.12. The high-frequency profile on main was 913 passed. This change adds 7 tests. No pre-existing failures were present. Broker transports in the new tests are fixtures.
+The offline synthetic session is unchanged: seed 20261019 still produces 97 round trips, because that simulator fills at the limit and then applies the same fill anchor. Observed local checks, Python 3.12, on runtime commit `63acd15a65ce3716e8ad0153a254371c33df73fa`. The high-frequency profile on main was 913 passed. This change adds 7 tests. No pre-existing failures were present. Broker transports in the new tests are fixtures.
 
 ```bash
 python3 -m pytest -q                 # 920 passed in 12.04s
