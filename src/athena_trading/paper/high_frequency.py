@@ -4,12 +4,16 @@ The default runner stays one ORB entry per session. This profile is selected
 with ``ATHENA_PAPER_PROFILE=high-frequency`` and is paper-only: startup refuses
 any broker whose endpoint is not ``https://paper-api.alpaca.markets``.
 
-Entries are capped marketable limit brackets. Exits may close a position the
+Entries are capped marketable limit brackets. The submitted stop and target
+start a full stop-cap away from the limit so a better fill cannot cross them.
+Once the fill is known, both legs are replaced around that fill, at least the
+minimum distance and never on the wrong side. Exits may close a position the
 way the existing flatten path does. Jev is not on the entry path, so model
 latency cannot cap the trade count. Per-position notional and stop ceilings
 match the one-trade pilot. Concurrency, a session round-trip cap, the 0.5%
 daily-loss halt, and the pre-close flatten are what keep the faster cadence
-inside a paper book.
+inside a paper book. A leftover bracket leg from an order this profile sent
+is not unowned exposure.
 """
 from __future__ import annotations
 
@@ -73,6 +77,8 @@ ROUND_TRIP_REASONS = {
 }
 # Alpaca's published paper trading cap is 200 requests per minute. Stay under it.
 CALL_BUDGET_PER_MINUTE = 150
+# A just-closed bracket can still show a pending-cancel sibling in the same snapshot.
+UNOWNED_RECHECK_SECONDS = 15
 _SYMBOL = r"[A-Z][A-Z0-9.\-]{0,9}"
 _TYPICAL_STARTS = {
     "SPY": 580.0, "QQQ": 490.0, "IWM": 220.0, "DIA": 430.0,
@@ -281,6 +287,49 @@ def position_caps(
     return notional, stop
 
 
+def anchor_protection(
+    *, side: str, fill: Decimal, risk: Decimal, min_distance: Decimal,
+) -> tuple[Decimal, Decimal]:
+    """Stop and target measured from the actual fill, on the correct side of it.
+
+    A long stop is below the fill and a short stop is above it, each by at least
+    ``min_distance``. The target is the same distance on the other side. This is
+    the distance the runner tightens to after a fill. It is not a market order.
+    """
+    if side not in {"buy", "sell"}:
+        raise EntryBlocked("ANCHOR_SIDE")
+    fill_d = _cents(fill)
+    distance = max(_cents(risk), _cents(min_distance))
+    if fill_d <= 0 or distance <= 0:
+        raise EntryBlocked("ANCHOR_SIDE")
+    if side == "buy":
+        stop = _cents(fill_d - distance)
+        target = _cents(fill_d + distance)
+        if stop <= 0 or not stop < fill_d < target:
+            raise EntryBlocked("ANCHOR_SIDE")
+    else:
+        stop = _cents(fill_d + distance)
+        target = _cents(fill_d - distance)
+        if target <= 0 or not target < fill_d < stop:
+            raise EntryBlocked("ANCHOR_SIDE")
+    return stop, target
+
+
+def _absorb_order_ids(order: Any, ids: set[str], client_ids: set[str]) -> None:
+    """Collect a parent and its nested legs. A loose sibling still carries one of these ids."""
+    if not isinstance(order, dict):
+        return
+    if isinstance(order.get("id"), str) and order["id"]:
+        ids.add(order["id"])
+    client_id = order.get("client_order_id")
+    if isinstance(client_id, str) and client_id:
+        client_ids.add(client_id)
+    legs = order.get("legs")
+    if isinstance(legs, list):
+        for leg in legs:
+            _absorb_order_ids(leg, ids, client_ids)
+
+
 def plan_bracket(
     *,
     symbol: str,
@@ -338,15 +387,25 @@ def plan_bracket(
     )
     if open_notional + limit_f > gross_cap or open_notional + limit_f > buying_power:
         raise EntryBlocked("GROSS_CAP")
+    # The submitted stop is the full stop cap away from the limit, which is the
+    # worst fill. A better fill cannot cross it unless price improves by the
+    # whole cap. The runner replaces both legs from the actual fill.
+    stop_cap_d = min(_decimal_price(policy.max_stop_risk), _cents(_decimal_price(stop_cap)))
+    wide_stop, wide_target = anchor_protection(
+        side=side, fill=limit, risk=stop_cap_d, min_distance=_decimal_price(policy.min_stop),
+    )
+    if abs(limit - wide_stop) > stop_cap_d:
+        raise EntryBlocked("STOP_RISK_CAP")
     order = {
         "symbol": symbol, "qty": "1", "side": side, "type": "limit",
         "limit_price": _money(limit), "time_in_force": "day", "order_class": "bracket",
         "extended_hours": False,
-        "stop_loss": {"stop_price": _money(stop)},
-        "take_profit": {"limit_price": _money(target)},
+        "stop_loss": {"stop_price": _money(wide_stop)},
+        "take_profit": {"limit_price": _money(wide_target)},
     }
     pricing = {
         "signal_close": _money(close_d),
+        "planned_risk": _money(risk),
         "slippage_vs_close": _money(slippage),
         "quote": {"bid": _money(bid_d), "ask": _money(ask_d), "at": quote_at.isoformat()},
     }
@@ -569,11 +628,16 @@ def simulate_session(
             assert_limit_bracket(order)
             limit_brackets += 1
             entries += 1
+            fill = _decimal_price(order["limit_price"])
+            anchored_stop, anchored_target = anchor_protection(
+                side=order["side"], fill=fill, risk=_decimal_price(_pricing["planned_risk"]),
+                min_distance=_decimal_price(policy.min_stop),
+            )
             open_positions[symbol] = {
                 "side": order["side"],
-                "entry": float(order["limit_price"]),
-                "stop": float(order["stop_loss"]["stop_price"]),
-                "target": float(order["take_profit"]["limit_price"]),
+                "entry": float(fill),
+                "stop": float(anchored_stop),
+                "target": float(anchored_target),
                 "entry_minute": minute + 1,
             }
             gross += float(order["limit_price"])
@@ -647,7 +711,8 @@ class HighFrequencyPilot:
             else:
                 return "COMPLETE"
         self._reconcile(snapshot, now)
-        if self._unexpected(snapshot):
+        unexpected = self._confirm_unowned(snapshot, now)
+        if unexpected:
             self.halt("UNOWNED_EXPOSURE")
             if not self._open_intents() and not self._our_positions(snapshot):
                 return "COMPLETE"
@@ -729,30 +794,81 @@ class HighFrequencyPilot:
             found.append(position)
         return found
 
+    def _lineage(self) -> tuple[set[str], set[str]]:
+        ids: set[str] = set()
+        client_ids: set[str] = set()
+        for event in self._events("hf_entry_intent"):
+            _absorb_order_ids(event.get("order"), ids, client_ids)
+        for kind in ("hf_entry_ack", "hf_entry_observation", "hf_protection_anchored"):
+            for event in self._events(kind):
+                _absorb_order_ids(event.get("order"), ids, client_ids)
+                if isinstance(event.get("client_order_id"), str):
+                    client_ids.add(event["client_order_id"])
+        return ids, client_ids
+
     def _unexpected(self, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
         foreign = self._foreign_symbols(snapshot)
-        known = {
-            event["order"]["client_order_id"] for event in self._events("hf_entry_intent")
-        }
         owned = self._owned_symbols()
-        leg_ids: set[str] = set()
+        known_ids, known_clients = self._lineage()
         orders = snapshot.get("orders") or []
         for order in orders:
             for leg in order.get("legs") or []:
                 if isinstance(leg, dict) and isinstance(leg.get("id"), str):
-                    leg_ids.add(leg["id"])
+                    known_ids.add(leg["id"])
         unexpected = []
         for order in orders:
-            if order.get("id") in leg_ids:
-                continue
+            order_id = order.get("id") if isinstance(order.get("id"), str) else ""
             client_id = order.get("client_order_id") if isinstance(order.get("client_order_id"), str) else ""
-            symbol = order.get("symbol")
-            if client_id in known or client_id.startswith(EARNINGS_ORDER_PREFIX):
+            parent_id = order.get("parent_id") if isinstance(order.get("parent_id"), str) else ""
+            if not parent_id and isinstance(order.get("parent_order_id"), str):
+                parent_id = order["parent_order_id"]
+            if order_id and order_id in known_ids:
                 continue
+            if client_id and (client_id in known_clients or client_id.startswith(EARNINGS_ORDER_PREFIX)):
+                continue
+            if parent_id and parent_id in known_ids:
+                continue
+            symbol = order.get("symbol")
             if symbol in owned or (symbol in foreign and symbol not in owned):
                 continue
             unexpected.append(order)
         return unexpected
+
+    def _recently_closed_symbols(self, now: datetime) -> set[str]:
+        found: set[str] = set()
+        window = timedelta(seconds=UNOWNED_RECHECK_SECONDS)
+        for event in self._events("hf_position_closed"):
+            symbol = event.get("symbol")
+            closed_at = event.get("at")
+            if not isinstance(symbol, str) or not isinstance(closed_at, str):
+                continue
+            try:
+                when = timestamp(closed_at)
+            except (TypeError, ValueError):
+                continue
+            if timedelta(0) <= now - when <= window:
+                found.add(symbol)
+        return found
+
+    def _confirm_unowned(self, snapshot: dict[str, Any], now: datetime) -> list[dict[str, Any]]:
+        """Ignore our own leftover legs. Recheck a just-closed symbol once before halting."""
+        unexpected = self._unexpected(snapshot)
+        if not unexpected:
+            return []
+        symbols = {order.get("symbol") for order in unexpected if isinstance(order.get("symbol"), str)}
+        if not symbols or not symbols <= self._recently_closed_symbols(now):
+            return unexpected
+        signature = sorted(
+            f"{order.get('symbol')}|{order.get('id') or ''}|{order.get('client_order_id') or ''}"
+            for order in unexpected
+        )
+        if any(event.get("signature") == signature for event in self._events("hf_unowned_recheck")):
+            return unexpected
+        self.journal.append(
+            "hf_unowned_recheck", signature=signature, at=now.isoformat(),
+            symbols=sorted(symbols),
+        )
+        return self._unexpected(self._snapshot())
 
     def _our_positions(self, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
         owned = self._owned_symbols()
@@ -902,6 +1018,161 @@ class HighFrequencyPilot:
             return
         self.journal.append("hf_filled", client_order_id=client_id, at=now.isoformat())
 
+    def _planned_risk(self, intent: dict[str, Any]) -> Decimal:
+        raw = intent.get("planned_risk")
+        try:
+            risk = _decimal_price(raw) if raw not in (None, "") else _decimal_price(self.policy.min_stop)
+        except (TypeError, ValueError):
+            risk = _decimal_price(self.policy.min_stop)
+        risk = max(risk, _decimal_price(self.policy.min_stop))
+        return min(risk, _decimal_price(self.policy.max_stop_risk))
+
+    def _fill_price(self, parent: dict[str, Any], position: dict[str, Any] | None) -> Decimal | None:
+        for source in (parent, position or {}):
+            raw = source.get("filled_avg_price")
+            if raw in (None, ""):
+                raw = source.get("avg_entry_price")
+            if raw in (None, ""):
+                continue
+            try:
+                price = _cents(_decimal_price(raw))
+            except (TypeError, ValueError):
+                continue
+            if price > 0:
+                return price
+        return None
+
+    def _bracket_legs(
+        self, parent: dict[str, Any], snapshot: dict[str, Any], symbol: str,
+    ) -> list[dict[str, Any]]:
+        """Live stop and target legs for this parent. The entry order itself is not a leg."""
+        found: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        parent_id = parent.get("id") if isinstance(parent.get("id"), str) else ""
+        nested = parent.get("legs") if isinstance(parent.get("legs"), list) else []
+        nested_ids = {
+            leg.get("id") for leg in nested if isinstance(leg, dict) and isinstance(leg.get("id"), str)
+        }
+
+        def add(order: Any) -> None:
+            if not isinstance(order, dict) or order.get("status") in TERMINAL:
+                return
+            order_id = order.get("id") if isinstance(order.get("id"), str) else ""
+            if order_id and (order_id == parent_id or order_id in seen):
+                return
+            if order_id:
+                seen.add(order_id)
+            found.append(order)
+
+        for leg in nested:
+            add(leg)
+        for order in snapshot.get("orders") or []:
+            if not isinstance(order, dict) or order.get("symbol") != symbol:
+                continue
+            order_id = order.get("id") if isinstance(order.get("id"), str) else ""
+            parent_link = order.get("parent_id") if isinstance(order.get("parent_id"), str) else ""
+            if not parent_link and isinstance(order.get("parent_order_id"), str):
+                parent_link = order["parent_order_id"]
+            if order_id in nested_ids or (parent_id and parent_link == parent_id):
+                add(order)
+        return found
+
+    def _replace_leg(self, leg_id: str, payload: dict[str, Any]) -> bool:
+        self._charge(1)
+        try:
+            self.broker.call("PATCH", "/v2/orders/" + leg_id, payload)
+        except ModelError:
+            return False
+        return True
+
+    def _anchor_protection(
+        self, parent: dict[str, Any], snapshot: dict[str, Any], intent: dict[str, Any],
+        position: dict[str, Any], now: datetime,
+    ) -> None:
+        """Move the live stop and target onto the fill. A wrong-side stop is not left in place."""
+        fill = self._fill_price(parent, position)
+        if fill is None:
+            return
+        side = intent["order"]["side"]
+        symbol = intent["order"]["symbol"]
+        try:
+            stop, target = anchor_protection(
+                side=side, fill=fill, risk=self._planned_risk(intent),
+                min_distance=_decimal_price(self.policy.min_stop),
+            )
+        except EntryBlocked:
+            return
+        legs = self._bracket_legs(parent, snapshot, symbol)
+        stop_leg = next((leg for leg in legs if leg.get("type") in {"stop", "stop_limit"}), None)
+        target_leg = next((leg for leg in legs if leg.get("type") == "limit"), None)
+        if stop_leg is None or not isinstance(stop_leg.get("id"), str):
+            return
+        if self._leg_price(stop_leg, "stop_price") == stop and (
+            target_leg is None or self._leg_price(target_leg, "limit_price") == target
+        ):
+            self._note_anchor(intent, fill, stop, target, now)
+            return
+        stop_body = {"qty": "1", "time_in_force": "day", "stop_price": _money(stop)}
+        if not self._replace_leg(stop_leg["id"], stop_body):
+            return
+        stop_leg["stop_price"] = _money(stop)
+        if target_leg is not None and isinstance(target_leg.get("id"), str):
+            target_body = {"qty": "1", "time_in_force": "day", "limit_price": _money(target)}
+            if not self._replace_leg(target_leg["id"], target_body):
+                return
+            target_leg["limit_price"] = _money(target)
+        self._note_anchor(intent, fill, stop, target, now)
+
+    def _note_anchor(
+        self, intent: dict[str, Any], fill: Decimal, stop: Decimal, target: Decimal, now: datetime,
+    ) -> None:
+        client_id = intent["order"]["client_order_id"]
+        previous = next(
+            (event for event in reversed(self._events("hf_protection_anchored"))
+             if event.get("client_order_id") == client_id),
+            None,
+        )
+        current = {"fill": _money(fill), "stop": _money(stop), "target": _money(target)}
+        if previous is not None and all(previous.get(key) == value for key, value in current.items()):
+            return
+        self.journal.append(
+            "hf_protection_anchored", client_order_id=client_id, symbol=intent["order"]["symbol"],
+            at=now.isoformat(), **current,
+        )
+
+    def _leg_price(self, leg: dict[str, Any], field: str) -> Decimal | None:
+        raw = leg.get(field)
+        if raw in (None, ""):
+            return None
+        try:
+            return _cents(_decimal_price(raw))
+        except (TypeError, ValueError):
+            return None
+
+    def _stop_covers_fill(
+        self, parent: dict[str, Any], snapshot: dict[str, Any], intent: dict[str, Any],
+        position: dict[str, Any],
+    ) -> bool:
+        """False when the live stop is through the fill or closer than the minimum."""
+        fill = self._fill_price(parent, position)
+        if fill is None:
+            return True
+        symbol = intent["order"]["symbol"]
+        side = intent["order"]["side"]
+        legs = self._bracket_legs(parent, snapshot, symbol)
+        stop_leg = next((leg for leg in legs if leg.get("type") in {"stop", "stop_limit"}), None)
+        if stop_leg is None:
+            return True
+        stop = self._leg_price(stop_leg, "stop_price")
+        if stop is None:
+            return False
+        minimum = _decimal_price(self.policy.min_stop)
+        if side == "buy":
+            return fill - stop >= minimum
+        if side == "sell":
+            return stop - fill >= minimum
+        return False
+
     def _protected(
         self, parent: dict[str, Any], snapshot: dict[str, Any], symbol: str, side: str, qty: float,
     ) -> bool:
@@ -946,7 +1217,11 @@ class HighFrequencyPilot:
                 self._request_close(client_id, symbol, "POSITION_MISMATCH", parent, now)
                 continue
             if position is not None:
+                self._anchor_protection(parent, snapshot, intent, position, now)
                 if not self._protected(parent, snapshot, symbol, side, position_qty):
+                    self._request_close(client_id, symbol, "PROTECTION_MISSING", parent, now)
+                    continue
+                if not self._stop_covers_fill(parent, snapshot, intent, position):
                     self._request_close(client_id, symbol, "PROTECTION_MISSING", parent, now)
                     continue
                 if now - self._filled_at(client_id, now) >= timedelta(minutes=self.policy.max_hold_minutes):

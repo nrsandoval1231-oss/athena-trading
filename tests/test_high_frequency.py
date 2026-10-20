@@ -21,6 +21,7 @@ from athena_trading.paper.high_frequency import (
     HighFrequencyPilot,
     HighFrequencyPolicy,
     MinuteBar,
+    anchor_protection,
     assert_limit_bracket,
     high_frequency_policy_from_environment,
     plan_bracket,
@@ -59,7 +60,10 @@ class FakeBroker:
         self.positions: list[dict] = []
         self.orders: list[dict] = []
         self.posts: list[dict] = []
+        self.patches: list[tuple[str, dict]] = []
         self.deletes: list[str] = []
+        self.snapshot_count = 0
+        self.clear_orders_after_snapshot: int | None = None
         self.fail_post: Exception | None = None
         self.lookup: dict[str, dict] = {}
         self.quotes = {
@@ -73,6 +77,12 @@ class FakeBroker:
             self.quotes[symbol] = {"bp": f"{price - 0.01:.2f}", "ap": f"{price + 0.01:.2f}", "t": NOW.isoformat()}
 
     def snapshot(self):
+        self.snapshot_count += 1
+        if (
+            self.clear_orders_after_snapshot is not None
+            and self.snapshot_count > self.clear_orders_after_snapshot
+        ):
+            self.orders = []
         return {
             "clock": {
                 "timestamp": self.now.isoformat(), "is_open": self.open, "next_close": self.next_close,
@@ -117,6 +127,9 @@ class FakeBroker:
             self.lookup[payload["client_order_id"]] = ack
             self.orders.append(ack)
             return ack
+        if method == "PATCH" and path.startswith("/v2/orders/"):
+            self.patches.append((path, payload or {}))
+            return {"id": path.rsplit("/", 1)[-1], "status": "accepted", **(payload or {})}
         if method == "DELETE":
             self.deletes.append(path)
             if path.startswith("/v2/positions/"):
@@ -278,6 +291,163 @@ def test_entry_is_a_limit_bracket_and_does_not_call_jev(tmp_path, monkeypatch):
     assert len(order["client_order_id"]) <= 48
     assert journal.last("hf_entry_intent")["order"]["type"] == "limit"
     assert journal.last("entry_intent") is None
+    journal.close()
+
+
+def test_protection_is_anchored_to_the_fill_and_never_the_wrong_side():
+    # 20 Oct: AMZN long filled 264.20 with a stop at 264.24, above the fill.
+    # QQQ short filled 711.41 with a stop at 711.42, one cent away.
+    amzn_stop, amzn_target = anchor_protection(
+        side="buy", fill=Decimal("264.20"), risk=Decimal("0.08"), min_distance=Decimal("0.08"),
+    )
+    assert amzn_stop == Decimal("264.12")
+    assert amzn_target == Decimal("264.28")
+    assert amzn_stop < Decimal("264.20") < amzn_target
+    qqq_stop, qqq_target = anchor_protection(
+        side="sell", fill=Decimal("711.41"), risk=Decimal("0.08"), min_distance=Decimal("0.08"),
+    )
+    assert qqq_stop == Decimal("711.49")
+    assert qqq_target == Decimal("711.33")
+    assert qqq_target < Decimal("711.41") < qqq_stop
+
+
+def test_submitted_stop_stays_beyond_a_better_fill_until_the_fill_is_known():
+    policy = HighFrequencyPolicy()
+    order, pricing = plan_bracket(
+        symbol="AMZN", direction="LONG", close=264.30, high=264.36, low=264.22,
+        bid=264.30, ask=264.31, quote_at=NOW, now=NOW, policy=policy,
+        equity=100_000, buying_power=200_000, open_notional=0,
+    )
+    limit = Decimal(order["limit_price"])
+    stop = Decimal(order["stop_loss"]["stop_price"])
+    target = Decimal(order["take_profit"]["limit_price"])
+    assert limit == Decimal("264.32")
+    assert limit - stop == Decimal("10.00")
+    assert target - limit == Decimal("10.00")
+    # The reported 264.20 fill was through a stop priced off the quote. It stays above this one.
+    assert stop < Decimal("264.20") < limit
+    assert Decimal(pricing["planned_risk"]) >= Decimal("0.08")
+
+
+def test_filled_bracket_is_replaced_from_the_actual_fill(tmp_path, monkeypatch):
+    broker = FakeBroker()
+    pilot, journal = _pilot(tmp_path, broker, monkeypatch)
+    assert pilot.tick() == "ENTRY_SUBMITTED"
+    submitted = broker.posts[0]
+    client_id = submitted["client_order_id"]
+    fill = "581.20"
+    broker.lookup[client_id] = {
+        "id": "parent-1", "client_order_id": client_id, "symbol": "SPY", "side": "buy",
+        "status": "filled", "qty": "1", "filled_qty": "1", "filled_avg_price": fill,
+        "type": "limit",
+        "legs": [
+            {
+                "id": "stop-1", "symbol": "SPY", "side": "sell", "type": "stop", "status": "held",
+                "stop_price": submitted["stop_loss"]["stop_price"], "qty": "1", "filled_qty": "0",
+            },
+            {
+                "id": "tp-1", "symbol": "SPY", "side": "sell", "type": "limit", "status": "held",
+                "limit_price": submitted["take_profit"]["limit_price"], "qty": "1", "filled_qty": "0",
+            },
+        ],
+    }
+    broker.positions = [{"symbol": "SPY", "qty": "1", "side": "long", "avg_entry_price": fill}]
+    assert pilot.tick() == "POSITION_OPEN"
+    prices = {path.rsplit("/", 1)[-1]: payload for path, payload in broker.patches}
+    assert Decimal(prices["stop-1"]["stop_price"]) == Decimal("581.08")
+    assert Decimal(prices["tp-1"]["limit_price"]) == Decimal("581.32")
+    assert Decimal(prices["stop-1"]["stop_price"]) <= Decimal(fill) - Decimal("0.08")
+    anchored = journal.last("hf_protection_anchored")
+    assert anchored["fill"] == fill
+    assert journal.last("halt") is None
+    journal.close()
+
+
+def test_pending_sibling_after_stop_fill_is_not_unowned(tmp_path, monkeypatch):
+    """The 20 Oct IWM halt: the same snapshot still showed the canceled-pending leg."""
+    broker = FakeBroker()
+    pilot, journal = _pilot(tmp_path, broker, monkeypatch)
+    assert pilot.tick() == "ENTRY_SUBMITTED"
+    client_id = broker.posts[0]["client_order_id"]
+    parent = {
+        "id": "parent-iwm", "client_order_id": client_id, "symbol": "SPY", "side": "buy",
+        "status": "filled", "qty": "1", "filled_qty": "1", "filled_avg_price": "581.40",
+        "type": "limit",
+        "legs": [
+            {
+                "id": "stop-1", "symbol": "SPY", "side": "sell", "type": "stop", "status": "filled",
+                "stop_price": "571.52", "qty": "1", "filled_qty": "1",
+            },
+            {
+                "id": "tp-1", "symbol": "SPY", "side": "sell", "type": "limit", "status": "pending_cancel",
+                "limit_price": "591.52", "qty": "1", "filled_qty": "0", "parent_id": "parent-iwm",
+            },
+        ],
+    }
+    broker.lookup[client_id] = parent
+    broker.orders = [parent]
+    broker.positions = []
+    status = pilot.tick()
+    assert journal.last("halt") is None
+    assert status == "WAITING_FOR_SIGNAL"
+    assert journal.last("hf_position_closed")["reason"] in {"STOP_FILLED", "POSITION_FLAT"}
+    assert broker.deletes == []
+    journal.close()
+
+
+def test_vanishing_sibling_is_rechecked_before_a_halt(tmp_path, monkeypatch):
+    broker = FakeBroker()
+    pilot, journal = _pilot(tmp_path, broker, monkeypatch)
+    assert pilot.tick() == "ENTRY_SUBMITTED"
+    client_id = broker.posts[0]["client_order_id"]
+    journal.append(
+        "hf_position_closed", client_order_id=client_id, symbol="SPY", reason="STOP_FILLED",
+        filled=True, at=broker.now.isoformat(),
+    )
+    broker.orders = [{
+        "id": "mystery-leg", "symbol": "SPY", "status": "pending_cancel", "type": "limit",
+        "side": "sell", "client_order_id": "broker-generated", "qty": "1",
+    }]
+    broker.positions = []
+    broker.clear_orders_after_snapshot = broker.snapshot_count + 1
+    status = pilot.tick()
+    assert journal.last("halt") is None
+    assert journal.last("hf_unowned_recheck")["symbols"] == ["SPY"]
+    assert status == "WAITING_FOR_SIGNAL"
+    journal.close()
+
+
+def test_persistent_stray_on_a_closed_symbol_still_halts(tmp_path, monkeypatch):
+    broker = FakeBroker()
+    pilot, journal = _pilot(tmp_path, broker, monkeypatch)
+    assert pilot.tick() == "ENTRY_SUBMITTED"
+    client_id = broker.posts[0]["client_order_id"]
+    journal.append(
+        "hf_position_closed", client_order_id=client_id, symbol="SPY", reason="STOP_FILLED",
+        filled=True, at=broker.now.isoformat(),
+    )
+    broker.orders = [{
+        "id": "manual-spy", "symbol": "SPY", "status": "new", "type": "limit", "side": "buy",
+        "client_order_id": "manual-1", "qty": "1",
+    }]
+    broker.positions = []
+    pilot.tick()
+    assert journal.last("halt")["reason"] == "UNOWNED_EXPOSURE"
+    assert journal.last("hf_unowned_recheck") is not None
+    journal.close()
+
+
+def test_real_unowned_order_halts_without_waiting(tmp_path, monkeypatch):
+    broker = FakeBroker()
+    pilot, journal = _pilot(tmp_path, broker, monkeypatch)
+    assert pilot.tick() == "ENTRY_SUBMITTED"
+    broker.orders.append({
+        "id": "manual-tsla", "symbol": "TSLA", "status": "new", "type": "limit", "side": "buy",
+        "client_order_id": "manual-tsla", "qty": "1",
+    })
+    pilot.tick()
+    assert journal.last("halt")["reason"] == "UNOWNED_EXPOSURE"
+    assert journal.last("hf_unowned_recheck") is None
     journal.close()
 
 
