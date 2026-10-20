@@ -1,5 +1,23 @@
 # Implementation status
 
+## High-frequency fill anchor and ownership — 20 October 2026
+
+The first high-frequency paper session on 20 October halted `UNOWNED_EXPOSURE` about a second after an IWM stop filled, while the same snapshot still showed that bracket's pending sibling. It also stopped out of fills whose bracket had been priced from the signal quote: a QQQ short filled 711.41 with a stop at 711.42, and an AMZN long filled 264.20 with a stop at 264.24.
+
+A working order is not unowned when its id, client order id, or parent id belongs to a high-frequency parent or leg already journaled, including after that position is closed. If the only remaining orders are on a symbol closed within 15 seconds, the runner reads the book once more before halting. A persistent stray on that symbol, and any order on a symbol this profile did not just close, still halts.
+
+The submitted bracket now places the stop and target a full stop-cap away from the limit, which is the worst fill. After the actual fill is known, both legs are replaced around that fill at the planned risk, at least eight cents, on the correct side. A stop that is through the fill or closer than that minimum is flattened as `PROTECTION_MISSING` when the replace does not land. The one-trade pilot, its five-cent and seven-cent quote caps, the earnings book, and PAPER-only refusal are unchanged. This is not deployed.
+
+The offline synthetic session is unchanged: seed 20261019 still produces 97 round trips, because that simulator fills at the limit and then applies the same fill anchor. Observed local checks, Python 3.12, on runtime commit `63acd15a65ce3716e8ad0153a254371c33df73fa`. The high-frequency profile on main was 913 passed. This change adds 7 tests. No pre-existing failures were present. Broker transports in the new tests are fixtures.
+
+```bash
+python3 -m pytest -q                 # 920 passed in 12.04s
+python3 -m ruff check .              # clean, ruff 0.15.8
+bash -n deploy/install.sh           # clean
+python3 -m compileall -q src tests   # clean
+git diff --check                    # clean
+```
+
 ## Opt-in high-frequency paper profile — 19 October 2026
 
 `ATHENA_PAPER_PROFILE=high-frequency` adds a paper-only loop beside the one-trade ORB pilot. The default runner, its Jev floors, the ORB-M constitution, and the earnings book are unchanged. The profile is not deployed and not merged.
