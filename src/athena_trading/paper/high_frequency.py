@@ -25,6 +25,7 @@ import signal
 import sys
 import time
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -513,6 +514,60 @@ class SessionSimulation:
     skipped: int
 
 
+@dataclass(frozen=True)
+class PositionExit:
+    """Fill produced by one per-bar exit decision. The position stays unchanged."""
+
+    price: float
+    reason: str
+
+
+def step_position(
+    position: Mapping[str, Any],
+    bar: tuple[float, float, float, float],
+    policy: HighFrequencyPolicy,
+    *,
+    minute: int,
+    flatten: bool = False,
+) -> PositionExit | None:
+    """Decide whether one open position exits on this minute bar.
+
+    ``position["stop"]`` and ``position["target"]`` are the fill-anchored
+    bracket already stored by ``anchor_protection``. This function only reads
+    them. It does not reprice the bracket, mutate the position, journal, or
+    send an order.
+
+    A bar that touches the stop and the target exits at the stop. Max hold
+    exits at the bar close and outranks the flatten buffer. The flatten buffer
+    also exits at the close, and only when ``flatten`` is true. A minute
+    earlier than ``entry_minute`` is not a bracket or hold exit; the flatten
+    buffer still closes that position at the close, which is what the session
+    walker did. Daily-loss flattening marks the whole book and stays with the
+    caller.
+    """
+    _open, high, low, close = bar
+    if minute < position["entry_minute"]:
+        if flatten:
+            return PositionExit(close, "flatten")
+        return None
+    held = minute - position["entry_minute"]
+    if position["side"] == "buy":
+        stop_hit = low <= position["stop"]
+        target_hit = high >= position["target"]
+    else:
+        stop_hit = high >= position["stop"]
+        target_hit = low <= position["target"]
+    if stop_hit:
+        return PositionExit(position["stop"], "stop")
+    if target_hit:
+        return PositionExit(position["target"], "target")
+    if held >= policy.max_hold_minutes:
+        return PositionExit(close, "time")
+    if flatten:
+        return PositionExit(close, "flatten")
+    return None
+
+
 def simulate_session(
     bars: dict[str, list[tuple[float, float, float, float]]],
     policy: HighFrequencyPolicy,
@@ -520,7 +575,11 @@ def simulate_session(
     equity: float = 100_000.0,
     session_open: datetime | None = None,
 ) -> SessionSimulation:
-    """Walk one regular session with the same bracket planner the runner uses."""
+    """Walk one regular session with the same bracket planner the runner uses.
+
+    Stop, target, max-hold, and flatten-buffer exits are ``step_position``.
+    Daily loss stays here because it marks every open position together.
+    """
     minutes = REGULAR_SESSION_MINUTES
     for symbol in policy.symbols:
         series = bars.get(symbol)
@@ -559,23 +618,11 @@ def simulate_session(
 
     for minute in range(minutes):
         for symbol in list(open_positions):
-            position = open_positions[symbol]
-            if minute < position["entry_minute"]:
-                continue
-            _open, high, low, close = bars[symbol][minute]
-            held = minute - position["entry_minute"]
-            if position["side"] == "buy":
-                stop_hit = low <= position["stop"]
-                target_hit = high >= position["target"]
-            else:
-                stop_hit = high >= position["stop"]
-                target_hit = low <= position["target"]
-            if stop_hit:
-                close_position(symbol, minute, position["stop"], "stop")
-            elif target_hit:
-                close_position(symbol, minute, position["target"], "target")
-            elif held >= policy.max_hold_minutes:
-                close_position(symbol, minute, close, "time")
+            decision = step_position(
+                open_positions[symbol], bars[symbol][minute], policy, minute=minute,
+            )
+            if decision is not None:
+                close_position(symbol, minute, decision.price, decision.reason)
         max_concurrent = max(max_concurrent, len(open_positions))
         if loss_halt or mark(minute) <= equity * (1 - policy.max_daily_loss_fraction):
             loss_halt = True
@@ -584,7 +631,12 @@ def simulate_session(
             continue
         if minute >= flatten_at:
             for symbol in list(open_positions):
-                close_position(symbol, minute, bars[symbol][minute][3], "flatten")
+                decision = step_position(
+                    open_positions[symbol], bars[symbol][minute], policy,
+                    minute=minute, flatten=True,
+                )
+                if decision is not None:
+                    close_position(symbol, minute, decision.price, decision.reason)
             continue
         if minute < policy.warmup_minutes or minute >= entry_last or minute + 1 >= minutes:
             continue
