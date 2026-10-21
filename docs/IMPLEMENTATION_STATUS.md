@@ -1,5 +1,25 @@
 # Implementation status
 
+## High-frequency per-bar exit extraction — 21 October 2026
+
+`step_position()` is the per-bar exit decision that `simulate_session()` used to inline. It reads the position's fill-anchored stop and target, one minute bar, and the high-frequency policy. A bar that touches both the stop and the target exits at the stop. Max hold and the flatten buffer exit at the bar close, and max hold outranks the buffer. A minute before the entry minute is not a bracket or hold exit; the flatten buffer still closes that position at the close. The function does not mutate the position, journal, or call a broker.
+
+`simulate_session()` now asks that function for those exits. Daily-loss flattening still marks the whole book in the walker, and it still outranks the flatten buffer. The synthetic sessions recorded before the extraction produce the same reports. Seed 20261019 is still 97 round trips: 58 stops, 34 targets, and 5 time exits. Hand-built sessions still exit at the stop when one bar crosses both sides, at the target when only the target is touched, at the close on max hold, and at the close inside the flatten buffer.
+
+The running paper loop still exits from broker bracket fills, a wall-clock max hold, and the broker close calendar. Those checks are not a completed-bar OHLC decision, so they still do their own work. Execution authority remains PAPER. No environment flag, endpoint, or service file changed. This is not deployed.
+
+Observed local checks, Python 3.12.3, on runtime commit `2d8688eb5c6527459cb734622b448e50c118f52e`. The suite on main before this change was 920 passed, including 28 high-frequency tests. This change adds 12 tests. No pre-existing failures were present. The new cases are fixtures.
+
+```bash
+python3 -m pytest -q                 # 932 passed in 13.65s
+python3 -m ruff check .              # clean, ruff 0.15.8
+bash -n deploy/install.sh           # clean
+python3 -m compileall -q src tests   # clean
+git diff --check                    # clean
+```
+
+Root pytest does not include Astra Desk. This is not a broker fill and not evidence of trading performance.
+
 ## High-frequency fill anchor and ownership — 20 October 2026
 
 The first high-frequency paper session on 20 October halted `UNOWNED_EXPOSURE` about a second after an IWM stop filled, while the same snapshot still showed that bracket's pending sibling. It also stopped out of fills whose bracket had been priced from the signal quote: a QQQ short filled 711.41 with a stop at 711.42, and an AMZN long filled 264.20 with a stop at 264.24.
