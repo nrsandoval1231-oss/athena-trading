@@ -9,7 +9,8 @@ start a full stop-cap away from the limit so a better fill cannot cross them.
 Once the fill is known, both legs are replaced around that fill, at least the
 minimum distance and never on the wrong side. Exits may close a position the
 way the existing flatten path does. Jev is not on the entry path, so model
-latency cannot cap the trade count. Per-position notional and stop ceilings
+latency cannot cap the trade count. A broker HTTP 403 is the same exception
+class as a model failure; with Jev off it skips that step and does not halt. Per-position notional and stop ceilings
 match the one-trade pilot. Concurrency, a session round-trip cap, the 0.5%
 daily-loss halt, and the pre-close flatten are what keep the faster cadence
 inside a paper book. A leftover bracket leg from an order this profile sent
@@ -22,6 +23,7 @@ import os
 import random
 import re
 import signal
+import sqlite3
 import sys
 import time
 from collections import Counter
@@ -80,6 +82,10 @@ ROUND_TRIP_REASONS = {
 CALL_BUDGET_PER_MINUTE = 150
 # A just-closed bracket can still show a pending-cancel sibling in the same snapshot.
 UNOWNED_RECHECK_SECONDS = 15
+# Three refused closes back off. The broker bracket stays. Another close is allowed
+# after this gap, including after a restart. Giving up here used to kill the process.
+CLOSE_ATTEMPTS_BEFORE_GAP = 3
+CLOSE_RETRY_GAP_SECONDS = 60
 _SYMBOL = r"[A-Z][A-Z0-9.\-]{0,9}"
 _TYPICAL_STARTS = {
     "SPY": 580.0, "QQQ": 490.0, "IWM": 220.0, "DIA": 430.0,
@@ -708,6 +714,28 @@ def _qty(value: Any) -> float:
     return number(value)
 
 
+def degradable_failure(exc: BaseException) -> bool:
+    """A broker or model HTTP failure that must not end the paper session.
+
+    ``request_json`` raises ``ModelError`` for Alpaca and for Jev. This profile
+    does not call Jev. A 403, a timeout, a 429, or a 5xx skips that one step.
+    The bracket already at the broker remains the protection.
+    """
+    if isinstance(exc, PatternDayTradeError):
+        return True
+    if not isinstance(exc, ModelError):
+        return False
+    status = getattr(exc, "status", None)
+    if status in {403, 408, 429} or (isinstance(status, int) and 500 <= status <= 599):
+        return True
+    return str(exc).startswith("request failed:")
+
+
+def journal_locked(exc: BaseException) -> bool:
+    """SQLite contention with the other arm. Not a trading halt."""
+    return isinstance(exc, sqlite3.OperationalError) and "locked" in str(exc).lower()
+
+
 def client_order_id(account_id: str, session: str, seq: int) -> str:
     digest = canonical_hash({
         "profile": PROFILE_HIGH_FREQUENCY, "account": account_id, "session": session, "seq": seq,
@@ -754,7 +782,12 @@ class HighFrequencyPilot:
     def tick(self) -> str:
         require_paper(self.authority)
         require_paper_endpoint(self.broker)
-        snapshot = self._snapshot()
+        try:
+            snapshot = self._snapshot()
+        except ModelError as exc:
+            if not degradable_failure(exc):
+                raise
+            return "BROKER_STEP_SKIPPED"
         self._bind(snapshot)
         now = timestamp(snapshot["clock"]["timestamp"])
         if self.journal.last("hf_session_flat"):
@@ -1026,12 +1059,31 @@ class HighFrequencyPilot:
             return
         self._finish(client_id, symbol, "ENTRY_ABSENT", filled=False, now=now)
 
+    def _event_time(self, event: dict[str, Any]) -> datetime | None:
+        raw = event.get("at")
+        if not isinstance(raw, str):
+            return None
+        try:
+            return timestamp(raw)
+        except (TypeError, ValueError):
+            return None
+
+    def _note_close_waiting(self, client_id: str, symbol: str, now: datetime) -> None:
+        if any(event.get("client_order_id") == client_id for event in self._events("hf_close_waiting")):
+            return
+        self.journal.append(
+            "hf_close_waiting", client_order_id=client_id, symbol=symbol, at=now.isoformat(),
+            reason="close was refused; the broker bracket stays, and another close waits out the gap",
+        )
+
     def _delete_order(self, order_id: str) -> None:
         self._charge(1)
         try:
             self.broker.call("DELETE", "/v2/orders/" + order_id)
+        except PatternDayTradeError:
+            raise
         except ModelError as exc:
-            if getattr(exc, "status", None) not in {404, 422}:
+            if getattr(exc, "status", None) not in {404, 422} and not degradable_failure(exc):
                 raise
 
     def _request_close(
@@ -1041,20 +1093,28 @@ class HighFrequencyPilot:
             event for event in self._events("hf_close_requested")
             if event.get("client_order_id") == client_id
         ]
-        if len(attempts) >= 3:
-            self.halt("CLOSE_EXHAUSTED")
-            raise ValueError("close attempts exhausted; exposure remains unresolved")
+        if len(attempts) >= CLOSE_ATTEMPTS_BEFORE_GAP:
+            last_at = self._event_time(attempts[-1])
+            if last_at is None or (now - last_at).total_seconds() < CLOSE_RETRY_GAP_SECONDS:
+                self._note_close_waiting(client_id, symbol, now)
+                return
         self.journal.append(
             "hf_close_requested", client_order_id=client_id, symbol=symbol, reason=reason,
             at=now.isoformat(),
         )
-        if parent and parent.get("status") not in TERMINAL and isinstance(parent.get("id"), str):
-            self._delete_order(parent["id"])
+        try:
+            if parent and parent.get("status") not in TERMINAL and isinstance(parent.get("id"), str):
+                self._delete_order(parent["id"])
+        except PatternDayTradeError:
+            self._note_pdt(now)
+            return
         self._charge(1)
         try:
             self.broker.call("DELETE", "/v2/positions/" + symbol)
+        except PatternDayTradeError:
+            self._note_pdt(now)
         except ModelError as exc:
-            if getattr(exc, "status", None) not in {404, 422}:
+            if getattr(exc, "status", None) not in {404, 422} and not degradable_failure(exc):
                 raise
 
     def _filled_at(self, client_id: str, now: datetime) -> datetime:
@@ -1246,7 +1306,12 @@ class HighFrequencyPilot:
         for intent in self._open_intents():
             order = intent["order"]
             client_id, symbol, side = order["client_order_id"], order["symbol"], order["side"]
-            parent, missing = self._lookup(client_id)
+            try:
+                parent, missing = self._lookup(client_id)
+            except ModelError as exc:
+                if not degradable_failure(exc):
+                    raise
+                continue
             if missing or parent is None:
                 self._miss(client_id, symbol, snapshot, now)
                 continue
@@ -1422,7 +1487,12 @@ class HighFrequencyPilot:
         close_at = timestamp(snapshot["clock"]["next_close"])
         if now >= close_at - timedelta(minutes=self.policy.entry_cutoff_minutes):
             return "ENTRY_CUTOFF"
-        session_open = self._session_open(now)
+        try:
+            session_open = self._session_open(now)
+        except ModelError as exc:
+            if not degradable_failure(exc):
+                raise
+            return "BROKER_STEP_SKIPPED"
         equity = number(account["equity"], positive=True)
         buying_power = number(account["buying_power"])
         open_notional = sum(float(event["order"]["limit_price"]) for event in self._open_intents())
@@ -1437,6 +1507,11 @@ class HighFrequencyPilot:
                 continue
             try:
                 bars = self._minute_bars(symbol, session_open, now)
+            except ModelError as exc:
+                if not degradable_failure(exc):
+                    raise
+                self._skip(symbol, "BARS_UNUSABLE", now.isoformat(), now)
+                continue
             except (TypeError, ValueError, KeyError):
                 self._skip(symbol, "BARS_UNUSABLE", now.isoformat(), now)
                 continue
@@ -1462,7 +1537,13 @@ class HighFrequencyPilot:
                     "hf_jev_bypassed", symbol=symbol, signal_at=signal_at, at=now.isoformat(),
                     reason="entry does not wait for Jev",
                 )
-            asset = self._asset(symbol)
+            try:
+                asset = self._asset(symbol)
+            except ModelError as exc:
+                if not degradable_failure(exc):
+                    raise
+                self._skip(symbol, "ASSET_UNREADABLE", signal_at, now)
+                continue
             side = "buy" if direction == "LONG" else "sell"
             if (
                 asset.get("status") != "active" or asset.get("tradable") is not True
@@ -1640,7 +1721,30 @@ def run_high_frequency(args: Any) -> int:
         signal.signal(signal.SIGINT, stop_requested)
         previous = None
         while not stopped:
-            status = pilot.tick()
+            try:
+                status = pilot.tick()
+            except ModelError as exc:
+                if not degradable_failure(exc):
+                    raise
+                if isinstance(exc, PatternDayTradeError):
+                    pilot._note_pdt(datetime.now(NY))
+                print(json.dumps({
+                    "mode": "PAPER", "profile": PROFILE_HIGH_FREQUENCY,
+                    "status": "BROKER_STEP_SKIPPED",
+                    "error_type": type(exc).__name__, "error": str(exc)[:250],
+                }), file=sys.stderr, flush=True)
+                time.sleep(5)
+                continue
+            except sqlite3.OperationalError as exc:
+                if not journal_locked(exc):
+                    raise
+                print(json.dumps({
+                    "mode": "PAPER", "profile": PROFILE_HIGH_FREQUENCY,
+                    "status": "JOURNAL_LOCKED", "error_type": type(exc).__name__,
+                    "error": str(exc)[:250],
+                }), file=sys.stderr, flush=True)
+                time.sleep(5)
+                continue
             if status != previous:
                 report = {"mode": "PAPER", "profile": PROFILE_HIGH_FREQUENCY, "status": status}
                 halt = journal.last("halt")

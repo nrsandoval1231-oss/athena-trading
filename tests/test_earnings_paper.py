@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import signal
+import sqlite3
 import subprocess
 import sys
 import time
@@ -894,6 +895,37 @@ def test_run_reconciles_a_missing_stop_before_any_models_probe(tmp_path, monkeyp
         assert reopened.last("trade_exit")["reason"] == "PROTECTION_MISSING"
     finally:
         reopened.close()
+
+
+def test_database_locked_retries_instead_of_exiting(tmp_path, monkeypatch):
+    """The 26 October earnings log was SQLite 'database is locked' during the open."""
+    universe = tmp_path / "universe_75.txt"
+    universe.write_text("DECK\n")
+    script = _earnings_script()
+    calls = {"n": 0}
+
+    def tick(self):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return "WAITING"
+
+    monkeypatch.setenv("ALPACA_API_KEY", "paper-key")
+    monkeypatch.setenv("ALPACA_API_SECRET", "paper-secret")
+    monkeypatch.setenv("TYPESAFE_API_KEY", "model-key")
+    monkeypatch.setenv("ATHENA_EARNINGS_UNIVERSE", str(universe))
+    monkeypatch.setattr(script.LivePaperAPI, "from_env", lambda: BookBroker())
+    monkeypatch.setattr(script.EarningsBook, "tick", tick)
+    monkeypatch.setattr(script.time, "sleep", lambda *_args: signal.raise_signal(signal.SIGTERM))
+    previous = signal.getsignal(signal.SIGTERM)
+    try:
+        code = script.main([
+            "--authority", "PAPER", "--journal", str(tmp_path / "book.sqlite"), "--run",
+        ])
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    assert code == 0
+    assert calls["n"] == 1
 
 
 def test_preflight_still_reports_jev(tmp_path, monkeypatch, capsys):

@@ -13,8 +13,9 @@ setup. A stale bar records a no-trade. A fresh bar in another direction does
 not send the old order; that new setup is judged on its own, and a no-trade is
 recorded when it does not qualify. Equivalent repeats of one opening-range
 setup do not each spend an adjudication. A malformed Jev answer vetoes that
-setup only and is not an approval. Risk, the bracket, and PAPER authority
-still apply.
+setup only and is not an approval. A transport failure before any response
+(HTTP 403, timeout, and the same class of model error) skips that setup and
+does not halt the session. Risk, the bracket, and PAPER authority still apply.
 
 The signal builders record the completed close as the reference limit. At
 submission the runner reads the latest bid and ask and replaces only that
@@ -1493,11 +1494,22 @@ class ActivePaperPilot:
         try:
             verdict = self.jev.decide(packet, before_validation=before_validation)
         except ModelError as exc:
+            reason = str(exc)[:250]
             if not answered:
-                raise
+                # A 403, timeout, or other transport failure is not a verdict and
+                # not a halt. This setup is skipped. The same bar is not sent again.
+                self.journal.append(
+                    "jev_unavailable", session=day, signal_at=packet["signal_at"],
+                    reason=reason, accepted=False,
+                )
+                record_opportunity(
+                    self.journal, stage="rejected", reason="JEV_UNAVAILABLE", at=now,
+                    signal_at=packet["signal_at"],
+                )
+                return "JEV_UNAVAILABLE"
             self.journal.append(
                 "jev_veto", session=day, signal_at=packet["signal_at"],
-                reason=str(exc)[:250], accepted=False,
+                reason=reason, accepted=False,
             )
             record_opportunity(
                 self.journal, stage="model_vetoed", reason="JEV_VETO", at=now,

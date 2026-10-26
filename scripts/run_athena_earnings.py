@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import signal
+import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -20,6 +21,11 @@ from athena_trading.paper.live import LivePaperAPI, transient_broker_failure
 
 TRANSIENT_TICK_LIMIT = 3
 TRANSIENT_TICK_BUDGET_SECONDS = 60.0
+
+
+def _journal_locked(exc: BaseException) -> bool:
+    """The paper runner's read-only peer lock. Not a reason to exit the book."""
+    return isinstance(exc, sqlite3.OperationalError) and "locked" in str(exc).lower()
 
 
 def _continue_after_transient(exc: BaseException, state: dict[str, float | int | None]) -> bool:
@@ -127,6 +133,13 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 status = book.tick()
             except Exception as exc:
+                if _journal_locked(exc):
+                    print(json.dumps({
+                        "mode": "PAPER", "arm": "earnings", "status": "JOURNAL_LOCKED",
+                        "error_type": type(exc).__name__, "error": str(exc)[:250],
+                    }), file=sys.stderr, flush=True)
+                    time.sleep(5)
+                    continue
                 if _continue_after_transient(exc, transient_ticks):
                     print(json.dumps({
                         "mode": "PAPER", "arm": "earnings", "status": "TRANSIENT_TICK",
