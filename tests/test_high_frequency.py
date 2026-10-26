@@ -703,3 +703,143 @@ def test_runner_requires_a_symbol_only_for_the_default_profile(tmp_path, monkeyp
         "--journal", str(tmp_path / "preflight.sqlite"), "--preflight",
     ])
     assert code == 0
+
+
+def test_http_403_with_jev_off_does_not_halt_or_call_the_model(tmp_path, monkeypatch):
+    """A broker HTTP 403 after an entry must not end the day while Jev is off.
+
+    The 26 October paper service logged ModelError HTTP 403 and halt RUNNER_ERROR
+    even though ATHENA_HF_JEV was off. request_json uses ModelError for every HTTP
+    failure, including Alpaca. That failure is not a model verdict and not a halt.
+    """
+    path = Path(__file__).resolve().parents[1] / "scripts" / "run_athena_paper.py"
+    spec = importlib.util.spec_from_file_location("run_athena_paper_hf_403", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setenv("ALPACA_API_KEY", "paper-key")
+    monkeypatch.setenv("ALPACA_API_SECRET", "paper-secret")
+    monkeypatch.setenv("ATHENA_SHARED_RISK_DIR", str(tmp_path / "risk"))
+    monkeypatch.setenv("ATHENA_HF_JEV", "off")
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    constructed = []
+
+    class SpyEngine:
+        def __init__(self, *args, **kwargs):
+            constructed.append((args, kwargs))
+
+        def decide(self, *args, **kwargs):
+            constructed.append(("decide", args))
+            raise ModelError("HTTP 403", status=403)
+
+    monkeypatch.setattr(
+        "athena_trading.athena_adapter.jev.JevDecisionEngine", SpyEngine,
+    )
+    monkeypatch.setattr(
+        "athena_trading.paper.high_frequency.time.sleep", lambda *_args: None,
+    )
+    journal_path = tmp_path / "2026-10-26.sqlite"
+    ticks = {"n": 0}
+
+    def tick(self):
+        ticks["n"] += 1
+        assert self.policy.jev_mode == "off"
+        assert self.jev is None
+        if ticks["n"] == 1:
+            self.journal.append(
+                "hf_entry_intent", session="2026-10-26", at=NOW.isoformat(),
+                symbol="SPY", signal_at=NOW.isoformat(),
+                order={"client_order_id": "athp-403", "symbol": "SPY", "side": "buy", "qty": "1"},
+            )
+            return "ENTRY_SUBMITTED"
+        if ticks["n"] == 2:
+            raise ModelError("HTTP 403", status=403)
+        self.journal.append("hf_session_flat", at=NOW.isoformat(), reason="TEST")
+        return "COMPLETE"
+
+    monkeypatch.setattr(
+        "athena_trading.paper.high_frequency.HighFrequencyPilot.tick", tick,
+    )
+    monkeypatch.setattr(
+        "athena_trading.paper.high_frequency.LivePaperAPI.from_env", lambda: FakeBroker(),
+    )
+    code = module.main([
+        "--profile", "high-frequency", "--authority", "PAPER", "--feed", "iex",
+        "--journal", str(journal_path), "--run",
+    ])
+    assert code == 0
+    assert constructed == []
+    assert ticks["n"] == 3
+    journal = PaperJournal(journal_path)
+    try:
+        assert journal.last("halt") is None
+        assert journal.last("hf_entry_intent")["order"]["symbol"] == "SPY"
+    finally:
+        journal.close()
+
+
+def test_snapshot_http_403_with_jev_off_skips_one_tick(tmp_path, monkeypatch):
+    broker = FakeBroker()
+    pilot, journal = _pilot(tmp_path, broker, monkeypatch)
+    assert pilot.tick() == "ENTRY_SUBMITTED"
+    assert pilot.jev.calls == 0
+
+    def forbidden():
+        raise ModelError("HTTP 403", status=403)
+
+    broker.snapshot = forbidden
+    assert pilot.tick() == "BROKER_STEP_SKIPPED"
+    assert journal.last("halt") is None
+    assert pilot.jev.calls == 0
+    journal.close()
+
+
+def test_close_http_403_keeps_the_bracket_and_observes_the_later_fill(tmp_path, monkeypatch):
+    """A refused close must not exhaust the session or block a later bracket fill."""
+    broker = FakeBroker()
+    pilot, journal = _pilot(tmp_path, broker, monkeypatch)
+    assert pilot.policy.jev_mode == "off"
+    assert pilot.tick() == "ENTRY_SUBMITTED"
+    client_id = broker.posts[0]["client_order_id"]
+    broker.lookup[client_id] = {
+        "id": "parent-1", "client_order_id": client_id, "symbol": "SPY", "side": "buy",
+        "status": "filled", "qty": "1", "filled_qty": "1", "type": "limit",
+        "legs": [{
+            "id": "target-1", "symbol": "SPY", "side": "sell", "type": "limit",
+            "status": "held", "limit_price": "582.00", "qty": "1", "filled_qty": "0",
+        }],
+    }
+    broker.positions = [{"symbol": "SPY", "qty": "1", "side": "long", "avg_entry_price": "581.52"}]
+    broker.now = NOW + timedelta(minutes=9)
+    broker.quotes["SPY"]["t"] = broker.now.isoformat()
+    original = broker.call
+
+    def call(method, path, payload=None):
+        if method == "DELETE" and path.startswith("/v2/positions/"):
+            raise ModelError("HTTP 403", status=403)
+        return original(method, path, payload)
+
+    broker.call = call
+    for _ in range(4):
+        status = pilot.tick()
+        assert status != "COMPLETE"
+        assert pilot.jev.calls == 0
+    assert journal.last("halt") is None
+    assert not any(event["kind"] == "halt" for event in journal.events)
+    broker.positions = []
+    broker.lookup[client_id] = {
+        **broker.lookup[client_id],
+        "legs": [{
+            "id": "target-1", "symbol": "SPY", "side": "sell", "type": "limit",
+            "status": "filled", "limit_price": "582.00", "qty": "1", "filled_qty": "1",
+        }],
+    }
+    broker.now = broker.now + timedelta(minutes=2)
+    broker.quotes["SPY"]["t"] = broker.now.isoformat()
+    pilot.tick()
+    closed = journal.last("hf_position_closed")
+    assert closed is not None
+    assert closed["client_order_id"] == client_id
+    assert closed["filled"] is True
+    assert journal.last("halt") is None
+    assert pilot.jev.calls == 0
+    journal.close()

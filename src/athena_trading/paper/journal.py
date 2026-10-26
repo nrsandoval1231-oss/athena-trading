@@ -20,9 +20,12 @@ class PaperJournal:
         except OSError:
             self._lock.close()
             raise ValueError("another paper runner holds this journal") from None
-        self.db = sqlite3.connect(path)
+        # The other arm reads this file without the writer lock. The default 5s
+        # busy timeout was raising "database is locked" on the earnings book.
+        self.db = sqlite3.connect(path, timeout=30.0)
         os.chmod(path, 0o600)
         self.db.execute("PRAGMA synchronous=FULL")
+        self.db.execute("PRAGMA busy_timeout=30000")
         self.db.execute(
             "CREATE TABLE IF NOT EXISTS events "
             "(seq INTEGER PRIMARY KEY, payload TEXT NOT NULL, previous TEXT NOT NULL, "

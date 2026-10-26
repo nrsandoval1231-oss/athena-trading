@@ -204,15 +204,23 @@ def test_lost_submit_response_recovers_without_resubmission(setup):
     assert sum(m == "POST" for m, _, _ in broker.calls) == 1
 
 
-def test_model_error_never_places_order_or_repeats_same_bar(setup):
+@pytest.mark.parametrize("message,status", [
+    ("HTTP 403", 403),
+    ("HTTP 429", None),
+    ("request failed: TimeoutError", None),
+])
+def test_model_transport_failure_skips_the_setup_without_halting(setup, message, status):
+    """A Jev 403, 429, or timeout declines that setup and leaves the runner up."""
     pilot, broker, _, journal = setup
 
     def unavailable(*args, **kwargs):
-        raise ModelError("HTTP 429")
+        raise ModelError(message, status=status)
 
     pilot.jev = JevDecisionEngine("fixture-key", transport=unavailable)
-    with pytest.raises(ModelError):
-        pilot.tick()
+    assert pilot.tick() == "JEV_UNAVAILABLE"
+    assert journal.last("halt") is None
+    assert journal.last("jev_unavailable")["reason"] == message
+    assert journal.last("jev_unavailable")["accepted"] is False
     assert pilot.tick() == "ALREADY_REVIEWED"
     assert not journal.last("entry_intent")
     assert not any(m == "POST" for m, _, _ in broker.calls)
