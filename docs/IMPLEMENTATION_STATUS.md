@@ -1,5 +1,27 @@
 # Implementation status
 
+## Broker HTTP 403 no longer ends a Jev-off paper session — 26 October 2026
+
+The high-frequency paper runner does not call Jev when `ATHENA_HF_JEV` is `off` or `advisory`. `request_json` still raises `ModelError` for every HTTP failure, including Alpaca. On 21 October and again on 26 October 2026 the deployed runner at `a8a4f2e` traded from about 08:41 America/Chicago, then halted `RUNNER_ERROR` on `ModelError: HTTP 403`. That class name is the shared HTTP error, not a Jev call. After the first `hf_entry_intent`, any escaped exception was written as `RUNNER_ERROR`, which finishes the dated journal.
+
+A 403, timeout, HTTP 429, or 5xx now skips that step (`BROKER_STEP_SKIPPED`) and leaves the session open. Pattern-day-trading 403s still stop new entries and keep managing open brackets. With Jev on, the one-trade pilot journals `jev_unavailable` and returns `JEV_UNAVAILABLE` instead of leaving the process; that skip is not an approval, and the same bar is not sent again. A refused high-frequency close no longer raises "close attempts exhausted" or halts the day. The broker bracket stays, and another close is allowed after 60 seconds, so a later target fill is still journaled. Stops, targets, sizing, and the PAPER-only refusal are unchanged.
+
+The earnings book logged `database is locked` at 08:41 America/Chicago the same morning. The paper service reads that SQLite file while earnings writes it. The journal waited the library default of 5 seconds. It now waits 30 seconds. A lock that still escapes is retried by the earnings loop and by the high-frequency loop instead of exiting. **LIVE remains rejected.** This is not deployed.
+
+The one-trade and earnings flatten paths still raise after three close submissions. Those strings were not the 26 October high-frequency halt. `UNOWNED_EXPOSURE` on 23 October is not changed here: a leftover order is still unowned when it is outside this profile's journaled lineage, and the recheck window is still 15 seconds, which is shorter than `RestartSec=30`. The 403 crash was what opened that restart gap. Widening the window would also delay a real stray on a symbol this profile just closed, and the 23 October order ids are not in this repository.
+
+Observed local checks, Python 3.12.3, on runtime commit `c9fa79df989b01385183cc9f29571e9e989637ad`. The suite on main before this change was 932 passed. This change adds 7 tests. No pre-existing failures were present. The new cases are fixtures.
+
+```bash
+python3 -m pytest -q                 # 939 passed in 19.26s
+python3 -m ruff check .              # clean, ruff 0.17.2
+bash -n deploy/install.sh            # clean
+python3 -m compileall -q src tests   # clean
+git diff --check                     # clean
+```
+
+Root pytest does not include Astra Desk. This is not a broker fill and not evidence of trading performance.
+
 ## High-frequency per-bar exit extraction — 21 October 2026
 
 `step_position()` is the per-bar exit decision that `simulate_session()` used to inline. It reads the position's fill-anchored stop and target, one minute bar, and the high-frequency policy. A bar that touches both the stop and the target exits at the stop. Max hold and the flatten buffer exit at the bar close, and max hold outranks the buffer. A minute before the entry minute is not a bracket or hold exit; the flatten buffer still closes that position at the close. The function does not mutate the position, journal, or call a broker.
